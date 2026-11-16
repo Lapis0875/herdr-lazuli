@@ -1,0 +1,8 @@
+# Herdr writes these into every mod folder it loads or checks
+gpui-kit.d.ts
+jsconfig.json
+
+# Herdr's reason a file did not load (layout.error, keys.error, ...)
+*.error
+
+.DS_Store
