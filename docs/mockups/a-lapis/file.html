@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>lazuli · A Lapis · 파일 탭 (분할)</title>
+<script>document.documentElement.dataset.theme = new URLSearchParams(location.search).get("theme") || "dark";</script>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="window">
+  <aside class="sidebar">
+    <div class="lights" aria-hidden="true"><span></span><span></span><span></span></div>
+    <div class="brand">
+      <div class="name">
+        <svg class="logo" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 1.5 18.5 10 10 18.5 1.5 10Z" fill="var(--accent)"/><path d="M10 1.5 18.5 10H10Z" fill="var(--foreground)" opacity=".22"/><circle cx="7.4" cy="11.6" r="1.5" fill="var(--secondary)"/></svg>
+        lazuli
+      </div>
+      <span class="ibtn" aria-label="검색"><svg class="i"><use href="#i-search"/></svg></span>
+      <span class="ibtn" aria-label="사이드바 접기"><svg class="i"><use href="#i-sidebar"/></svg></span>
+    </div>
+    <div class="sb-body">
+      <div class="palette"><svg class="i s"><use href="#i-command"/></svg><span>검색 또는 명령…</span><kbd>⇧⌘P</kbd></div>
+      <nav class="nav">
+        <a><svg class="i"><use href="#i-layout-dashboard"/></svg><span class="lbl">홈</span><kbd>⌥⌘0</kbd></a>
+        <a class="on"><svg class="i"><use href="#i-columns"/></svg><span class="lbl">작업</span></a>
+        <a><svg class="i"><use href="#i-inbox"/></svg><span class="lbl">수신함</span><span class="count wait">5</span></a>
+        <a><svg class="i"><use href="#i-list-todo"/></svg><span class="lbl">할 일</span><span class="count">3</span></a>
+        <a><svg class="i"><use href="#i-calendar-clock"/></svg><span class="lbl">루틴</span><span class="run-dot"></span></a>
+      </nav>
+      <div class="sec"><span>스페이스</span><svg class="i s"><use href="#i-plus"/></svg></div>
+      <div class="machine"><svg class="i s"><use href="#i-server"/></svg>이 Mac</div>
+      <div class="space"><svg class="i"><use href="#i-chevron-down"/></svg><b>lazuli</b><span class="br">redesign/no-cockpit</span></div>
+      <div class="agent"><span class="dot working"></span><svg class="am omp"><use href="#agent-omp"/></svg><span class="t">미리보기 렌더러</span><span class="m">24분</span></div>
+      <div class="agent"><span class="dot blocked"></span><svg class="am"><use href="#agent-claude"/></svg><span class="t">Files 확인 문구</span><span class="m wait">응답 필요</span></div>
+      <div class="agent"><span class="dot working"></span><svg class="am"><use href="#agent-claude"/></svg><span class="t">PDF 헬퍼 빌드</span><span class="m">42분</span></div>
+      <div class="agent"><span class="dot done"></span><svg class="am"><use href="#agent-codex"/></svg><span class="t">i18n 키 테스트</span><span class="m">#47</span></div>
+      <div class="agent"><span class="dot idle"></span><svg class="i s"><use href="#i-terminal"/></svg><span class="t">zsh</span></div>
+      <div class="agent on"><span class="dot idle" style="border-color:var(--blocked)"></span><svg class="i s"><use href="#i-file-text"/></svg><span class="t">README.md</span><span class="m wait">저장 안 됨</span></div>
+      <div class="agent"><span class="dot idle"></span><svg class="i s"><use href="#i-eye"/></svg><span class="t">DESIGN.md</span><span class="m">미리보기</span></div>
+      <div class="space"><svg class="i"><use href="#i-chevron-down"/></svg><b>herdr-relay</b><span class="br">main</span></div>
+      <div class="agent"><span class="dot blocked"></span><svg class="am"><use href="#agent-codex"/></svg><span class="t">gh 허용 범위</span><span class="m wait">응답 필요</span></div>
+      <div class="agent"><span class="dot done"></span><svg class="am omp"><use href="#agent-omp"/></svg><span class="t">재연결 백오프</span><span class="m">#212</span></div>
+      <div class="space"><svg class="i"><use href="#i-chevron-right"/></svg><b>resume</b><span class="br">main</span><span class="dot working"></span></div>
+      <div class="machine" style="margin-top:6px"><svg class="i s"><use href="#i-server"/></svg>mac-mini</div>
+      <div class="space"><svg class="i"><use href="#i-chevron-right"/></svg><b>LMS-Helper</b><span class="br">fix/tz-deadline</span><span class="dot done"></span></div>
+    </div>
+    <div class="sb-foot">
+      <a><svg class="i s"><use href="#i-settings"/></svg>설정</a>
+      <a class="d"><svg class="i s"><use href="#i-plus"/></svg>머신 추가</a>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="tabs">
+        <div class="tab"><svg class="am omp"><use href="#agent-omp"/></svg><span class="t">미리보기 렌더러</span></div>
+        <div class="tab"><svg class="am"><use href="#agent-claude"/></svg><span class="t">Files 확인 문구</span><span class="st" style="background:var(--blocked)"></span></div>
+        <div class="tab"><svg class="am"><use href="#agent-claude"/></svg><span class="t">PDF 헬퍼 빌드</span></div>
+        <div class="tab"><svg class="am"><use href="#agent-codex"/></svg><span class="t">i18n 키 테스트</span></div>
+        <div class="tab"><svg class="i s"><use href="#i-terminal"/></svg><span class="t">zsh</span></div>
+        <div class="tab file on"><span class="mark">●</span><span class="t">README.md</span></div>
+        <div class="tab file pvtab"><span class="mark pv">◦</span><span class="t">DESIGN.md</span></div>
+        <span class="tab-add"><svg class="i s"><use href="#i-plus"/></svg></span>
+      </div>
+      <div class="bell" aria-label="알림 3건"><svg class="i" style="width:17px;height:17px"><use href="#i-bell"/></svg><span class="badge">3</span></div>
+    </header>
+
+    <div class="center">
+      <main class="card view">
+        <div class="fhead">
+          <div class="crumb"><svg class="i s"><use href="#i-file-text"/></svg>herdr-lstack-layout<span class="sl">/</span><b>README.md</b><span class="dirty" aria-label="저장 안 됨"></span></div>
+          <span class="save"><b>저장 안 됨</b>· 초안 보관 3초 전</span>
+          <div class="seg" role="tablist" aria-label="보기 모드 ⌘⇧V">
+            <span><svg class="i"><use href="#i-pencil"/></svg>편집</span>
+            <span class="on"><svg class="i"><use href="#i-square-split"/></svg>분할</span>
+            <span><svg class="i"><use href="#i-eye"/></svg>미리보기</span>
+          </div>
+          <span class="ibtn" aria-label="Chrome에서 보기"><svg class="i"><use href="#i-external"/></svg></span>
+        </div>
+        <div class="panes">
+          <div class="editor" aria-label="편집기">
+            <div class="gutter">
+              <div>1</div><div>2</div><div class="mod">3</div><div class="mod">4</div><div>5</div><div>6</div><div>7</div><div>8</div><div>9</div>
+              <div class="add">10</div><div class="add">11</div><div class="add cur">12</div><div>13</div><div>14</div><div>15</div><div>16</div><div>17</div><div>18</div><div>19</div>
+              <div class="add">20</div><div>21</div><div>22</div><div>23</div><div>24</div><div>25</div><div>26</div><div>27</div><div>28</div>
+            </div>
+            <div class="code">
+<div><span class="tk-h"># lazuli</span></div>
+<div></div>
+<div>에이전트, PR, CI를 한 화면에 모은 Herdr 레이아웃.</div>
+<div>cockpit 없이 혼자 동작합니다.</div>
+<div></div>
+<div><span class="tk-pu">![</span><span class="tk-ln">lazuli 홈 화면</span><span class="tk-pu">](</span><span class="tk-cs">docs/frame.svg</span><span class="tk-pu">)</span></div>
+<div></div>
+<div><span class="tk-h">## 설치</span></div>
+<div></div>
+<div><span class="tk-mk">1.</span> <span class="tk-cs">`layouts/lazuli.json`</span>을 Herdr 홈에 복사</div>
+<div><span class="tk-mk">2.</span> 설정에서 <span class="tk-b">**lazuli**</span> 레이아웃 선택</div>
+<div class="cur"><span class="tk-mk">3.</span> <span class="tk-cs">`gh auth status`</span>로 로그인 확인<span class="caret"></span></div>
+<div></div>
+<div><span class="tk-h">## 단축키</span></div>
+<div></div>
+<div><span class="tk-pu">|</span> 키 <span class="tk-pu">|</span> 동작 <span class="tk-pu">|</span></div>
+<div><span class="tk-pu">|----|------|</span></div>
+<div><span class="tk-pu">|</span> ⇧⌘P <span class="tk-pu">|</span> 팔레트 <span class="tk-pu">|</span></div>
+<div><span class="tk-pu">|</span> ⌥⌘0 <span class="tk-pu">|</span> 홈 또는 작업 화면 <span class="tk-pu">|</span></div>
+<div><span class="tk-pu">|</span> ⌘⇧V <span class="tk-pu">|</span> 편집 · 분할 · 미리보기 <span class="tk-pu">|</span></div>
+<div></div>
+<div><span class="tk-h">## 개발</span></div>
+<div></div>
+<div><span class="tk-pu">```sh</span></div>
+<div><span class="tk-cmd">node</span> <span class="tk-arg">--test</span> mods/lazuli/test</div>
+<div><span class="tk-cmd">herdr-app</span> <span class="tk-arg">check</span> mods/lazuli</div>
+<div><span class="tk-pu">```</span></div>
+<div></div>
+            </div>
+          </div>
+          <article class="preview" aria-label="Markdown 미리보기">
+            <h1>lazuli</h1>
+            <p>에이전트, PR, CI를 한 화면에 모은 Herdr 레이아웃. cockpit 없이 혼자 동작합니다.</p>
+            <svg class="img" viewBox="0 0 344 150" width="100%" height="150" role="img" aria-label="lazuli 홈 화면">
+              <rect width="344" height="150" fill="var(--canvas)"/>
+              <rect width="68" height="150" fill="var(--chrome)"/><rect x="68" width="1" height="150" fill="var(--border)"/>
+              <circle cx="8" cy="7" r="2" fill="#FF5F57"/><circle cx="14" cy="7" r="2" fill="#FEBC2E"/><circle cx="20" cy="7" r="2" fill="#28C840"/>
+              <rect x="6" y="18" width="56" height="6" rx="2" fill="var(--selected)"/>
+              <g fill="var(--border)"><rect x="8" y="30" width="36" height="3" rx="1.5"/><rect x="8" y="38" width="30" height="3" rx="1.5"/><rect x="8" y="46" width="40" height="3" rx="1.5"/><rect x="8" y="62" width="44" height="3" rx="1.5"/><rect x="8" y="70" width="38" height="3" rx="1.5"/></g>
+              <circle cx="6" cy="63.5" r="1.8" fill="var(--blocked)"/><circle cx="6" cy="71.5" r="1.8" fill="var(--working)"/>
+              <rect x="74" y="12" width="232" height="128" rx="5" fill="var(--background)" stroke="var(--border)"/>
+              <rect x="80" y="18" width="220" height="10" rx="2" fill="var(--surface)" stroke="var(--border)"/><rect x="83" y="22" width="5" height="3" rx="1" fill="var(--blocked)"/>
+              <g fill="var(--surface)" stroke="var(--border)"><rect x="80" y="34" width="51" height="22" rx="2"/><rect x="80" y="59" width="51" height="22" rx="2"/><rect x="136" y="34" width="51" height="22" rx="2"/><rect x="136" y="59" width="51" height="22" rx="2"/><rect x="136" y="84" width="51" height="22" rx="2"/><rect x="192" y="34" width="51" height="22" rx="2"/><rect x="248" y="34" width="52" height="22" rx="2"/><rect x="248" y="59" width="52" height="22" rx="2"/></g>
+              <g fill="var(--dim)"><rect x="84" y="40" width="30" height="2.5" rx="1"/><rect x="84" y="65" width="26" height="2.5" rx="1"/><rect x="140" y="40" width="32" height="2.5" rx="1"/><rect x="140" y="65" width="28" height="2.5" rx="1"/><rect x="140" y="90" width="22" height="2.5" rx="1"/><rect x="196" y="40" width="30" height="2.5" rx="1"/><rect x="252" y="40" width="34" height="2.5" rx="1"/><rect x="252" y="65" width="26" height="2.5" rx="1"/></g>
+              <rect x="80" y="112" width="220" height="1" fill="var(--border)"/>
+              <g fill="var(--border)"><rect x="80" y="119" width="40" height="2.5" rx="1"/><rect x="136" y="119" width="40" height="2.5" rx="1"/><rect x="192" y="119" width="40" height="2.5" rx="1"/></g>
+              <g fill="var(--accent)"><rect x="250" y="126" width="5" height="8"/><rect x="257" y="122" width="5" height="12"/><rect x="264" y="124" width="5" height="10"/></g>
+              <rect x="312" y="12" width="26" height="128" rx="5" fill="var(--background)" stroke="var(--border)"/>
+              <g fill="var(--muted)"><rect x="320" y="20" width="10" height="8" rx="2"/><rect x="320" y="34" width="10" height="8" rx="2"/><rect x="320" y="48" width="10" height="8" rx="2"/></g>
+            </svg>
+            <h2>설치</h2>
+            <ol>
+              <li><code>layouts/lazuli.json</code>을 Herdr 홈에 복사</li>
+              <li>설정에서 <b>lazuli</b> 레이아웃 선택</li>
+              <li><code>gh auth status</code>로 로그인 확인</li>
+            </ol>
+            <h2>단축키</h2>
+            <table>
+              <tr><th>키</th><th>동작</th></tr>
+              <tr><td>⇧⌘P</td><td>팔레트</td></tr>
+              <tr><td>⌥⌘0</td><td>홈 또는 작업 화면</td></tr>
+              <tr><td>⌘⇧V</td><td>편집 · 분할 · 미리보기</td></tr>
+            </table>
+            <h2>개발</h2>
+            <pre><span class="tk-cmd">node</span> <span class="tk-arg">--test</span> mods/lazuli/test
+<span class="tk-cmd">herdr-app</span> <span class="tk-arg">check</span> mods/lazuli</pre>
+          </article>
+        </div>
+      </main>
+
+      <aside class="card panel" aria-label="파일 패널">
+        <div class="tree">
+          <div class="tree-h">
+            <span class="ttl">파일</span>
+            <span class="ibtn" aria-label="새 파일"><svg class="i"><use href="#i-file-plus"/></svg></span>
+            <span class="ibtn" aria-label="새 폴더"><svg class="i"><use href="#i-folder-plus"/></svg></span>
+            <span class="ibtn" aria-label="모두 접기"><svg class="i"><use href="#i-chevrons-down-up"/></svg></span>
+          </div>
+          <div class="tree-root"><svg class="i s" style="color:var(--muted)"><use href="#i-folder-git"/></svg><b>herdr-lstack-layout</b><span class="sp"></span><span class="br">redesign/no-cockpit</span></div>
+          <div class="rows">
+            <div class="r"><span class="tw"><svg class="i"><use href="#i-chevron-right"/></svg></span><span class="n">LICENSES</span></div>
+            <div class="r u"><span class="tw"><svg class="i"><use href="#i-chevron-down"/></svg></span><span class="n">docs</span><span class="g u">•</span></div>
+            <div class="r u" style="padding-left:14px"><span class="tw"><svg class="i"><use href="#i-chevron-right"/></svg></span><span class="n">mockups</span><span class="g u">U</span></div>
+            <div class="r u" style="padding-left:14px"><span class="tw"></span><span class="n">DESIGN.md</span><svg class="i pv"><use href="#i-eye"/></svg><span class="g u">U</span></div>
+            <div class="r"><span class="tw"><svg class="i"><use href="#i-chevron-right"/></svg></span><span class="n">layouts</span></div>
+            <div class="r u"><span class="tw"><svg class="i"><use href="#i-chevron-down"/></svg></span><span class="n">mods</span><span class="g u">•</span></div>
+            <div class="r u" style="padding-left:14px"><span class="tw"><svg class="i"><use href="#i-chevron-down"/></svg></span><span class="n">lazuli</span><span class="g u">U</span></div>
+            <div class="r u" style="padding-left:28px"><span class="tw"><svg class="i"><use href="#i-chevron-right"/></svg></span><span class="n">fonts</span><span class="g u">U</span></div>
+            <div class="r u" style="padding-left:28px"><span class="tw"><svg class="i"><use href="#i-chevron-right"/></svg></span><span class="n">i18n</span><span class="g u">U</span></div>
+            <div class="r u" style="padding-left:28px"><span class="tw"></span><span class="n">files.js</span><span class="g u">U</span></div>
+            <div class="r u" style="padding-left:28px"><span class="tw"></span><span class="n">home.js</span><span class="g u">U</span></div>
+            <div class="r u" style="padding-left:28px"><span class="tw"></span><span class="n">main.js</span><span class="g u">U</span></div>
+            <div class="r u" style="padding-left:28px"><span class="tw"></span><span class="n">mod.json</span><span class="g u">U</span></div>
+            <div class="r u" style="padding-left:28px"><span class="tw"></span><span class="n">preview.js</span><span class="g u">U</span></div>
+            <div class="r" style="padding-left:14px"><span class="tw"><svg class="i"><use href="#i-chevron-right"/></svg></span><span class="n">lstack-herdr</span></div>
+            <div class="r" style="padding-left:14px"><span class="tw"><svg class="i"><use href="#i-chevron-right"/></svg></span><span class="n">lstack-herdr-cockpit</span></div>
+            <div class="r ign"><span class="tw"></span><span class="n">.gitignore</span></div>
+            <div class="r m"><span class="tw"></span><span class="n">keys.json</span><span class="g m">M</span></div>
+            <div class="r"><span class="tw"></span><span class="n">LICENSE</span></div>
+            <div class="r m sel"><span class="tw"></span><span class="n">README.md</span><span class="g m">M</span></div>
+            <div class="r u"><span class="tw"></span><span class="n">README.ko.md</span><span class="g u">U</span></div>
+            <div class="r"><span class="tw"></span><span class="n">RECIPE.md</span></div>
+            <div class="r"><span class="tw"></span><span class="n">THIRD_PARTY_NOTICES.md</span></div>
+          </div>
+        </div>
+        <nav class="rail" aria-label="패널">
+          <span class="rb" aria-label="리뷰 ⌃⌘1"><svg class="i"><use href="#i-git-pull-request"/></svg></span>
+          <span class="rb on" aria-label="파일 ⌃⌘2" aria-current="true"><svg class="i"><use href="#i-folder"/></svg></span>
+          <span class="rb" aria-label="변경 사항 ⌃⌘3"><svg class="i"><use href="#i-file-diff"/></svg></span>
+          <span class="rb" aria-label="에이전트 호출 트리 ⌃⌘4"><svg class="i"><use href="#i-workflow"/></svg></span>
+        </nav>
+      </aside>
+    </div>
+
+    <footer class="status">
+      <div class="grp">
+        <span class="st"><span class="dot blocked"></span><b>2</b> 나를 기다림</span>
+        <span class="st"><span class="dot working"></span><b>3</b> 작업 중</span>
+        <span class="st"><span class="dot done"></span><b>1</b> 머지 준비</span>
+        <span class="st"><span class="dot idle"></span><b>2</b> 완료</span>
+      </div>
+      <span class="vr"></span>
+      <div class="grp">
+        <span class="st"><svg class="am omp"><use href="#agent-omp"/></svg>omp · lazuli</span>
+        <a class="st mono">#51 ↗</a>
+        <a class="st"><svg class="i s" style="color:var(--working)"><use href="#i-circle-dashed"/></svg>CI 실행 중</a>
+        <kbd>⌘G</kbd>
+      </div>
+      <span class="sp"></span>
+      <span class="st dim">Markdown · <span class="mono">12:31</span></span>
+      <span class="st"><svg class="i s"><use href="#i-send"/></svg>대기 프롬프트 <b>3</b> <kbd>⌥⌘Q</kbd></span>
+    </footer>
+  </div>
+</div>
+<script src="../shared/icons.js"></script>
+</body>
+</html>

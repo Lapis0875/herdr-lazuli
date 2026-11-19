@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>lazuli · design directions (C2)</title>
+<style>
+  :root { --bg: #E9E9E7; --fg: #1B1B1A; --muted: #55554F; --line: #CFCFCB; --card: #F6F6F4; color-scheme: light; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "Apple SD Gothic Neo", system-ui, sans-serif; background: var(--bg); color: var(--fg); font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; word-break: keep-all; overflow-wrap: break-word; }
+  header { padding: 28px 32px 8px; max-width: 1800px; margin: 0 auto; }
+  h1 { font-size: 22px; letter-spacing: -.01em; text-wrap: balance; }
+  header p { color: var(--muted); max-width: 900px; margin-top: 6px; }
+  main { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; padding: 20px 32px 32px; max-width: 1800px; margin: 0 auto; }
+  section { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .head { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; min-height: 330px; }
+  h2 { font-size: 17px; display: flex; align-items: baseline; gap: 8px; }
+  h2 small { font-size: 13px; font-weight: 400; color: var(--muted); }
+  ol { padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; font: 11px/1 ui-monospace, "SF Mono", Menlo, monospace; }
+  .chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 6px 3px 3px; border: 1px solid var(--line); border-radius: 5px; background: #fff; }
+  .chip i { width: 14px; height: 14px; border-radius: 3px; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .12); }
+  .meta { font-size: 12.5px; color: var(--muted); }
+  .meta b { color: var(--fg); font-weight: 600; }
+  .links { font-size: 12.5px; display: flex; gap: 12px; flex-wrap: wrap; }
+  a { color: #1F4FA8; }
+  a:focus-visible { outline: 2px solid #1F4FA8; outline-offset: 2px; border-radius: 4px; }
+  figure { display: flex; flex-direction: column; gap: 4px; }
+  figure a { display: block; border-radius: 8px; overflow: hidden; outline: 1px solid rgba(0, 0, 0, .14); outline-offset: -1px; line-height: 0; }
+  figure img { width: 100%; height: auto; display: block; }
+  figcaption { font-size: 12px; color: var(--muted); }
+  footer { max-width: 1800px; margin: 0 auto; padding: 0 32px 40px; color: var(--muted); font-size: 12.5px; }
+  footer ul { padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
+  code { font: 12px ui-monospace, "SF Mono", Menlo, monospace; }
+  @media (max-width: 1100px) { main { grid-template-columns: 1fr; } .head { min-height: 0; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>lazuli · three design directions (DESIGN.md C2)</h1>
+  <p>Same frame (D3), same sample data, Korean UI (C3). Each direction: Home and a Markdown file tab in Split (B1–B3, B6), dark and light, 1440 × 900 rendered by headless Chrome from the HTML next to each PNG. Click a picture for full size. Pick one; its <code>tokens.json</code> becomes <code>themes/lazuli-{light,dark}.json</code> (C1).</p>
+</header>
+<main>
+  <section aria-labelledby="a">
+    <div class="head">
+      <h2 id="a">A · Lapis <small>calm and dense (Zed, Linear)</small></h2>
+      <ol>
+        <li>One blue-grey surface system at 13 px; only what waits for you turns pyrite gold (badge, wait time, hand glyph, bell).</li>
+        <li>Home stacks horizontal strata: next-action bar, four-column stage board with compact cards, a four-up summary strip, events and restore.</li>
+        <li>Closest to Zed and Linear: cards on a darker canvas, 10 px radius, mono only for numbers, paths and keys. Safest choice, least distinctive.</li>
+      </ol>
+      <div class="chips" aria-label="Lapis palette"><span class="chip"><i style="background:#0E1626"></i>#0E1626</span><span class="chip"><i style="background:#E6ECF7"></i>#E6ECF7</span><span class="chip"><i style="background:#5B8FE0"></i>#5B8FE0</span><span class="chip"><i style="background:#D4A84B"></i>#D4A84B</span><span class="chip"><i style="background:#F6F8FC"></i>#F6F8FC</span><span class="chip"><i style="background:#14213D"></i>#14213D</span><span class="chip"><i style="background:#26619C"></i>#26619C</span></div>
+      <p class="meta"><b>UI</b> Pretendard (OFL 1.1, not installed: ship OTF in <code>mods/lazuli/fonts/</code>) · <b>Mono</b> D2Coding ligature (OFL 1.1, installed)</p>
+      <p class="links"><a href="a-lapis/home.html">home.html</a><a href="a-lapis/file.html">file.html</a><a href="a-lapis/tokens.json">tokens.json</a></p>
+    </div>
+    <figure><a href="a-lapis/home-dark.png"><img src="a-lapis/home-dark.png" width="1440" height="900" alt="Lapis, Home, dark"></a><figcaption>Home · dark</figcaption></figure>
+    <figure><a href="a-lapis/home-light.png"><img src="a-lapis/home-light.png" width="1440" height="900" alt="Lapis, Home, light" loading="lazy"></a><figcaption>Home · light</figcaption></figure>
+    <figure><a href="a-lapis/file-dark.png"><img src="a-lapis/file-dark.png" width="1440" height="900" alt="Lapis, README.md in Split, dark" loading="lazy"></a><figcaption>File tab, Split · dark</figcaption></figure>
+    <figure><a href="a-lapis/file-light.png"><img src="a-lapis/file-light.png" width="1440" height="900" alt="Lapis, README.md in Split, light" loading="lazy"></a><figcaption>File tab, Split · light</figcaption></figure>
+  </section>
+
+  <section aria-labelledby="b">
+    <div class="head">
+      <h2 id="b">B · Cobalt <small>information-dense IDE</small></h2>
+      <ol>
+        <li>Edge-to-edge tiles split by 1 px rules, 26 px title strips, 2–4 px radii; D2Coding carries the data, Apple SD Gothic Neo the prose.</li>
+        <li>The stage board becomes a pipeline matrix: one row per agent, a track across the four stages, PR and CI columns; events read as a filterable log.</li>
+        <li>Shows the most per screen (8 agents, 15 events, spend heatmap, file outline) at the cost of 11–12 px type and more visual noise.</li>
+      </ol>
+      <div class="chips" aria-label="Cobalt palette"><span class="chip"><i style="background:#0A1020"></i>#0A1020</span><span class="chip"><i style="background:#E4EAF5"></i>#E4EAF5</span><span class="chip"><i style="background:#4C93F0"></i>#4C93F0</span><span class="chip"><i style="background:#F2994A"></i>#F2994A</span><span class="chip"><i style="background:#F5F7FB"></i>#F5F7FB</span><span class="chip"><i style="background:#0F1B33"></i>#0F1B33</span><span class="chip"><i style="background:#1A5FC2"></i>#1A5FC2</span></div>
+      <p class="meta"><b>UI</b> Apple SD Gothic Neo (macOS system font, installed, nothing to ship) · <b>Mono</b> D2Coding ligature (OFL 1.1, installed)</p>
+      <p class="links"><a href="b-cobalt/home.html">home.html</a><a href="b-cobalt/file.html">file.html</a><a href="b-cobalt/tokens.json">tokens.json</a></p>
+    </div>
+    <figure><a href="b-cobalt/home-dark.png"><img src="b-cobalt/home-dark.png" width="1440" height="900" alt="Cobalt, Home, dark"></a><figcaption>Home · dark</figcaption></figure>
+    <figure><a href="b-cobalt/home-light.png"><img src="b-cobalt/home-light.png" width="1440" height="900" alt="Cobalt, Home, light" loading="lazy"></a><figcaption>Home · light</figcaption></figure>
+    <figure><a href="b-cobalt/file-dark.png"><img src="b-cobalt/file-dark.png" width="1440" height="900" alt="Cobalt, README.md in Split, dark" loading="lazy"></a><figcaption>File tab, Split · dark</figcaption></figure>
+    <figure><a href="b-cobalt/file-light.png"><img src="b-cobalt/file-light.png" width="1440" height="900" alt="Cobalt, README.md in Split, light" loading="lazy"></a><figcaption>File tab, Split · light</figcaption></figure>
+  </section>
+
+  <section aria-labelledby="c">
+    <div class="head">
+      <h2 id="c">C · Denim <small>warm editorial, light-first</small></h2>
+      <ol>
+        <li>Home opens with one sentence: who is waiting and what they ask, set at 28 px, with the reply action right under it.</li>
+        <li>Stages are horizontal bands led by large numerals; Inbox, To-do, Routines and events sit in a margin column ruled by hairlines, not boxes.</li>
+        <li>Most readable (14 px base, 30 px rows; the preview is typeset like a page) but shows the least at once and needs the most vertical room.</li>
+      </ol>
+      <div class="chips" aria-label="Denim palette"><span class="chip"><i style="background:#F7F4EC"></i>#F7F4EC</span><span class="chip"><i style="background:#1E2A44"></i>#1E2A44</span><span class="chip"><i style="background:#35528F"></i>#35528F</span><span class="chip"><i style="background:#D9895B"></i>#D9895B</span><span class="chip"><i style="background:#161B26"></i>#161B26</span><span class="chip"><i style="background:#E9E4D8"></i>#E9E4D8</span><span class="chip"><i style="background:#8AA6DA"></i>#8AA6DA</span></div>
+      <p class="meta"><b>UI</b> IBM Plex Sans KR (OFL 1.1, not installed: ship OTF in <code>mods/lazuli/fonts/</code>) · <b>Mono</b> D2Coding ligature (OFL 1.1, installed)</p>
+      <p class="links"><a href="c-denim/home.html">home.html</a><a href="c-denim/file.html">file.html</a><a href="c-denim/tokens.json">tokens.json</a></p>
+    </div>
+    <figure><a href="c-denim/home-dark.png"><img src="c-denim/home-dark.png" width="1440" height="900" alt="Denim, Home, dark"></a><figcaption>Home · dark</figcaption></figure>
+    <figure><a href="c-denim/home-light.png"><img src="c-denim/home-light.png" width="1440" height="900" alt="Denim, Home, light" loading="lazy"></a><figcaption>Home · light (default for this direction)</figcaption></figure>
+    <figure><a href="c-denim/file-dark.png"><img src="c-denim/file-dark.png" width="1440" height="900" alt="Denim, README.md in Split, dark" loading="lazy"></a><figcaption>File tab, Split · dark</figcaption></figure>
+    <figure><a href="c-denim/file-light.png"><img src="c-denim/file-light.png" width="1440" height="900" alt="Denim, README.md in Split, light" loading="lazy"></a><figcaption>File tab, Split · light</figcaption></figure>
+  </section>
+</main>
+<footer>
+  <ul>
+    <li>Rebuild: <code>python3 docs/mockups/build.py</code> writes each <code>tokens.css</code> from <code>tokens.json</code> and re-renders the 12 PNGs (headless Google Chrome, 1440 × 900, scale 1).</li>
+    <li>Every text and accent token measures ≥ 4.5:1 on every surface it can sit on; the ratios are stored under <code>contrast</code> in each <code>tokens.json</code>.</li>
+    <li>Drawn with what Herdr's GPUI can draw: flex rows and columns, 1 px borders, radii, solid fills, one small shadow. HTML tables, <code>::after</code> markers and text ellipsis stand in for fixed-width flex rows, child elements and GPUI truncation.</li>
+    <li>Icons: Lucide (ISC). Agent marks: as shipped in Herdr's <code>icons/</code>. The lazuli marks are placeholders until the logo is drawn (C2).</li>
+  </ul>
+</footer>
+</body>
+</html>
