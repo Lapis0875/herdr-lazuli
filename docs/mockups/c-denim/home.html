@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>lazuli · C Denim · 홈</title>
+<script>document.documentElement.dataset.theme = new URLSearchParams(location.search).get("theme") || "light";</script>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="window">
+  <aside class="sidebar">
+    <div class="lights" aria-hidden="true"><span></span><span></span><span></span></div>
+    <div class="brand">
+      <div class="name">
+        <svg class="logo" viewBox="0 0 20 20" aria-hidden="true"><rect x="1" y="1" width="18" height="18" rx="5" fill="var(--accent)"/><rect x="4.5" y="4.5" width="11" height="11" rx="2.5" fill="none" stroke="var(--secondary)" stroke-width="1.3" stroke-dasharray="2.2 1.6"/></svg>
+        lazuli
+      </div>
+      <span class="ibtn" aria-label="검색"><svg class="i"><use href="#i-search"/></svg></span>
+      <span class="ibtn" aria-label="사이드바 접기"><svg class="i"><use href="#i-sidebar"/></svg></span>
+    </div>
+    <div class="sb-body">
+      <div class="palette"><svg class="i s"><use href="#i-search"/></svg><span>무엇이든 찾기…</span><kbd>⇧⌘P</kbd></div>
+      <nav class="nav">
+        <a class="on"><svg class="i"><use href="#i-layout-dashboard"/></svg><span class="lbl">홈</span></a>
+        <a><svg class="i"><use href="#i-columns"/></svg><span class="lbl">작업</span></a>
+        <a><svg class="i"><use href="#i-inbox"/></svg><span class="lbl">수신함</span><span class="n wait">5</span></a>
+        <a><svg class="i"><use href="#i-list-todo"/></svg><span class="lbl">할 일</span><span class="n">3</span></a>
+        <a><svg class="i"><use href="#i-calendar-clock"/></svg><span class="lbl">루틴</span><span class="n c-run">실행 중</span></a>
+      </nav>
+      <div class="sec"><span>스페이스</span><svg class="i s"><use href="#i-plus"/></svg></div>
+      <div class="machine"><svg class="i s"><use href="#i-server"/></svg>이 Mac</div>
+      <div class="space"><svg class="i s"><use href="#i-chevron-down"/></svg>lazuli<span class="br">redesign/no-cockpit</span></div>
+      <div class="agent on"><span class="dot working"></span><svg class="am omp"><use href="#agent-omp"/></svg><span class="t">미리보기 렌더러</span><span class="m">23분</span></div>
+      <div class="agent"><span class="dot blocked"></span><svg class="am"><use href="#agent-claude"/></svg><span class="t">Files 확인 문구</span><span class="m wait">답 필요</span></div>
+      <div class="agent"><span class="dot working"></span><svg class="am"><use href="#agent-claude"/></svg><span class="t">PDF 헬퍼 빌드</span><span class="m">41분</span></div>
+      <div class="agent"><span class="dot done"></span><svg class="am"><use href="#agent-codex"/></svg><span class="t">i18n 키 테스트</span><span class="m">끝남</span></div>
+      <div class="agent"><span class="dot idle"></span><svg class="i s"><use href="#i-terminal"/></svg><span class="t">zsh</span></div>
+      <div class="space"><svg class="i s"><use href="#i-chevron-down"/></svg>herdr-relay<span class="br">main</span></div>
+      <div class="agent"><span class="dot blocked"></span><svg class="am"><use href="#agent-codex"/></svg><span class="t">gh 허용 범위</span><span class="m wait">답 필요</span></div>
+      <div class="agent"><span class="dot done"></span><svg class="am omp"><use href="#agent-omp"/></svg><span class="t">재연결 백오프</span><span class="m">#212</span></div>
+      <div class="space"><svg class="i s"><use href="#i-chevron-right"/></svg>resume<span class="br">main</span><span class="dot working"></span></div>
+      <div class="machine" style="margin-top:8px"><svg class="i s"><use href="#i-server"/></svg>mac-mini</div>
+      <div class="space"><svg class="i s"><use href="#i-chevron-right"/></svg>LMS-Helper<span class="br">fix/tz-deadline</span><span class="dot done"></span></div>
+    </div>
+    <div class="sb-foot">
+      <a><svg class="i s"><use href="#i-settings"/></svg>설정</a>
+      <a class="d"><svg class="i s"><use href="#i-plus"/></svg>머신 추가</a>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="tabs">
+        <div class="tab on"><svg class="am omp"><use href="#agent-omp"/></svg>미리보기 렌더러</div>
+        <div class="tab"><svg class="am"><use href="#agent-claude"/></svg>Files 확인 문구<span class="wait"></span></div>
+        <div class="tab"><svg class="am"><use href="#agent-claude"/></svg>PDF 헬퍼 빌드</div>
+        <div class="tab"><svg class="am"><use href="#agent-codex"/></svg>i18n 키 테스트</div>
+        <div class="tab"><svg class="i s"><use href="#i-terminal"/></svg>zsh</div>
+        <span class="tab-add"><svg class="i s"><use href="#i-plus"/></svg></span>
+      </div>
+      <div class="bell" aria-label="알림 3건"><svg class="i" style="width:18px;height:18px"><use href="#i-bell"/></svg><span class="n">3</span></div>
+    </header>
+
+    <div class="center">
+      <main class="card home">
+        <div class="lead">
+          <div class="body">
+            <div class="eyebrow"><span>11월 19일 목요일 · 오후 2:14</span><span class="mark"><svg class="i s"><use href="#i-hand"/></svg>다음 할 일</span></div>
+            <h1><em>Claude Code</em>가 6분째 답을 기다리고 있어요.</h1>
+            <p class="deck">lazuli에서 묻는 중: <q>Files 패널 이름 바꾸기 확인 문구를 ‘덮어쓰기 / 다시 불러오기’로 할까요?</q></p>
+            <div class="acts"><span class="btn solid">응답하기 <kbd>⌘J</kbd></span><span class="btn">에이전트 화면 열기</span><span class="btn link">다음 대기: Codex · herdr-relay 14분 →</span></div>
+          </div>
+          <aside class="spendbox">
+            <div class="h3"><svg class="i s muted"><use href="#i-chart-column"/></svg>이번 주 사용량</div>
+            <div class="spend"><b>$38.40</b><span>지난주 이맘때보다 $5.30 적게</span></div>
+            <div class="bars"><i class="on" style="height:62%"></i><i class="on" style="height:88%"></i><i class="on" style="height:68%"></i><i class="today" style="height:34%"></i><i style="height:8%"></i><i style="height:8%"></i><i style="height:8%"></i></div>
+            <div class="days"><span>월</span><span>화</span><span>수</span><span style="color:var(--foreground)">목</span><span>금</span><span>토</span><span>일</span></div>
+            <div class="who3"><span>omp <b>$21.10</b></span><span>Claude <b>$14.90</b></span><span>Codex <b>$2.40</b></span></div>
+          </aside>
+        </div>
+
+        <div class="cols">
+          <div class="stages">
+            <div class="band">
+              <div class="lab"><b class="c-wait">2</b><span>나를 기다림</span><small>⌘J로 차례대로</small></div>
+              <div class="cards">
+                <div class="k wait">
+                  <div class="who"><svg class="am"><use href="#agent-claude"/></svg><b>Claude Code</b>lazuli<span class="sp"></span><span class="el wait">6분</span></div>
+                  <div class="task">Files 패널 이름 바꾸기 확인 문구, 이대로 갈까요?</div>
+                  <div class="meta"><span class="pr"><svg class="i"><use href="#i-git-pull-request-draft"/></svg>#48</span><span class="c-ok"><svg class="i"><use href="#i-circle-check"/></svg>CI 통과</span></div>
+                </div>
+                <div class="k wait">
+                  <div class="who"><svg class="am"><use href="#agent-codex"/></svg><b>Codex</b>herdr-relay<span class="sp"></span><span class="el wait">14분</span></div>
+                  <div class="task">relay 정책에서 gh api 쓰기 허용 범위를 정해 주세요</div>
+                  <div class="meta"><span><svg class="i"><use href="#i-git-branch"/></svg><span class="mono">policy/gh-scope</span></span></div>
+                </div>
+              </div>
+            </div>
+            <div class="band">
+              <div class="lab"><b class="c-run">3</b><span>작업 중</span><small>가장 오래 41분</small></div>
+              <div class="cards">
+                <div class="k">
+                  <div class="who"><svg class="am omp"><use href="#agent-omp"/></svg><b>omp</b>lazuli<span class="sp"></span><span class="el">23분</span></div>
+                  <div class="task">Markdown 미리보기: 표와 코드 블록 렌더링</div>
+                  <div class="meta"><span class="pr"><svg class="i"><use href="#i-git-pull-request"/></svg>#51</span><span class="c-run"><svg class="i"><use href="#i-circle-dashed"/></svg>CI 3/7</span></div>
+                </div>
+                <div class="k">
+                  <div class="who"><svg class="am"><use href="#agent-claude"/></svg><b>Claude Code</b>lazuli<span class="sp"></span><span class="el">41분</span></div>
+                  <div class="task">PDF 렌더러 Swift 헬퍼 빌드 스크립트</div>
+                  <div class="meta"><span><svg class="i"><use href="#i-git-branch"/></svg><span class="mono">feat/pdf-daemon</span></span></div>
+                </div>
+                <div class="k">
+                  <div class="who"><svg class="am omp"><use href="#agent-omp"/></svg><b>omp</b>resume<span class="sp"></span><span class="el">8분</span></div>
+                  <div class="task">경험 문서 3절 문장 다듬기</div>
+                  <div class="meta"><span class="dim">PR 없음</span></div>
+                </div>
+              </div>
+            </div>
+            <div class="band">
+              <div class="lab"><b class="c-ok">1</b><span>머지 준비</span><small>승인과 CI 모두 끝</small></div>
+              <div class="cards">
+                <div class="k">
+                  <div class="who"><svg class="am omp"><use href="#agent-omp"/></svg><b>omp</b>herdr-relay<span class="sp"></span><span class="el">1시간</span></div>
+                  <div class="task">WebSocket 재연결 백오프 수정</div>
+                  <div class="meta"><span class="pr"><svg class="i"><use href="#i-git-pull-request"/></svg>#212</span><span class="c-ok"><svg class="i"><use href="#i-check"/></svg>승인 2</span><span class="c-ok"><svg class="i"><use href="#i-circle-check"/></svg>CI</span></div>
+                </div>
+                <div class="empty" style="grid-column: span 2">리뷰를 기다리는 다른 PR은 없어요.</div>
+              </div>
+            </div>
+            <div class="band" style="border-bottom:0">
+              <div class="lab"><b class="muted">2</b><span>완료</span><small>⇧⌘U로 확인</small></div>
+              <div class="cards">
+                <div class="k">
+                  <div class="who"><svg class="am"><use href="#agent-codex"/></svg><b>Codex</b>lazuli<span class="sp"></span><span class="el">2시간</span></div>
+                  <div class="task">i18n 키 누락 검사 테스트 추가</div>
+                  <div class="meta"><span class="pr" style="color:var(--done)"><svg class="i"><use href="#i-git-merge"/></svg>#47 머지됨</span></div>
+                </div>
+                <div class="k">
+                  <div class="who"><svg class="am"><use href="#agent-claude"/></svg><b>Claude Code</b>LMS-Helper<span class="sp"></span><span class="el">3시간</span></div>
+                  <div class="task">과제 마감 알림 시간대 버그</div>
+                  <div class="meta"><span class="pr" style="color:var(--done)"><svg class="i"><use href="#i-git-merge"/></svg>#19 머지됨</span><span><svg class="i"><use href="#i-server"/></svg>mac-mini</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="margin">
+            <section>
+              <div class="h3"><svg class="i s muted"><use href="#i-inbox"/></svg>수신함<span class="n">5</span><span class="sp"></span><kbd>⌥⌘1</kbd></div>
+              <div class="li"><span class="tag c-wait">리뷰 요청</span><span class="t">relay: 장치별 정책 캐시</span><span class="r">#214</span></div>
+              <div class="li"><span class="tag c-fail">CI 실패</span><span class="t">policy.spec.ts 2건</span><span class="r">#214</span></div>
+              <div class="li"><span class="tag">댓글 3</span><span class="t">Files 패널 이름 바꾸기</span><span class="r">#48</span></div>
+            </section>
+            <section>
+              <div class="h3"><svg class="i s muted"><use href="#i-list-todo"/></svg>할 일<span class="n">3</span><span class="sp"></span><kbd>⌥⌘2</kbd></div>
+              <div class="li"><span class="box"></span><span class="t">terminal-notifier, macOS 27에서 확인</span><span class="r c-wait">오늘</span></div>
+              <div class="li"><span class="box"></span><span class="t">Kitty 그래픽 스파이크</span><span class="r">#53</span></div>
+              <div class="li"><span class="box"></span><span class="t">README.ko.md 초안</span></div>
+            </section>
+            <section>
+              <div class="h3"><svg class="i s muted"><use href="#i-calendar-clock"/></svg>루틴<span class="n">3</span><span class="sp"></span><kbd>⌥⌘3</kbd></div>
+              <div class="li"><span class="tag c-run">실행 중</span><span class="t">오래된 브랜치 정리</span><span class="r">1분</span></div>
+              <div class="li"><span class="tag c-done">09:00</span><span class="t">의존성 점검</span><span class="r">$0.42</span></div>
+              <div class="li"><span class="tag">18:00</span><span class="t">하루 회고 요약</span><span class="r">평일</span></div>
+            </section>
+            <section>
+              <div class="h3"><svg class="i s muted"><use href="#i-history"/></svg>최근 이벤트</div>
+              <div class="ev"><span class="tm">14:12</span><span class="t"><span class="c-fail">CI 실패</span> · relay #214<span class="dim">policy.spec.ts</span></span></div>
+              <div class="ev"><span class="tm">13:58</span><span class="t">리뷰 요청 · relay #214<span class="dim">@jhpark</span></span></div>
+              <div class="ev"><span class="tm">13:41</span><span class="t"><span class="c-done">머지됨</span> · lazuli #47<span class="dim">i18n 검사</span></span></div>
+            </section>
+            <div class="note">
+              <div class="h3" style="height:20px"><svg class="i s c-wait"><use href="#i-rotate-ccw"/></svg>복원 대기 터미널 2<span class="sp"></span><span class="btn link" style="height:20px;font-size:12.5px">모두 다시 시도 <kbd>⌥⌘R</kbd></span></div>
+              <div class="row"><svg class="i s muted"><use href="#i-terminal"/></svg><span class="t">zsh · resume<small>셸 시작을 기다리는 중</small></span></div>
+              <div class="row"><svg class="am omp"><use href="#agent-omp"/></svg><span class="t">omp · herdr-relay<small>세션 파일을 찾지 못했어요</small></span></div>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <nav class="rail" aria-label="패널">
+        <span class="rb"><svg class="i"><use href="#i-git-pull-request"/></svg>리뷰</span>
+        <span class="rb"><svg class="i"><use href="#i-folder"/></svg>파일</span>
+        <span class="rb"><svg class="i"><use href="#i-file-diff"/></svg>변경</span>
+        <span class="rb"><svg class="i"><use href="#i-workflow"/></svg>호출 트리</span>
+      </nav>
+    </div>
+
+    <footer class="status">
+      <div class="grp"><span>나를 기다림 <b class="c-wait">2</b></span><span>작업 중 <b class="c-run">3</b></span><span>머지 준비 <b class="c-ok">1</b></span><span>완료 <b>2</b></span></div>
+      <div class="grp"><svg class="am omp"><use href="#agent-omp"/></svg><span>omp · lazuli</span><a class="mono">PR #51</a><a>CI 실행 중</a><kbd>⌘G</kbd></div>
+      <span class="sp"></span>
+      <div class="grp"><svg class="i s"><use href="#i-send"/></svg><span>대기 프롬프트 <b>3</b></span><kbd>⌥⌘Q</kbd></div>
+    </footer>
+  </div>
+</div>
+<script src="../shared/icons.js"></script>
+</body>
+</html>

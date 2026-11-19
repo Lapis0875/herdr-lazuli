@@ -1,0 +1,20 @@
+{
+  "id": "lazuli",
+  "description": "lazuli read-only on herdr-relay devices: snapshots under data/lazuli, git reads (E4), hc reads (E6, E7), links opened on the device (E11) and the transcript scanner (E1); agent runs and the HTML viewer stay on the Mac (E2).",
+  "folders": ["lazuli"],
+  "requires": { "herdr": ">=0.1.16" },
+  "reads": { "appHome": ["icons/**", "my-icons/**", "layouts/*.svg"], "spaces": true },
+  "writes": { "extra": ["~/.cache/lazuli/**"] },
+  "exec": { "rows": ["E1", "E2", "E4", "E6", "E7", "E11"] },
+  "scripts": {
+    "mods/lazuli/bin/scan.mjs": {
+      "subcommands": ["tree", "detail", "run", "call", "transcript", "usage", "sessions"],
+      "maxArgs": 3,
+      "allow": { "read": ["~/**"], "write": ["~/.cache/lazuli/**"], "run": ["ps"] }
+    },
+    "mods/lazuli/bin/run-agent.mjs": { "refuse": "Agent runs start only in the Herdr window" },
+    "mods/lazuli/bin/html-view.mjs": { "refuse": "The HTML viewer runs only in the Herdr window" },
+    "mods/lazuli/bin/chrome-broker.mjs": { "refuse": "The HTML viewer runs only in the Herdr window" }
+  },
+  "overlay": "device"
+}

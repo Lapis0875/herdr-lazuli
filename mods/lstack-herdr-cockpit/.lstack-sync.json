@@ -1,8 +1,0 @@
-{
-  "generator": "mods/lstack-herdr/sync.mjs",
-  "cockpit": "0.38.5",
-  "upstream": "161f432fa97b5d03",
-  "source": "e94374573552c5ba",
-  "hooks": 17,
-  "warnings": []
-}

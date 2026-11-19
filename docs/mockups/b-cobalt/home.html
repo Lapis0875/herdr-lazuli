@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>lazuli · B Cobalt · 홈</title>
+<script>document.documentElement.dataset.theme = new URLSearchParams(location.search).get("theme") || "dark";</script>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="window">
+  <aside class="sidebar">
+    <div class="lights" aria-hidden="true"><span></span><span></span><span></span></div>
+    <div class="brand">
+      <div class="name">
+        <svg class="logo" viewBox="0 0 18 18" aria-hidden="true"><rect x="1" y="1" width="16" height="16" rx="3" fill="var(--accent)"/><path d="M5 5h4v4H5z" fill="var(--accent-foreground)"/><path d="M9 9h4v4H9z" fill="var(--accent-foreground)" opacity=".55"/><rect x="11" y="4" width="3" height="3" fill="var(--secondary)"/></svg>
+        lazuli <small>0.1</small>
+      </div>
+      <span class="ibtn" aria-label="검색"><svg class="i"><use href="#i-search"/></svg></span>
+      <span class="ibtn" aria-label="사이드바 접기"><svg class="i"><use href="#i-sidebar"/></svg></span>
+    </div>
+    <div class="sb-body">
+      <div class="palette"><svg class="i s"><use href="#i-command"/></svg><span>명령, 탭, 에이전트, PR 검색</span><kbd>⇧⌘P</kbd></div>
+      <nav class="nav">
+        <a class="on"><svg class="i"><use href="#i-layout-dashboard"/></svg><span class="lbl">홈</span><kbd>⌥⌘0</kbd></a>
+        <a><svg class="i"><use href="#i-columns"/></svg><span class="lbl">작업</span><kbd>⌥⌘A</kbd></a>
+        <a><svg class="i"><use href="#i-inbox"/></svg><span class="lbl">수신함</span><span class="badge wait">5</span></a>
+        <a><svg class="i"><use href="#i-list-todo"/></svg><span class="lbl">할 일</span><span class="badge">3</span></a>
+        <a><svg class="i"><use href="#i-calendar-clock"/></svg><span class="lbl">루틴</span><span class="badge run">▶ 1</span></a>
+      </nav>
+      <div class="tree-s">
+        <div class="strip-t">스페이스<span class="n">4 · 에이전트 8</span><span class="sp"></span><svg class="i s"><use href="#i-plus"/></svg></div>
+        <div class="tn mach" style="padding-left:10px">이 MAC</div>
+        <div class="tn sp-row" style="padding-left:6px"><span class="tw"><svg class="i s"><use href="#i-chevron-down"/></svg></span><span class="t">lazuli <span class="br">redesign/no-cockpit</span></span></div>
+        <div class="tn on" style="padding-left:24px"><span class="guide" style="left:12px"></span><svg class="st-ic c-run"><use href="#i-loader"/></svg><svg class="am omp"><use href="#agent-omp"/></svg><span class="t">미리보기 렌더러</span><span class="r">23m</span></div>
+        <div class="tn" style="padding-left:24px"><span class="guide" style="left:12px"></span><svg class="st-ic c-wait"><use href="#i-hand"/></svg><svg class="am"><use href="#agent-claude"/></svg><span class="t">Files 확인 문구</span><span class="r c-wait">6m</span></div>
+        <div class="tn" style="padding-left:24px"><span class="guide" style="left:12px"></span><svg class="st-ic c-run"><use href="#i-loader"/></svg><svg class="am"><use href="#agent-claude"/></svg><span class="t">PDF 헬퍼 빌드</span><span class="r">41m</span></div>
+        <div class="tn" style="padding-left:24px"><span class="guide" style="left:12px"></span><svg class="st-ic c-done"><use href="#i-check"/></svg><svg class="am"><use href="#agent-codex"/></svg><span class="t">i18n 키 테스트</span><span class="r">#47</span></div>
+        <div class="tn" style="padding-left:24px"><span class="guide" style="left:12px"></span><svg class="st-ic dim"><use href="#i-circle"/></svg><svg class="i s dim"><use href="#i-terminal"/></svg><span class="t">zsh</span><span class="r">idle</span></div>
+        <div class="tn sp-row" style="padding-left:6px"><span class="tw"><svg class="i s"><use href="#i-chevron-down"/></svg></span><span class="t">herdr-relay <span class="br">main</span></span></div>
+        <div class="tn" style="padding-left:24px"><span class="guide" style="left:12px"></span><svg class="st-ic c-wait"><use href="#i-hand"/></svg><svg class="am"><use href="#agent-codex"/></svg><span class="t">gh 허용 범위</span><span class="r c-wait">14m</span></div>
+        <div class="tn" style="padding-left:24px"><span class="guide" style="left:12px"></span><svg class="st-ic c-ok"><use href="#i-git-merge"/></svg><svg class="am omp"><use href="#agent-omp"/></svg><span class="t">재연결 백오프</span><span class="r">#212</span></div>
+        <div class="tn sp-row" style="padding-left:6px"><span class="tw"><svg class="i s"><use href="#i-chevron-right"/></svg></span><span class="t">resume <span class="br">main</span></span><span class="r c-run">1 ▶</span></div>
+        <div class="tn mach" style="padding-left:10px;margin-top:4px">MAC-MINI <span style="margin-left:6px;color:var(--success)">● 연결됨</span></div>
+        <div class="tn sp-row" style="padding-left:6px"><span class="tw"><svg class="i s"><use href="#i-chevron-right"/></svg></span><span class="t">LMS-Helper <span class="br">fix/tz-deadline</span></span><span class="r c-done">1 ✓</span></div>
+      </div>
+    </div>
+    <div class="sb-foot">
+      <a><svg class="i s"><use href="#i-settings"/></svg>설정<kbd>⌘,</kbd></a>
+      <a class="d"><svg class="i s"><use href="#i-plus"/></svg>머신 추가</a>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="tabs">
+        <div class="tab on"><svg class="am omp"><use href="#agent-omp"/></svg><span class="t">미리보기 렌더러</span><svg class="stc c-run"><use href="#i-loader"/></svg><span class="x">×</span></div>
+        <div class="tab"><svg class="am"><use href="#agent-claude"/></svg><span class="t">Files 확인 문구</span><svg class="stc c-wait"><use href="#i-hand"/></svg></div>
+        <div class="tab"><svg class="am"><use href="#agent-claude"/></svg><span class="t">PDF 헬퍼 빌드</span><svg class="stc c-run"><use href="#i-loader"/></svg></div>
+        <div class="tab"><svg class="am"><use href="#agent-codex"/></svg><span class="t">i18n 키 테스트</span><svg class="stc c-done"><use href="#i-check"/></svg></div>
+        <div class="tab"><svg class="i s"><use href="#i-terminal"/></svg><span class="t">zsh</span></div>
+        <div class="tab" style="border-right:0;padding:0 10px"><svg class="i s dim"><use href="#i-plus"/></svg></div>
+      </div>
+      <div class="bell" aria-label="알림 3건"><svg class="i"><use href="#i-bell-dot"/></svg><b>3</b></div>
+    </header>
+
+    <div class="center">
+      <div class="home">
+        <div class="left">
+          <section class="tile pipe">
+            <div class="tt"><svg class="i"><use href="#i-route"/></svg>에이전트 파이프라인<span class="n">8</span><span class="sp"></span><span class="act"><span class="mono" style="font-size:10.5px">gh 동기화 14:13:02</span><span class="ibtn"><svg class="i s"><use href="#i-refresh-cw"/></svg></span><span class="ibtn"><svg class="i s"><use href="#i-sparkles"/></svg></span></span></div>
+            <table class="ptable">
+              <colgroup><col style="width:246px"><col><col><col><col><col style="width:66px"><col style="width:88px"></colgroup>
+              <thead><tr><th>에이전트 · 작업</th><th class="stg"><span class="c-wait">나를 기다림</span></th><th class="stg"><span class="c-run">작업 중</span></th><th class="stg"><span class="c-ok">머지 준비</span></th><th class="stg"><span>완료</span></th><th>PR</th><th>CI</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td><div class="who"><div class="a"><svg class="am"><use href="#agent-claude"/></svg><b>Claude Code</b><span class="mono">lazuli</span></div><div class="t">Files 패널 이름 바꾸기 확인 문구, 이대로 갈까요?</div></div></td>
+                  <td class="cell"><div class="trk"><span class="stop c-wait"><svg class="i"><use href="#i-hand"/></svg>6m</span></div></td>
+                  <td class="cell"><div class="trk"><span class="fut"></span></div></td><td class="cell"><div class="trk"><span class="fut"></span></div></td><td class="cell"><div class="trk"><span class="fut"></span></div></td>
+                  <td><span class="pr"><svg class="i"><use href="#i-git-pull-request-draft"/></svg>#48</span></td>
+                  <td><span class="ci c-ok"><svg class="i"><use href="#i-circle-check"/></svg>통과</span></td>
+                </tr>
+                <tr>
+                  <td><div class="who"><div class="a"><svg class="am"><use href="#agent-codex"/></svg><b>Codex</b><span class="mono">herdr-relay · policy/gh-scope</span></div><div class="t">relay 정책: gh api 쓰기 허용 범위 질문</div></div></td>
+                  <td class="cell"><div class="trk"><span class="stop c-wait"><svg class="i"><use href="#i-hand"/></svg>14m</span></div></td>
+                  <td class="cell"><div class="trk"><span class="fut"></span></div></td><td class="cell"><div class="trk"><span class="fut"></span></div></td><td class="cell"><div class="trk"><span class="fut"></span></div></td>
+                  <td><span class="dim mono">—</span></td><td><span class="dim mono">—</span></td>
+                </tr>
+                <tr class="sel">
+                  <td><div class="who"><div class="a"><svg class="am omp"><use href="#agent-omp"/></svg><b>omp</b><span class="mono">lazuli · 포커스</span></div><div class="t">Markdown 미리보기: 표·코드 블록 렌더링</div></div></td>
+                  <td class="cell"><div class="trk"><span class="line"></span></div></td>
+                  <td class="cell"><div class="trk"><span class="line half"></span><span class="stop c-run"><svg class="i"><use href="#i-loader"/></svg>23m</span></div></td>
+                  <td class="cell"><div class="trk"><span class="fut"></span></div></td><td class="cell"><div class="trk"><span class="fut"></span></div></td>
+                  <td><span class="pr"><svg class="i"><use href="#i-git-pull-request"/></svg>#51</span></td>
+                  <td><span class="ci c-run"><svg class="i"><use href="#i-circle-dashed"/></svg>3/7</span></td>
+                </tr>
+                <tr>
+                  <td><div class="who"><div class="a"><svg class="am"><use href="#agent-claude"/></svg><b>Claude Code</b><span class="mono">lazuli · feat/pdf-daemon</span></div><div class="t">PDF 렌더러 Swift 헬퍼 빌드 스크립트</div></div></td>
+                  <td class="cell"><div class="trk"><span class="line"></span></div></td>
+                  <td class="cell"><div class="trk"><span class="line half"></span><span class="stop c-run"><svg class="i"><use href="#i-loader"/></svg>41m</span></div></td>
+                  <td class="cell"><div class="trk"><span class="fut"></span></div></td><td class="cell"><div class="trk"><span class="fut"></span></div></td>
+                  <td><span class="dim mono">—</span></td><td><span class="dim mono">—</span></td>
+                </tr>
+                <tr>
+                  <td><div class="who"><div class="a"><svg class="am omp"><use href="#agent-omp"/></svg><b>omp</b><span class="mono">resume</span></div><div class="t">경험 문서 3절 문장 다듬기</div></div></td>
+                  <td class="cell"><div class="trk"><span class="line"></span></div></td>
+                  <td class="cell"><div class="trk"><span class="line half"></span><span class="stop c-run"><svg class="i"><use href="#i-loader"/></svg>8m</span></div></td>
+                  <td class="cell"><div class="trk"><span class="fut"></span></div></td><td class="cell"><div class="trk"><span class="fut"></span></div></td>
+                  <td><span class="dim mono">—</span></td><td><span class="dim mono">—</span></td>
+                </tr>
+                <tr>
+                  <td><div class="who"><div class="a"><svg class="am omp"><use href="#agent-omp"/></svg><b>omp</b><span class="mono">herdr-relay</span></div><div class="t">WebSocket 재연결 백오프 수정</div></div></td>
+                  <td class="cell"><div class="trk"><span class="line"></span></div></td><td class="cell"><div class="trk"><span class="line"></span></div></td>
+                  <td class="cell"><div class="trk"><span class="line half"></span><span class="stop c-ok"><svg class="i"><use href="#i-git-merge"/></svg>✓2</span></div></td>
+                  <td class="cell"><div class="trk"><span class="fut"></span></div></td>
+                  <td><span class="pr"><svg class="i"><use href="#i-git-pull-request"/></svg>#212</span></td>
+                  <td><span class="ci c-ok"><svg class="i"><use href="#i-circle-check"/></svg>통과</span></td>
+                </tr>
+                <tr>
+                  <td><div class="who"><div class="a"><svg class="am"><use href="#agent-codex"/></svg><b>Codex</b><span class="mono">lazuli</span></div><div class="t">i18n 키 누락 검사 테스트 추가</div></div></td>
+                  <td class="cell"><div class="trk"><span class="line"></span></div></td><td class="cell"><div class="trk"><span class="line"></span></div></td><td class="cell"><div class="trk"><span class="line"></span></div></td>
+                  <td class="cell"><div class="trk"><span class="line half"></span><span class="stop c-done"><svg class="i"><use href="#i-check"/></svg>2h</span></div></td>
+                  <td><span class="pr" style="color:var(--done)"><svg class="i"><use href="#i-git-merge"/></svg>#47</span></td>
+                  <td><span class="ci c-ok"><svg class="i"><use href="#i-circle-check"/></svg>통과</span></td>
+                </tr>
+                <tr>
+                  <td><div class="who"><div class="a"><svg class="am"><use href="#agent-claude"/></svg><b>Claude Code</b><span class="mono">LMS-Helper @mac-mini</span></div><div class="t">과제 마감 알림 시간대 버그</div></div></td>
+                  <td class="cell"><div class="trk"><span class="line"></span></div></td><td class="cell"><div class="trk"><span class="line"></span></div></td><td class="cell"><div class="trk"><span class="line"></span></div></td>
+                  <td class="cell"><div class="trk"><span class="line half"></span><span class="stop c-done"><svg class="i"><use href="#i-check"/></svg>3h</span></div></td>
+                  <td><span class="pr" style="color:var(--done)"><svg class="i"><use href="#i-git-merge"/></svg>#19</span></td>
+                  <td><span class="ci c-ok"><svg class="i"><use href="#i-circle-check"/></svg>통과</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="tile log">
+            <div class="tt"><svg class="i"><use href="#i-history"/></svg>최근 이벤트<span class="n">오늘 31</span><span class="sp"></span><span class="act"><span class="ibtn"><svg class="i s"><use href="#i-search"/></svg></span></span></div>
+            <div class="filters"><span class="flt on">전체</span><span class="flt"><span class="c-fail">●</span>CI</span><span class="flt"><span class="c-wait">●</span>응답</span><span class="flt">리뷰</span><span class="flt">머지</span><span class="flt">루틴</span><span class="flt">복원</span></div>
+            <div class="rows">
+              <div class="lg hl"><span class="ts">14:12:08</span><span class="lv c-fail">CI 실패</span><span class="src">relay#214</span><span class="msg">policy.spec.ts 2건 실패 <span class="mono">· gh-scope › denies write</span></span></div>
+              <div class="lg"><span class="ts">14:06:51</span><span class="lv c-wait">응답 대기</span><span class="src">lazuli</span><span class="msg">Claude Code가 답을 기다림 <span class="mono">· Files 확인 문구</span></span></div>
+              <div class="lg"><span class="ts">13:58:30</span><span class="lv c-run">리뷰</span><span class="src">relay#214</span><span class="msg">@jhpark이 리뷰를 요청함</span></div>
+              <div class="lg"><span class="ts">13:52:12</span><span class="lv c-run">CI 시작</span><span class="src">lazuli#51</span><span class="msg">작업 7개 · macos-14, ubuntu-24.04</span></div>
+              <div class="lg"><span class="ts">13:41:05</span><span class="lv c-done">머지</span><span class="src">lazuli#47</span><span class="msg">i18n 키 누락 검사 테스트 추가</span></div>
+              <div class="lg"><span class="ts">13:33:47</span><span class="lv muted">에이전트</span><span class="src">resume</span><span class="msg">omp 작업 시작 <span class="mono">· 경험 문서 3절</span></span></div>
+              <div class="lg"><span class="ts">13:20:00</span><span class="lv c-done">루틴</span><span class="src">의존성 점검</span><span class="msg">업데이트 2건 <span class="mono">· $0.42 · 3m 12s</span></span></div>
+              <div class="lg"><span class="ts">13:02:19</span><span class="lv c-ok">CI 통과</span><span class="src">relay#212</span><span class="msg">모든 검사 통과 <span class="mono">· 9/9</span></span></div>
+              <div class="lg"><span class="ts">12:57:44</span><span class="lv c-run">PR</span><span class="src">lazuli#51</span><span class="msg">열림 <span class="mono">· Markdown 미리보기</span></span></div>
+              <div class="lg"><span class="ts">12:40:10</span><span class="lv c-warn">복원 실패</span><span class="src">relay</span><span class="msg">omp 세션 파일을 찾지 못함</span></div>
+              <div class="lg"><span class="ts">12:39:58</span><span class="lv c-warn">복원 대기</span><span class="src">resume</span><span class="msg">zsh 셸 다시 시작 대기</span></div>
+              <div class="lg"><span class="ts">12:31:26</span><span class="lv c-ok">승인</span><span class="src">relay#212</span><span class="msg">@jhpark 승인 <span class="mono">· 2/2</span></span></div>
+              <div class="lg"><span class="ts">12:10:03</span><span class="lv c-done">머지</span><span class="src">LMS#19</span><span class="msg">과제 마감 알림 시간대 버그 <span class="mono">· mac-mini</span></span></div>
+              <div class="lg"><span class="ts">11:48:37</span><span class="lv c-ok">CI 통과</span><span class="src">LMS#19</span><span class="msg">모든 검사 통과 <span class="mono">· 4/4</span></span></div>
+              <div class="lg"><span class="ts">11:30:02</span><span class="lv muted">에이전트</span><span class="src">lazuli</span><span class="msg">Claude Code 작업 시작 <span class="mono">· PDF 헬퍼</span></span></div>
+            </div>
+          </section>
+        </div>
+
+        <div class="right">
+          <section class="tile">
+            <div class="tt"><svg class="i c-wait"><use href="#i-hand"/></svg>다음 할 일<span class="sp"></span><span class="act"><kbd>⌘J</kbd> 다음 대기 · <kbd>⇧⌘J</kbd> 다음 막힘</span></div>
+            <div class="next-t">
+              <div class="q"><svg class="am"><use href="#agent-claude"/></svg><div><b>Claude Code</b> <span class="dim">lazuli · 6m 대기</span><br>Files 패널 이름 바꾸기 확인 문구를 ‘덮어쓰기 / 다시 불러오기’로 할까요?</div></div>
+              <div class="acts"><span class="btn solid">응답하기 <kbd>⌘J</kbd></span><span class="btn">에이전트 보기 <kbd>⌥⌘A</kbd></span><span class="btn">10분 미루기</span></div>
+            </div>
+          </section>
+          <section class="tile">
+            <div class="tt"><svg class="i"><use href="#i-inbox"/></svg>수신함<span class="n">5</span><span class="sp"></span><span class="act"><kbd>⌥⌘1</kbd></span></div>
+            <table class="mini">
+              <tr><td class="k c-wait">리뷰 요청</td><td>relay: 장치별 정책 캐시 <span class="dim">@jhpark</span></td><td class="r">relay#214</td></tr>
+              <tr><td class="k c-fail">CI 실패</td><td>policy.spec.ts 2건</td><td class="r">relay#214</td></tr>
+              <tr><td class="k muted">댓글 3</td><td>Files 패널 이름 바꾸기</td><td class="r">lazuli#48</td></tr>
+              <tr><td class="k c-run">내 PR</td><td>Markdown 미리보기 · CI 3/7</td><td class="r">lazuli#51</td></tr>
+              <tr><td class="k c-ok">내 PR</td><td>재연결 백오프 · 머지 가능</td><td class="r">relay#212</td></tr>
+            </table>
+          </section>
+          <section class="tile">
+            <div class="tt"><svg class="i"><use href="#i-list-todo"/></svg>할 일<span class="n">3 · 오늘 완료 2</span><span class="sp"></span><span class="act"><kbd>⌥⌘2</kbd></span></div>
+            <table class="mini">
+              <tr><td class="c"><span class="cbx"></span></td><td>terminal-notifier, macOS 27에서 확인</td><td class="r c-wait">오늘</td></tr>
+              <tr><td class="c"><span class="cbx"></span></td><td>Kitty 그래픽 스파이크 (B7)</td><td class="r">lazuli#53</td></tr>
+              <tr><td class="c"><span class="cbx"></span></td><td>README.ko.md 초안</td><td class="r"></td></tr>
+            </table>
+          </section>
+          <section class="tile">
+            <div class="tt"><svg class="i"><use href="#i-calendar-clock"/></svg>루틴<span class="n">3</span><span class="sp"></span><span class="act"><kbd>⌥⌘3</kbd></span></div>
+            <table class="mini">
+              <tr><td class="k c-run">▶ 실행 중</td><td>오래된 브랜치 정리 <span class="dim mono">sh</span></td><td class="r">1m 04s</td></tr>
+              <tr><td class="k c-done">✓ 09:00</td><td>의존성 점검 <span class="dim mono">omp</span></td><td class="r">$0.42</td></tr>
+              <tr><td class="k muted">◷ 18:00</td><td>하루 회고 요약 <span class="dim mono">omp</span></td><td class="r">평일</td></tr>
+            </table>
+          </section>
+          <section class="tile" style="flex:1">
+            <div class="tt"><svg class="i"><use href="#i-chart-column"/></svg>이번 주 사용량<span class="sp"></span><span class="act mono" style="font-size:10.5px">11/16–11/22</span></div>
+            <div class="spend-b">
+              <div class="spend-h"><span class="big">$38.40</span><span class="dim">지난주 같은 기간 $43.70 · Codex는 사용량 기록이 있는 세션만</span></div>
+              <div class="heat">
+                <span></span><span class="h">월</span><span class="h">화</span><span class="h">수</span><span class="h today">목</span><span class="h">금</span><span class="h">토</span><span class="h">일</span><span></span>
+                <span class="l">omp</span><i class="q2"></i><i class="q3"></i><i class="q2"></i><i class="q1"></i><i></i><i></i><i></i><span class="v">$21.10</span>
+                <span class="l">Claude Code</span><i class="q1"></i><i class="q3"></i><i class="q2"></i><i class="q1"></i><i></i><i></i><i></i><span class="v">$14.90</span>
+                <span class="l">Codex</span><i></i><i class="q1"></i><i></i><i class="q1"></i><i></i><i></i><i></i><span class="v">$2.40</span>
+                <span class="l dim">합계</span><span class="h">9.8</span><span class="h">13.9</span><span class="h">10.2</span><span class="h today">4.5</span><span class="h">·</span><span class="h">·</span><span class="h">·</span><span class="v">$38.40</span>
+              </div>
+              <table class="mini" style="margin-top:4px;border-top:1px solid var(--border)">
+                <tr><td class="k muted">상위 세션</td><td>omp · lazuli · 미리보기 렌더러</td><td class="r">$4.12</td></tr>
+                <tr><td class="k muted"></td><td>Claude Code · lazuli · PDF 헬퍼</td><td class="r">$3.80</td></tr>
+                <tr><td class="k muted"></td><td>omp · herdr-relay · 재연결 백오프</td><td class="r">$2.95</td></tr>
+              </table>
+            </div>
+          </section>
+          <section class="tile">
+            <div class="tt"><svg class="i c-warn"><use href="#i-rotate-ccw"/></svg>복원 대기 터미널<span class="n">2</span><span class="sp"></span><span class="btn">모두 다시 시도 <kbd>⌥⌘R</kbd></span></div>
+            <div class="rst">
+              <div class="rr"><svg class="i s muted"><use href="#i-terminal"/></svg><div class="t">zsh · resume<small>~/Resume · 셸 시작 대기 중</small></div><span class="mono dim" style="font-size:10.5px">12:39</span></div>
+              <div class="rr"><svg class="am omp"><use href="#agent-omp"/></svg><div class="t">omp · herdr-relay<small>세션 파일 없음 · ~/.omp/sessions/…/8f2c</small></div><span class="mono c-warn" style="font-size:10.5px">실패</span></div>
+            </div>
+          </section>
+        </div>
+      </div>
+      <nav class="rail" aria-label="패널">
+        <span class="rb" aria-label="리뷰 ⌃⌘1"><svg class="i"><use href="#i-git-pull-request"/></svg><span class="cnt">3</span></span>
+        <span class="rb" aria-label="파일 ⌃⌘2"><svg class="i"><use href="#i-folder"/></svg></span>
+        <span class="rb" aria-label="변경 사항 ⌃⌘3"><svg class="i"><use href="#i-file-diff"/></svg><span class="cnt acc">5</span></span>
+        <span class="rb" aria-label="에이전트 호출 트리 ⌃⌘4"><svg class="i"><use href="#i-workflow"/></svg></span>
+      </nav>
+    </div>
+
+    <footer class="status">
+      <span class="mode"><svg class="i s"><use href="#i-layout-dashboard"/></svg>홈</span>
+      <span class="seg"><svg class="i s c-wait"><use href="#i-hand"/></svg><b>2</b>나를 기다림</span>
+      <span class="seg"><svg class="i s c-run"><use href="#i-loader"/></svg><b>3</b>작업 중</span>
+      <span class="seg"><svg class="i s c-ok"><use href="#i-git-merge"/></svg><b>1</b>머지 준비</span>
+      <span class="seg"><svg class="i s c-done"><use href="#i-check"/></svg><b>2</b>완료</span>
+      <span class="seg"><svg class="am omp"><use href="#agent-omp"/></svg>omp · lazuli <a>#51</a><a class="c-run" style="color:var(--working)">CI 3/7</a><kbd>⌘G</kbd></span>
+      <span class="sp"></span>
+      <span class="seg r"><svg class="i s"><use href="#i-send"/></svg>대기 프롬프트 <b>3</b><kbd>⌥⌘Q</kbd></span>
+      <span class="seg r mono" style="font-size:10.5px">gh ✓ · omp ✓</span>
+    </footer>
+  </div>
+</div>
+<script src="../shared/icons.js"></script>
+</body>
+</html>
