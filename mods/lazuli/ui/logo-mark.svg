@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" fill="currentColor">
+  <!-- lazuli mark, one color for svg() tinting: the square-cut stone with its lit facet split off and the pyrite fleck cut out. -->
+  <path d="M3.3 15.2 15.2 3.3V9.17L9.17 15.2Z"/>
+  <path fill-rule="evenodd" d="M16.8 3.3 29.5 16 16 29.5 3.3 16.8H9.83L16.8 9.83ZM13 17a2 2 0 1 0 4 0a2 2 0 1 0-4 0Z"/>
+</svg>
