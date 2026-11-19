@@ -138,13 +138,23 @@ page with mermaid and math; that view shows the saved file only.
   closed; reopening shows it again within about a second.
 - Only the saved file is shown. The page reloads after each save, keeping the scroll position.
 - Pages are served by a loopback HTTP server (127.0.0.1, random port) so module scripts and `fetch()` work. Root: the
-  git top-level, else the file's folder. It serves disk content only.
+  git top-level, else the file's folder. It serves disk content only, and never a path with a dot-segment (`.git`,
+  `.env*` and any other name starting with `.`): those answer 404 (review fix: a previewed page must not read
+  repository secrets). A file inside a dot-folder (e.g. `.github/x.md`) is served with its own folder as the root; a
+  file whose own name starts with `.` is not served and the viewer says so.
 - The viewer's top line: file path, reload, open in browser, console error count.
 
 **B8. Chrome policy.**
 - One shared headless Chrome; one Chrome tab per HTML tab; it exits 5 minutes after the last HTML tab closes.
-- Separate profile at `~/.cache/lazuli/chrome-profile`. Network allowed.
-- In-page anchors and local HTML navigate inside the viewer; external http(s) links open in the default browser.
+- Separate profile at `~/.cache/lazuli/chrome-profile`. Network: requests to anything but the viewer's own loopback
+  server are blocked by default (every resource type through CDP Fetch, service workers and out-of-process frames
+  included; WebSockets and shared-worker requests refused by the server's CSP); Markdown pages may also load the pinned
+  mermaid/KaTeX files. The viewer's top line shows how many were blocked and an "Allow network" toggle (Ctrl+N) that
+  allows them for that tab until it closes, reloading the page (review fix). Not covered: DNS prefetch/preconnect and
+  WebRTC STUN.
+- In-page anchors and local HTML navigate inside the viewer; an external http(s) link opens in the default browser
+  only when the person clicked it in the viewer. A navigation the page starts by itself (script, meta refresh,
+  redirect) to an external URL is blocked and noted in the top line instead (review fix).
 - Browser lookup: Google Chrome → Chromium → Microsoft Edge → Brave. With none: static `TextView.html` plus "Open in
   browser".
 
@@ -220,7 +230,7 @@ command, and other lazuli settings). Product terms stay English in both (PR, CI,
 | ⌃⌘1 / ⌃⌘2 / ⌃⌘3 / ⌃⌘4 | panel Review / Files / Changes / call tree (pressing the shown tab's key closes the panel; closing never changes the center view) |
 | ⌘⇧V | file tab mode: Edit → Split → Preview |
 | ⌘⇧O | quick open |
-| ⌘J / ⇧⌘J / ⇧⌘U | next waiting / next blocked / next done |
+| ⌘J / ⇧⌘J / ⇧⌘U | next waiting (an agent that needs you, else a finished one waiting for its next prompt, with a toast saying so) / next blocked (needs you only) / next done; with none, focus stays and a toast says so |
 | ⌥⌘Q | prompt queue |
 | ⌥⌘R | retry pending restores (A7) |
 | ⌘R | recap |

@@ -245,7 +245,7 @@ async function restore(s, t, saved, now) {
   const line = shellLine(resumeArgv(saved.tool, saved.argv, saved.session), saved.cwd && saved.cwd !== here ? saved.cwd : null);
   let r;
   try {
-    r = await hc(["send", t.address, line]);
+    r = await hc(["send", t.address, "--", line]);
   } catch (e) {
     r = { code: -1, stdout: "", stderr: errText(e) };
   }

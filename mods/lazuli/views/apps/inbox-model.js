@@ -71,7 +71,9 @@ function block(tag, intro, lines) {
   return [intro, `<${tag}>`, ...lines.map(inert), `</${tag}>`];
 }
 
-const head = (it) => `${it.kind === "review" ? "Pull request to review" : "My pull request"}: ${it.pr.url} (${it.pr.slug}#${it.pr.number})${it.pr.branch ? `, branch ${it.pr.branch}${it.pr.base ? ` into ${it.pr.base}` : ""}` : ""}.`;
+// The trusted line names the PR only by what GitHub fixes (its URL, repo and number); branch names are anyone's text and
+// stay in the data block.
+const head = (it) => `${it.kind === "review" ? "Pull request to review" : "My pull request"}: ${it.pr.url} (${it.pr.slug}#${it.pr.number}).`;
 
 /** Diff text kept in a plan's prompt (sys/gh.js already cuts it at gh.DIFF_CHARS); past it the prompt says so. */
 const DIFF_MAX = 60000;
@@ -84,11 +86,12 @@ function diffOf(v) {
   return { text, title: typeof v?.title === "string" ? v.title : null, body: typeof v?.body === "string" ? v.body : null, files: list(v?.files), cut: v?.truncated === true || text.length > DIFF_MAX };
 }
 
-/** The row's GitHub text as one untrusted data block: its title (and, for a plan, its description and diff), the
- *  failing CI job, tests and log, the review threads. */
+/** The row's GitHub text as one untrusted data block: its title and branches (and, for a plan, its description and
+ *  diff), the failing CI job, tests and log, the review threads. */
 function context(it, d, fetched = null) {
   const diff = fetched ? diffOf(fetched) : null;
   const data = [`Title: ${diff?.title ?? it.pr.title ?? it.pr.branch ?? ""}`];
+  if (it.pr.branch) data.push(`Branch: ${it.pr.branch}${it.pr.base ? ` into ${it.pr.base}` : ""}`);
   const body = diff ? (diff.body ?? it.pr.body ?? "").trim() : "";
   if (body) data.push("Description:", ...body.slice(0, BODY_MAX).split("\n"));
   const f = d?.failed;

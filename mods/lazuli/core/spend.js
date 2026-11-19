@@ -54,10 +54,13 @@ export function ompUsage(record) {
   return { tool: "omp", model, at, tokens, usd, key: null };
 }
 
-/** A Claude Code transcript record → its entry: a main-chain `assistant` record with `message.usage`.
- *  Claude Code writes no USD; `key` is the message id. Null for any other record. */
+/** A Claude Code transcript record → its entry: an `assistant` record with `message.usage`. Subagent (Task)
+ *  replies are sidechain records (`isSidechain: true`) in the subagent's own transcript
+ *  (`<session>/subagents/agent-<id>.jsonl`; older versions wrote them inline in the session file), never copied
+ *  into the parent's, so they count like any other. Claude Code writes no USD; `key` is the message id. Null for
+ *  any other record. */
 export function claudeUsage(record) {
-  if (!isObj(record) || record.type !== "assistant" || record.isSidechain === true) return null;
+  if (!isObj(record) || record.type !== "assistant") return null;
   const m = record.message;
   if (!isObj(m) || !isObj(m.usage)) return null;
   const u = m.usage;

@@ -15,6 +15,11 @@ test('calendar schedules and invalid expressions',()=>{
 });
 test('front matter updates preserve body and parsed defaults',()=>{
  assert.equal(setField('---\nname: x\nwhen: hourly\n---\n\nDo it.\n','paused','true'),'---\nname: x\nwhen: hourly\npaused: true\n---\n\nDo it.\n'); assert.equal(setField('Do it.','when','hourly'),'---\nwhen: hourly\n---\n\nDo it.\n');
+ const keep='---\n# my routine\nName: X\n\nPaused: yes\nX-Custom:  keep me\n---\n\n  Body  stays\n\n';
+ assert.equal(setField(keep,'paused','false'),'---\n# my routine\nName: X\n\nPaused: false\nX-Custom:  keep me\n---\n\n  Body  stays\n\n');
+ assert.equal(setField(keep,'paused',''),'---\n# my routine\nName: X\n\nX-Custom:  keep me\n---\n\n  Body  stays\n\n');
+ assert.equal(setField('---\r\nname: x\r\n# c\r\n---\r\nbody\r\n','notify','never'),'---\r\nname: x\r\n# c\r\nnotify: never\r\n---\r\nbody\r\n');
+ assert.equal(setField('---\npaused: true\nPaused:   yes\n---\nb','paused','false'),'---\npaused: true\nPaused:   false\n---\nb');
  const r=parseRoutine('morning-sweep','/r/morning-sweep.md','---\nname: Morning sweep\nwhen: weekdays 09:00\ncwd: ~/work\ntools: Read, Bash(gh pr list:*)\nmodel: sonnet\nbudget: $0.50/week\nnotify: failed\n---\n\nSum up my PRs.\n',{home:'/Users/u'});
  for(const [k,v] of Object.entries({name:'Morning sweep',body:'Sum up my PRs.',cwd:'/Users/u/work',tools:['Read','Bash(gh pr list:*)'],budget:0.5,timeout:30,notify:'failed',run:'agent',catchUp:720})) assert.deepEqual(r[k],v);
  assert.equal(slugFor('Sum up my PRs!',[]),'sum-up-my-prs'); assert.equal(slugFor('Sum up my PRs!',['sum-up-my-prs']),'sum-up-my-prs-2');

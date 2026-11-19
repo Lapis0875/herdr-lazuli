@@ -2,8 +2,9 @@
 // kitty.mjs's parser) → CDP Input events on the shown page. Plain ASCII goes as key events so pages
 // listening for keys get them; other text (Hangul included) through Input.insertText. The viewer's
 // own keys: Ctrl+R/F5 reload, Alt+←/→ history, Ctrl+V pastes the desktop clipboard, Ctrl+C copies
-// the page's selection to it. A key with Ctrl, Alt or ⌘ that comes as a Korean 2-set jamo counts as
-// its QWERTY letter (Ctrl+ㄱ is Ctrl+R), for these keys and the page's own shortcuts.
+// the page's selection to it, Ctrl+N switches the tab between network blocked and allowed. A key
+// with Ctrl, Alt or ⌘ that comes as a Korean 2-set jamo counts as its QWERTY letter (Ctrl+ㄱ is
+// Ctrl+R), for these keys and the page's own shortcuts.
 // Modeled on H/bin/herdr-browser-view.
 
 import { execFile, spawn } from "node:child_process";
@@ -32,7 +33,8 @@ const SELECTION_JS = `(() => { const a = document.activeElement;
  *  - `live()`: a page is attached and shown.
  *  - `view()`: `{cellW, cellH, pixelMouse, rect, page, buttons}`; `rect` is the picture in terminal
  *    pixels, `page` its CSS size, `buttons` the top line's `{row, x0, x1, fn}` (0-based cells).
- *  - `reload()`, `history(delta)`, `copied()`, `touched()` (the person acted on the page).
+ *  - `reload()`, `history(delta)`, `copied()`, `touched()` (the person acted on the page),
+ *    `clicked()` (a mouse button press or release reached the page), `toggleNetwork()`.
  *  Returns the handlers `{text, key, mouse, paste}` for the parser's events. */
 export function createPageInput(o) {
   let down = null;
@@ -84,6 +86,7 @@ export function createPageInput(o) {
       lastClick = { at: now, x: p.x, y: p.y, n };
       down = button;
     } else down = null;
+    o.clicked();
     return send({ type: release ? "mouseReleased" : "mousePressed", x: p.x, y: p.y, button, buttons: release ? 0 : HELD[button], clickCount: lastClick.n });
   }
 
@@ -147,6 +150,7 @@ export function createPageInput(o) {
     if (f.alt && !f.ctrl && k === "ArrowRight") return o.history(1);
     if (plainCtrl && /^[vV]$/.test(k)) return pasteClipboard();
     if (plainCtrl && /^[cC]$/.test(k)) return copySelection();
+    if (plainCtrl && /^[nN]$/.test(k)) return o.toggleNetwork();
     if (o.live()) o.touched();
     return sendKey(k, f);
   }

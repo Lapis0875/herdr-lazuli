@@ -10,9 +10,16 @@
 // - Frames: Chrome's PNG screencast sized to the pane (SIGWINCH + `CSI 16t`), one Kitty image replaced
 //   in place; the next frame is asked for only once this one is out, at most FPS a second.
 // - Input (lib/page-input.mjs): pixel mouse, wheel, kitty keyboard, paste, Input.insertText; Ctrl+V
-//   pastes (pbpaste), Ctrl+C copies (pbcopy), Ctrl+R/F5 reload, Alt+←/→ history.
-// - Same-origin and in-page navigation stay; other http(s) pages open in the default browser.
-// - Top line: path, reload, open in browser, console error count (click: the last error).
+//   pastes (pbpaste), Ctrl+C copies (pbcopy), Ctrl+R/F5 reload, Alt+←/→ history, Ctrl+N switches the
+//   network between blocked and allowed (the top line's "Allow network").
+// - Network (DESIGN B8): every request of the page, its frames and its service workers passes a CDP
+//   gate. Only this server's own go out (and a rendered Markdown page's pinned CDN files); the rest
+//   fail and are counted, until "Allow network" lets them out in this tab until the viewer exits.
+//   While blocked, the server's pages carry a CSP that refuses WebSockets (static-server.mjs).
+// - Same-origin and in-page navigation stay; another http(s) page opens in the default browser only
+//   right after a click in the viewer; one the page starts by itself is blocked and named.
+// - Top line: path, blocked count and Allow network, reload, open in browser, console error count
+//   (click: the last error).
 // Exits 0 on SIGHUP (pane closed) or SIGTERM, releasing its lease; 2 on bad arguments; 3 with the
 // line "no-browser" when no supported browser is installed.
 
@@ -28,6 +35,7 @@ import { connectCdp } from "./lib/cdp.mjs";
 import { acquireLease, findBrowser } from "./lib/chrome.mjs";
 import * as K from "./lib/kitty.mjs";
 import { defaultSettingsPath, followLanguage } from "./lib/language.mjs";
+import { KATEX_CSS, KATEX_JS, MERMAID_JS } from "./lib/md-page.mjs";
 import { createCast, viewFor } from "./lib/cast.mjs";
 import { createDialogs } from "./lib/page-dialog.mjs";
 import { createPageInput } from "./lib/page-input.mjs";
@@ -71,13 +79,15 @@ const S = {
   cols: out.columns || 80, rows: out.rows || 24,
   cellW: 0, cellH: 0, pixelMouse: false, dark: null,
   url: "", errors: 0, lastError: "", showError: false, missing: false,
+  blocked: 0, lastBlocked: "", allowNet: false,
   notice: "", noticeUntil: 0,
   page: null, rect: null, imgCells: null, drawn: false,
   buttons: [],
 };
 // The page connection; `gen` changes on every (re)attach so late events of an old one are ignored.
+// `doc`: the last main-frame document the gate let through.
 const V = {
-  gen: 0, lease: null, cdp: null, session: null, targetId: null, mainFrame: null, navAt: 0, scroll: null, scrollTimers: [],
+  gen: 0, lease: null, cdp: null, session: null, targetId: null, mainFrame: null, doc: "", navAt: 0, scroll: null, scrollTimers: [],
 };
 let server = null, ROOT = path.dirname(FILE), REL = path.basename(FILE);
 
@@ -88,6 +98,8 @@ const sameOrigin = (url) => {
 };
 const pageUrl = () => server.url(KIND === "md" ? `__lazuli/md/${REL}` : REL);
 const shownUrl = () => (S.url && sameOrigin(S.url) ? S.url : pageUrl());
+// Setup errors a retry cannot change: their own message, and no Retry.
+const FINAL = { "outside-root": "viewer.outside", "hidden-file": "viewer.hidden" };
 // confirm, prompt and beforeunload wait for Enter/Esc (or y/n) in the top line; an alert is reported.
 const dialogs = createDialogs({ fire, changed: () => bar(), notice: (message) => note(tr("viewer.dialog", { message })) });
 
@@ -146,13 +158,13 @@ function paint() {
   if (S.phase !== "live") {
     clearArea();
     S.imgCells = null;
-    const msg = S.phase === "error" ? (S.code === "outside-root" ? tr("viewer.outside") : tr("viewer.failed", { code: S.code }))
+    const msg = S.phase === "error" ? (Object.hasOwn(FINAL, S.code) ? tr(FINAL[S.code]) : tr("viewer.failed", { code: S.code }))
       : S.phase === "restarting" ? tr("viewer.restarting")
       : S.phase === "loading" ? tr("viewer.loading") : tr("viewer.starting");
     const row = Math.max(1, Math.floor(S.rows / 2) - 1);
     const text = K.fitEnd(msg, S.cols - 2);
     write(`\x1b[${row + 1};${Math.max(1, Math.floor((S.cols - K.textWidth(text)) / 2) + 1)}H\x1b[2m${text}\x1b[0m`);
-    if (S.phase === "error" && S.code !== "outside-root") {
+    if (S.phase === "error" && !Object.hasOwn(FINAL, S.code)) {
       const label = ` ${tr("viewer.retry")} `;
       button(row + 2, Math.max(0, Math.floor((S.cols - K.textWidth(label)) / 2)), label, retry, "7");
     }
@@ -160,9 +172,9 @@ function paint() {
   bar();
 }
 
-// The top line: what is shown on the left, then Reload, Open in browser and the error count; while
-// a dialog waits, its question with OK and Cancel. Text from the page reaches it only through
-// fitEnd/fitStart, which make it safe (kitty.mjs safeText).
+// The top line: what is shown on the left, then the blocked count with Allow network, Reload, Open
+// in browser and the error count; while a dialog waits, its question with OK and Cancel. Text from
+// the page reaches it only through fitEnd/fitStart, which make it safe (kitty.mjs safeText).
 function bar() {
   if (quitting) return;
   S.buttons = S.buttons.filter((b) => b.row !== 0);
@@ -170,10 +182,16 @@ function bar() {
   const errs = S.errors === 0 ? tr("viewer.noErrors") : S.errors === 1 ? tr("viewer.errors.one") : tr("viewer.errors.many", { n: S.errors });
   const errStyle = S.errors ? "31" : "2";
   const d = dialogs.pending;
+  const blocked = S.blocked === 1 ? tr("viewer.blocked.one") : tr("viewer.blocked.many", { n: S.blocked });
+  const net = S.allowNet ? [[`◉ ${tr("viewer.networkAllowed")}`, toggleNetwork, "32"]]
+    : S.blocked ? [[`⊘ ${blocked}`, showBlocked, "33"], [tr("viewer.allowNetwork"), toggleNetwork, "4"]] : [];
   let btns = d ? [[tr("viewer.accept"), () => dialogs.answer(true), "7"], [tr("viewer.dismiss"), () => dialogs.answer(false), "7"]]
-    : [[`↻ ${tr("viewer.reload")}`, reload, "4"], [`↗ ${tr("viewer.openInBrowser")}`, openInBrowser, "4"], [errs, toggleError, errStyle]];
+    : [...net, [`↻ ${tr("viewer.reload")}`, reload, "4"], [`↗ ${tr("viewer.openInBrowser")}`, openInBrowser, "4"], [errs, toggleError, errStyle]];
   const width = (list) => list.reduce((n, [l]) => n + K.textWidth(l) + 2, 0);
-  if (!d && W - width(btns) < 16) btns = [["↻", reload, "4"], ["↗", openInBrowser, "4"], [S.errors ? `✕${S.errors}` : "✓", toggleError, errStyle]];
+  if (!d && W - width(btns) < 16) {
+    const icon = S.allowNet ? [["◉", toggleNetwork, "32"]] : S.blocked ? [[`⊘${S.blocked}`, toggleNetwork, "33"]] : [];
+    btns = [...icon, ["↻", reload, "4"], ["↗", openInBrowser, "4"], [S.errors ? `✕${S.errors}` : "✓", toggleError, errStyle]];
+  }
   const room = Math.max(0, W - width(btns) - 2);
   let left, style;
   if (d) [left, style] = [K.fitEnd(d.type === "beforeunload" ? tr("viewer.leave") : tr("viewer.ask", { message: d.message }), room), "1;33"];
@@ -327,18 +345,73 @@ function openInBrowser() {
   if (server) openExternal(/^https?:/i.test(S.url) ? S.url : pageUrl());
 }
 
-// Main-frame document requests: this server's pages go on; other http(s) pages open outside.
-function gate(p) {
-  const url = String(p.request?.url ?? "");
-  if (p.frameId === V.mainFrame && /^https?:/i.test(url) && !sameOrigin(url)) {
-    fire("Fetch.failRequest", { requestId: p.requestId, errorReason: "Aborted" });
-    openExternal(url);
-  } else fire("Fetch.continueRequest", { requestId: p.requestId });
+// A click on the page (forwarded press or release) lets one navigation to another site that comes
+// within this time open in the default browser.
+const CLICK_MS = 1000;
+let clickAt = 0;
+
+// The pinned CDN files a rendered Markdown page loads (md-page.mjs), with the fonts KaTeX's stylesheet asks for.
+const MD_FILES = new Set([MERMAID_JS.url, KATEX_JS.url, KATEX_CSS.url]);
+const KATEX_FONTS = KATEX_CSS.url.replace(/[^/]*$/, "fonts/");
+const mdFile = (url) => MD_FILES.has(url) || (url.startsWith(KATEX_FONTS) && /^KaTeX_[\w-]+\.(?:woff2|woff|ttf)$/.test(url.slice(KATEX_FONTS.length)));
+const mdPage = (url) => sameOrigin(url) && new URL(url).pathname.startsWith("/__lazuli/md/");
+
+function hostOf(url) {
+  try {
+    const u = new URL(url);
+    return u.host || u.protocol;
+  } catch {
+    return url;
+  }
 }
-// A new window (target=_blank, window.open): followed here when same-origin, else opened outside.
+
+// Another site the page goes to: opened in the default browser when a click came just before
+// (once per click), else not followed and named in the top line.
+function external(url) {
+  if (/^https?:/i.test(url) && Date.now() - clickAt <= CLICK_MS) {
+    clickAt = 0;
+    openExternal(url);
+  } else note(tr("viewer.navBlocked", { host: hostOf(url) }));
+}
+
+// Every request of the page, its frames and its service workers (session `sid`), DESIGN B8. A
+// main-frame document: this server's pages go on (a new page starts a new blocked count); any
+// other is aborted, so the shown page stays, and goes to external(). Anything else goes out when
+// it is this server's (or data:, blob:), a Markdown page's pinned CDN file, or the network is
+// allowed; the rest fails as blocked by the client and is counted.
+function gate(cdp, sid, p) {
+  const url = String(p.request?.url ?? "");
+  const answer = (method, params) => cdp.call(method, { requestId: p.requestId, ...params }, sid).catch(() => {});
+  if (sid === V.session && p.resourceType === "Document" && p.frameId === (V.mainFrame ?? V.targetId)) {
+    if (!sameOrigin(url)) {
+      answer("Fetch.failRequest", { errorReason: "Aborted" });
+      return external(url);
+    }
+    Object.assign(S, { blocked: 0, lastBlocked: "" });
+    V.doc = url;
+    return answer("Fetch.continueRequest");
+  }
+  const md = p.frameId === V.mainFrame && (mdPage(V.doc) || mdPage(S.url)) && mdFile(url);
+  if (S.allowNet || sameOrigin(url) || /^(?:data|blob):/i.test(url) || md) return answer("Fetch.continueRequest");
+  answer("Fetch.failRequest", { errorReason: "BlockedByClient" });
+  Object.assign(S, { blocked: S.blocked + 1, lastBlocked: url });
+  bar();
+}
+// A new window (target=_blank, window.open): followed here when same-origin, else as a navigation.
 function follow(url) {
   if (sameOrigin(url)) navigate(url);
-  else if (/^https?:/i.test(url)) openExternal(url);
+  else external(url);
+}
+
+// "Allow network" (Ctrl+N): this tab's requests all go out until it is pressed again or the
+// viewer exits; the page reloads so it loads with the new setting.
+function toggleNetwork() {
+  S.allowNet = !S.allowNet;
+  note(tr(S.allowNet ? "viewer.networkOn" : "viewer.networkOff"));
+  reload();
+}
+function showBlocked() {
+  if (S.lastBlocked) note(tr("viewer.blockedUrl", { url: S.lastBlocked }));
 }
 
 function addError(text) {
@@ -406,12 +479,32 @@ async function attach(browserWs, targetId, url) {
   on("Runtime.consoleAPICalled", (p) => {
     if (p.type === "error" || p.type === "assert") addError((p.args ?? []).map((a) => a.value ?? a.description ?? "").join(" "));
   });
-  // Network errors count too, except the favicon Chrome asks for on its own.
+  // Network errors count too, except the favicon Chrome asks for on its own and the requests the
+  // gate blocked (counted apart).
   on("Log.entryAdded", (p) => {
     const e = p.entry;
-    if (e?.level === "error" && !/\/favicon\.ico(?:[?#]|$)/.test(e.url ?? "")) addError(`${e.text}${e.url ? ` (${e.url})` : ""}`);
+    if (e?.level === "error" && !/\/favicon\.ico(?:[?#]|$)/.test(e.url ?? "") && !/ERR_BLOCKED_BY_CLIENT/.test(e.text ?? "")) {
+      addError(`${e.text}${e.url ? ` (${e.url})` : ""}`);
+    }
   });
-  on("Fetch.requestPaused", gate);
+  // The gate hears the page and every frame in another process or worker it starts (auto-attached,
+  // each waiting until its own gate is on; a dedicated worker's requests pass the page's).
+  const sessions = new Set([s]);
+  const patterns = [{ urlPattern: "*", requestStage: "Request" }];
+  cdp.on("Fetch.requestPaused", (p, sid) => {
+    if (gen === V.gen && sessions.has(sid)) gate(cdp, sid, p);
+  });
+  cdp.on("Target.attachedToTarget", async (p, sid) => {
+    if (gen !== V.gen || !sessions.has(sid)) return;
+    const child = p.sessionId;
+    sessions.add(child);
+    await cdp.call("Fetch.enable", { patterns }, child).catch(() => {});
+    await cdp.call("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, child).catch(() => {});
+    cdp.call("Runtime.runIfWaitingForDebugger", {}, child).catch(() => {});
+  });
+  cdp.on("Target.detachedFromTarget", (p) => {
+    if (p.sessionId !== s) sessions.delete(p.sessionId);
+  });
   on("Inspector.targetCrashed", () => navigate(shownUrl()));
   cdp.on("Target.targetCreated", (p, sid) => {
     const t = p.targetInfo;
@@ -426,7 +519,8 @@ async function attach(browserWs, targetId, url) {
     cdp.call("Log.enable", {}, s),
     cdp.call("Inspector.enable", {}, s),
     cdp.call("Emulation.setFocusEmulationEnabled", { enabled: true }, s),
-    cdp.call("Fetch.enable", { patterns: [{ urlPattern: "*", resourceType: "Document", requestStage: "Request" }] }, s),
+    cdp.call("Fetch.enable", { patterns }, s),
+    cdp.call("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, s),
     cdp.call("Target.setDiscoverTargets", { discover: true }),
   ]);
   cdp.call("Browser.setDownloadBehavior", { behavior: "deny" }).catch(() => {});
@@ -434,6 +528,9 @@ async function attach(browserWs, targetId, url) {
   if (gen !== V.gen) return;
   V.mainFrame = tree.frameTree?.frame?.id ?? targetId;
   colorScheme();
+  // A service worker left registered for this origin (the port can repeat) would not be the page's.
+  await cdp.call("Storage.clearDataForOrigin", { origin: server.origin, storageTypes: "service_workers,cache_storage" }, s).catch(() => {});
+  if (gen !== V.gen) return;
   setPhase("loading");
   await cast.sync();
   navigate(url);
@@ -492,6 +589,8 @@ const input = createPageInput({
   history,
   copied: () => note(tr("viewer.copied"), 1500),
   touched: cancelScroll,
+  clicked: () => (clickAt = Date.now()),
+  toggleNetwork,
 });
 
 const parser = K.createInputParser((ev) => {
@@ -539,7 +638,7 @@ async function start() {
   if (found.error) return setPhase("error", found.error);
   ({ root: ROOT, rel: REL } = found);
   try {
-    server = await startStaticServer({ root: ROOT });
+    server = await startStaticServer({ root: ROOT, blockNetwork: () => !S.allowNet });
   } catch {
     return setPhase("error", "server-failed");
   }

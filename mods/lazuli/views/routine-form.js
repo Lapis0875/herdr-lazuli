@@ -1,9 +1,10 @@
 // Creating and changing a routine (DESIGN A3 Routines; the fields of ARCHITECTURE §4.6): name, when (with presets and
 // its next runs read back as you type), agent or shell, agent, model, mode, tools, weekly budget, folder, timeout,
 // notify, catch-up, paused, worktree, and the prompt or script. A new routine's whole file is written once, only when
-// no file of its name exists; a change rewrites the file's front matter (fields it does not manage stay) and body in
-// one write, refused when the file changed since it was read. An `agent:` value stays exactly as written (an alias like
-// `claude-code`, or one lazuli does not know) until the person picks another agent.
+// no file of its name exists; a change sets only the fields the person changed, in place, and the body, in one write
+// refused when the file changed since it was read: every other line (keys it does not manage, comments, blank lines)
+// stays as written. An `agent:` value stays exactly as written (an alias like `claude-code`, or one lazuli does not
+// know) until the person picks another agent.
 
 import { div } from "gpui-kit";
 import { h_flex, v_flex, InputState, TextareaState, Textarea } from "gpui-base";
@@ -31,20 +32,47 @@ const MAX_NAME_TRIES = 20;
 const TEXT_FIELDS = Object.freeze({ name: "name", when: "when", model: "model", mode: "mode", tools: "tools", budget: "budget", cwd: "cwd", timeout: "timeout", catchUp: "catch-up" });
 const stop = (_e, cx) => cx.stop_propagation();
 
-/** The text with its front matter set to `fields` ({key: value}; "" removes a key), the other keys kept, and the body. */
+/** The key of a front-matter line as core/routine-file.js frontMatter reads it (trimmed, lower-cased), else null. */
+function keyOf(line) {
+  const colon = line.indexOf(":");
+  return colon >= 0 ? line.slice(0, colon).trim().toLowerCase() : null;
+}
+
+/** The text with the front-matter keys of `fields` ({key: value}; "" removes a key) set, and `body` after it. A key the
+ *  file has is set in place on its last line (the one that counts), keeping the key as written; a removed key loses
+ *  every line; a key the file lacks is added at the end of the front matter. Every other line stays as the file has it:
+ *  other keys, comments, blank lines, and the body's text when `body` is the same. Without a closed front matter, one
+ *  is made of `fields` and the body follows. */
 export function withFields(text, fields, body) {
-  const fm = frontMatter(text ?? "");
-  const done = new Set();
-  const out = ["---"];
-  for (const [k, v] of fm.fields) {
-    if (Object.prototype.hasOwnProperty.call(fields, k)) {
-      if (!done.has(k) && fields[k] !== "") out.push(`${k}: ${fields[k]}`);
-      done.add(k);
-    } else out.push(`${k}: ${v}`);
+  const src = String(text ?? "");
+  const want = String(body ?? "").trim();
+  const own = (k) => Object.prototype.hasOwnProperty.call(fields, k);
+  const raw = src === "" ? [] : src.split("\n");
+  const close = raw.length > 0 && raw[0].trim() === "---" ? raw.findIndex((l, i) => i > 0 && l.trim() === "---") : -1;
+  if (close < 0) {
+    const head = Object.entries(fields).filter(([, v]) => v !== "").map(([k, v]) => `${k}: ${v}`);
+    return `${["---", ...head, "---", "", want].join("\n")}\n`;
   }
-  for (const [k, v] of Object.entries(fields)) if (!done.has(k) && v !== "") out.push(`${k}: ${v}`);
-  out.push("---", "", String(body ?? "").trim());
-  return `${out.join("\n")}\n`;
+  // Lines added or set end as the file's do (CRLF stays CRLF).
+  const cr = raw[close].endsWith("\r") ? "\r" : "";
+  const head = raw.slice(1, close);
+  const last = new Map();
+  head.forEach((line, i) => {
+    const k = keyOf(line);
+    if (k !== null) last.set(k, i);
+  });
+  const out = [raw[0]];
+  head.forEach((line, i) => {
+    const k = keyOf(line);
+    if (k === null || !own(k)) out.push(line);
+    else if (fields[k] !== "" && last.get(k) === i) out.push(`${line.slice(0, line.indexOf(":")).trimEnd()}: ${fields[k]}${line.endsWith("\r") ? "\r" : ""}`);
+    else if (fields[k] !== "") out.push(line);
+  });
+  for (const [k, v] of Object.entries(fields)) if (!last.has(k) && v !== "") out.push(`${k}: ${v}${cr}`);
+  out.push(raw[close]);
+  if (want === frontMatter(src).body) out.push(...raw.slice(close + 1));
+  else out.push(cr, ...want.split("\n").map((l) => `${l}${cr}`), "");
+  return out.join("\n");
 }
 
 export class RoutineForm {
@@ -88,6 +116,7 @@ export class RoutineForm {
     this.error = null;
     this.saving = false;
     this.text = null;
+    this.loaded = null;
     this.onDone = onDone;
     this.kind = "agent";
     this.agent = "";
@@ -127,6 +156,8 @@ export class RoutineForm {
       const truthy = (key) => ["true", "yes", "on", "1"].includes(get(key).toLowerCase());
       this.paused = truthy("paused");
       this.worktree = truthy("worktree");
+      // What the form writes for the file as read: a save sets only the fields that differ from it.
+      this.loaded = this.fields((field) => get(TEXT_FIELDS[field]));
       this.body.set_value(fm.body);
       this.body.focus();
       cx.notify();
@@ -139,11 +170,10 @@ export class RoutineForm {
     cx.notify();
   }
 
-  /** The front-matter fields the form writes. */
-  fields() {
-    const v = (key) => this.inputs[key].value().trim();
+  /** The front-matter fields the form writes; `text` reads a text field (the inputs by default). */
+  fields(text = (field) => this.inputs[field].value()) {
     const out = {};
-    for (const [field, key] of Object.entries(TEXT_FIELDS)) out[key] = v(field);
+    for (const [field, key] of Object.entries(TEXT_FIELDS)) out[key] = text(field).trim();
     out.run = this.kind === "shell" ? "shell" : "";
     out.agent = !this.agentTouched || this.agent === AS_WRITTEN ? this.agentText : this.agent;
     out.notify = this.notify === "always" ? "" : this.notify;
@@ -211,14 +241,14 @@ export class RoutineForm {
     throw new Error(t("routines.form.noName"));
   }
 
-  /** An existing routine: its front matter and body rewritten in one write, refused when the file changed since it
-   *  was read. An empty name keeps the one the file has. */
+  /** An existing routine: the fields the person changed since the file was read set in place, and the body, in one
+   *  write refused when the file changed since it was read. An emptied name keeps the one the file has. */
   async saveWhole(fields, body) {
     if (this.text == null) throw new Error(t("routines.form.gone"));
-    const before = this.text;
-    const name = fields.name || frontMatter(before).fields.find(([k]) => k === "name")?.[1] || "";
-    const after = withFields(before, { ...fields, name }, body);
-    if (after !== before) await routines.saveFile(this.slug, after, this.text);
+    const changed = {};
+    for (const [k, v] of Object.entries(fields)) if (v !== this.loaded?.[k] && !(k === "name" && v === "")) changed[k] = v;
+    const after = withFields(this.text, changed, body);
+    if (after !== this.text) await routines.saveFile(this.slug, after, this.text);
     return this.slug;
   }
 

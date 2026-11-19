@@ -183,7 +183,7 @@ export function summarize(entries: Entry[], now: number): Report
 ```
 - `Entry = {tool: "omp"|"claude"|"codex", model: string|null, at: number|null, tokens: Tokens, usd: number|null, key: string|null}`. Callers count each non-null `key` once per file.
 - `ompUsage`: `type:"message"` with `message.role === "assistant"` and an object `message.usage`, or `type:"model_usage"` with `usage`. `usd = usage.cost.total ?? null`. `at` = `Date.parse(record.timestamp)` for a string, else `message.timestamp` when a number.
-- `claudeUsage`: `type:"assistant"`, not `isSidechain`, with `message.usage`. `key = message.id ?? null`. `cacheWrite1h = cache_creation.ephemeral_1h_input_tokens ?? 0`; `cacheWrite = cache_creation.ephemeral_5m_input_tokens ?? cache_creation_input_tokens`.
+- `claudeUsage`: `type:"assistant"` with `message.usage`, sidechain records included (review fix: Claude Code 2.1.311 writes subagent replies only to `<session>/subagents/agent-<id>.jsonl`, so skipping `isSidechain` dropped subagent spend). `key = message.id ?? null`. `cacheWrite1h = cache_creation.ephemeral_1h_input_tokens ?? 0`; `cacheWrite = cache_creation.ephemeral_5m_input_tokens ?? cache_creation_input_tokens`. Side calls listed only in `cost-state` records (e.g. small-model helpers, ~0.3% of a session) are not counted.
 - `codexTotal`: `type:"event_msg"`, `payload.type === "token_count"` → `input = input_tokens − cached_input_tokens`, `cacheRead = cached_input_tokens`, `output = output_tokens`.
 - `Report = {today: Sum, week: Sum, days: ({date} & Sum)[7], byTool: {omp: Sum, claude: Sum, codex: Sum}, byModel: ({model} & Sum)[], unpriced: {model, tokens}[]}`. `Sum = {usd, tokens}`; `tokens` is the sum of all five fields. The week is Monday to Sunday local, holding `now`; entries with `at === null` are left out.
 - Seed rows of `RATES`, taken from OMP's own cost fields on this Mac: `"claude-opus-5-5": {input:4, output:20, cacheRead:0.2, cacheWrite:5, cacheWrite1h:8}` and `"gpt-6.2-astra": {input:8, output:40}`. The `cacheWrite: 5` value is [INFERENCE]. T13 completes the table. Tests always pass their own `rates`.
@@ -204,7 +204,7 @@ codexTotal({type:"event_msg",payload:{type:"token_count",info:{total_token_usage
 ```js
 export const TRIGGERS: {[word: string]: string[]}   // review→[review_requested] approved changes→[changes_requested] opened→[pr_opened] merged ci-failed→[ci_failed] ci-passed→[ci_passed]
 export function frontMatter(text: string): {fields: [string, string][], body: string}
-export function setField(text: string, key: string, value: string): string
+export function setField(text: string, key: string, value: string): string   // review fix: in place — sets the key's last line (spelling and colon spacing kept), "" removes every line with the key, a new key goes before the closing `---` with the file's line ending; comments, blanks, unknown keys, CRLF and the body stay byte-for-byte; multi-line values are joined onto one line
 export function parseWhen(text: string): When | {error: string, detail?: string}
 export function nextAfter(when: When, after: number): number|null     // cron only; strictly after; local time
 export function lastDue(when: When, after: number, now: number): number|null   // last due time in (after, now], searched backward from now (no step cap)
@@ -545,6 +545,7 @@ export async function startStaticServer(o: {
   host?: "127.0.0.1",                 // only this value is accepted
   port?: number,                      // default 0 (random free port)
   renderMarkdown?: (text: string, o: {title: string}) => string,  // default: renderPage from ./md-page.mjs
+  blockNetwork?: () => boolean,       // review fix: while true, responses carry `Content-Security-Policy: connect-src 'self' http: https: data: blob:` (refuses WebSockets) and shared-worker scripts get `default-src 'self' data: blob:`
 }): Promise<{ port: number, origin: string, url(rel: string): string, close(): Promise<void> }>
 ```
 
@@ -556,6 +557,7 @@ export async function startStaticServer(o: {
 | `Host` header not exactly `127.0.0.1:<port>` | 403, empty body |
 | method other than GET or HEAD | 405, `Allow: GET, HEAD` |
 | path that, after percent-decoding and `realpath`, is outside `root` (`..`, `%2e%2e`, a symlink leading out) | 404 |
+| any path segment starting with `.` (after percent-decoding, before `realpath`: `.git`, `.env`, `%2egit`), the md route included | 404 (review fix) |
 | existing file under `root` | 200, file bytes, `Content-Type` from the extension (`.html` → `text/html; charset=utf-8`, `.css`, `.js`/`.mjs` → `text/javascript`, `.json`, `.svg`, `.png`, `.jpg`, `.gif`, `.webp`, `.woff2`, `.wasm`; other → `application/octet-stream`) |
 | a directory, including `/` | 404 (no listing, no index fallback) |
 | missing file | 404 |
@@ -570,7 +572,7 @@ export async function startStaticServer(o: {
 
 | # | Item | Who checks |
 |---|---|---|
-| V1 | Claude Code records carry `timestamp` and `isSidechain` at the top level (upstream reads them; I sampled only `message.usage`). | T13, on one real line |
+| V1 | Claude Code records carry `timestamp` and `isSidechain` at the top level; subagent records live only under `<session>/subagents/`. Checked against the 2.1.311 binary; this Mac's transcripts had no sidechain records. | T13, on one real line; FixResumeSpend |
 | V2 | Codex takes its model from the latest `turn_context` record's `payload.model`; `null` when absent. | T13 |
 | V3 | `omp -p` writes a session file under `--session-dir` (the CLI reference documents the flag, not print mode's persistence). If not, C4 falls back to `usd: null` for omp. | T12 |
 | V4 | Codex prints its session id on stderr as `session id: <uuid>`; `parseOutput("codex")` returns `session: null` until this is confirmed. | T12 |

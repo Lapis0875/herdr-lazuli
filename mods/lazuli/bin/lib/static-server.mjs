@@ -1,7 +1,8 @@
 // The HTML viewer's loopback file server (DESIGN B7, ARCHITECTURE §5, CONTRACTS "Node module:
 // bin/lib/static-server.mjs"): GET and HEAD of files under one root on 127.0.0.1, so module scripts
 // and fetch() work. Disk content only, never cached; no directory listing; `Host` must be exactly
-// 127.0.0.1:<port>. `/__lazuli/md/<rel>` serves a Markdown file as a rendered page.
+// 127.0.0.1:<port>; no path with a dot-segment (a name starting with ".", such as .git or .env).
+// `/__lazuli/md/<rel>` serves a Markdown file as a rendered page.
 
 import { createReadStream } from "node:fs";
 import { readFile, realpath, stat } from "node:fs/promises";
@@ -26,9 +27,14 @@ const TYPES = {
 };
 const MD_PREFIX = "/__lazuli/md/";
 const MD_EXT = /\.(md|markdown)$/i;
+// While the viewer blocks the network (DESIGN B8) its CDP gate sees every HTTP request but not a
+// WebSocket, nor a shared worker's requests: these policies refuse those inside the page.
+const CSP_PAGE = "connect-src 'self' http: https: data: blob:";
+const CSP_SHARED_WORKER = "default-src 'self' data: blob:";
 
-/** Starts the server; see CONTRACTS for every request rule. */
-export async function startStaticServer({ root, host = "127.0.0.1", port = 0, renderMarkdown } = {}) {
+/** Starts the server; see CONTRACTS for every request rule. `blockNetwork()`, asked per response,
+ *  adds the policies above while it answers true. */
+export async function startStaticServer({ root, host = "127.0.0.1", port = 0, renderMarkdown, blockNetwork } = {}) {
   if (host !== "127.0.0.1") throw new Error("static-server: host must be 127.0.0.1");
   if (typeof root !== "string" || !path.isAbsolute(root)) throw new Error("static-server: root must be an absolute path");
   const realRoot = await realpath(root);
@@ -41,7 +47,8 @@ export async function startStaticServer({ root, host = "127.0.0.1", port = 0, re
     return render;
   }
 
-  // The real path of a root-relative URL path when it is a file under the root, else null.
+  // The real path of a root-relative URL path when it is a file under the root, else null. A name
+  // starting with "." (after percent-decoding, before realpath) is never served: `.git`, `.env*`.
   async function resolveFile(urlPath) {
     const segments = [];
     for (const raw of urlPath.split("/")) {
@@ -52,7 +59,7 @@ export async function startStaticServer({ root, host = "127.0.0.1", port = 0, re
       } catch {
         return null;
       }
-      if (seg.includes("/") || seg.includes("\\") || seg.includes("\0")) return null;
+      if (seg.startsWith(".") || seg.includes("/") || seg.includes("\\") || seg.includes("\0")) return null;
       segments.push(seg);
     }
     let real;
@@ -72,9 +79,10 @@ export async function startStaticServer({ root, host = "127.0.0.1", port = 0, re
 
   async function handle(req, res) {
     const head = req.method === "HEAD";
+    const csp = blockNetwork?.() ? { "Content-Security-Policy": req.headers["sec-fetch-dest"] === "sharedworker" ? CSP_SHARED_WORKER : CSP_PAGE } : {};
     const reply = (status, headers = {}, body = null) => {
       const bytes = body == null ? null : Buffer.isBuffer(body) ? body : Buffer.from(String(body), "utf8");
-      res.writeHead(status, { "Cache-Control": "no-store", "Content-Length": bytes ? bytes.length : 0, ...headers });
+      res.writeHead(status, { "Cache-Control": "no-store", "Content-Length": bytes ? bytes.length : 0, ...csp, ...headers });
       res.end(head || !bytes ? undefined : bytes);
     };
     if (req.headers.host !== expectedHost) return reply(403);
@@ -105,7 +113,7 @@ export async function startStaticServer({ root, host = "127.0.0.1", port = 0, re
     const file = await resolveFile(urlPath);
     if (!file) return reply(404);
     const type = TYPES[path.extname(file.real).toLowerCase()] ?? "application/octet-stream";
-    const headers = { "Cache-Control": "no-store", "Content-Type": type, "Content-Length": file.size };
+    const headers = { "Cache-Control": "no-store", "Content-Type": type, "Content-Length": file.size, ...csp };
     if (head) {
       res.writeHead(200, headers);
       res.end();

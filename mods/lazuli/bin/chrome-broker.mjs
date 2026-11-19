@@ -64,9 +64,20 @@ const send = (L, m) => {
   if (!L.sock.destroyed) L.sock.write(JSON.stringify(m) + "\n");
 };
 
+// Compared as bytes: a string of the token's length can still differ in byte length, and
+// timingSafeEqual throws on unequal lengths.
 function tokenOk(t) {
-  if (typeof t !== "string" || t.length !== TOKEN.length) return false;
-  return timingSafeEqual(Buffer.from(t), Buffer.from(TOKEN));
+  if (typeof t !== "string") return false;
+  const given = Buffer.from(t), want = Buffer.from(TOKEN);
+  return given.length === want.length && timingSafeEqual(given, want);
+}
+
+// A connection that failed its hello gets the answer and is then destroyed; nothing more it sent is read.
+function refuse(L) {
+  L.refused = true;
+  if (L.sock.destroyed) return;
+  L.sock.write(JSON.stringify({ ok: false, error: "auth" }) + "\n", () => L.sock.destroy());
+  setTimeout(() => L.sock.destroy(), 1000).unref();
 }
 
 // ---- Chrome ----
@@ -253,7 +264,7 @@ function disarmIdle() {
 }
 
 function onConnection(sock) {
-  const L = { sock, fid: "", pid: null, targetId: null, ready: false, needsTab: false, authed: false };
+  const L = { sock, fid: "", pid: null, targetId: null, ready: false, needsTab: false, authed: false, refused: false };
   sock.setNoDelay(true);
   const helloTimer = setTimeout(() => sock.destroy(), HELLO_WAIT_MS);
   const decoder = new StringDecoder("utf8");
@@ -265,7 +276,7 @@ function onConnection(sock) {
       return;
     }
     let i;
-    while ((i = buf.indexOf("\n")) >= 0) {
+    while (!L.refused && (i = buf.indexOf("\n")) >= 0) {
       const line = buf.slice(0, i);
       buf = buf.slice(i + 1);
       let m;
@@ -274,7 +285,12 @@ function onConnection(sock) {
       } catch {
         continue;
       }
-      if (m && typeof m === "object") onMessage(L, m, helloTimer);
+      if (m && typeof m === "object") {
+        onMessage(L, m, helloTimer).catch((e) => {
+          log(`lease: ${e?.stack ?? e}`);
+          sock.destroy();
+        });
+      }
     }
   });
   sock.on("error", () => {});
@@ -293,11 +309,7 @@ async function onMessage(L, m, helloTimer) {
     return;
   }
   clearTimeout(helloTimer);
-  if (m.op !== "hello" || !tokenOk(m.token)) {
-    send(L, { ok: false, error: "auth" });
-    L.sock.end();
-    return;
-  }
+  if (m.op !== "hello" || !tokenOk(m.token)) return refuse(L);
   L.authed = true;
   L.fid = String(m.fid ?? "");
   L.pid = Number.isInteger(m.pid) ? m.pid : null;

@@ -82,6 +82,7 @@ export default {
   "home.next.changed": "본 뒤로 질문이 바뀌어 아무것도 누르지 않았습니다. 다시 확인하세요",
   "home.next.noneWaiting": "기다리는 에이전트가 없습니다",
   "home.next.noneDone": "확인할 끝난 에이전트가 없습니다",
+  "home.next.movedToDone": "나를 기다리는 에이전트가 없어 끝난 에이전트로 이동했습니다",
   "home.keys.choose": "선택",
 
   // GitHub sync.

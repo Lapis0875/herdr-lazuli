@@ -204,11 +204,12 @@ export function current(list_ = rows()) {
   return list_.find((a) => a.address === address) ?? null;
 }
 
-// The keys that walk the agents (⌘J, ⇧⌘J, ⇧⌘U): the stage each visits. No fallback to another stage: with none of
-// that stage, focus stays where it is and a toast says so.
+// The keys that walk the agents (⌘J, ⇧⌘J, ⇧⌘U): the stages each visits, in order. ⌘J goes to an agent that needs you,
+// else to a finished one waiting for its next prompt, and a toast says it fell back; ⇧⌘J and ⇧⌘U visit one stage only.
+// With none to visit, focus stays where it is and a toast says so.
 
 export const NEXT = Object.freeze({
-  "next-waiting": Object.freeze(["needs"]),
+  "next-waiting": Object.freeze(["needs", "done"]),
   "next:blocked": Object.freeze(["needs"]),
   "next:done": Object.freeze(["done"]),
 });
@@ -223,11 +224,12 @@ export function candidates(stage, list_ = rows()) {
     .map(({ a }) => ({ address: a.address, stage }));
 }
 
-/** The next agent for a walk command after `current` (an address), or null. */
+/** The next agent for a walk command after `current` (an address): `{address, stage}`, the stage the walk found it in,
+ *  or null. */
 export function nextAgent(command, current_ = currentAddress(), list_ = rows()) {
   for (const stage of NEXT[command] ?? []) {
     const address = nextInStage(candidates(stage, list_), stage, current_);
-    if (address) return address;
+    if (address) return { address, stage };
   }
   return null;
 }
@@ -253,9 +255,13 @@ export function setSnooze(address, until, now = Date.now()) {
 }
 
 function walk(_cx, { command }) {
-  const address = nextAgent(command);
-  if (address) goTo(address);
-  else notify({ title: t(command === "next:done" ? "home.next.noneDone" : "home.next.noneWaiting"), level: "info", timeout: 3000 });
+  const next = nextAgent(command);
+  if (!next) {
+    notify({ title: t(command === "next:done" ? "home.next.noneDone" : "home.next.noneWaiting"), level: "info", timeout: 3000 });
+    return;
+  }
+  goTo(next.address);
+  if (next.stage !== NEXT[command][0]) notify({ title: t("home.next.movedToDone"), level: "info", timeout: 3000 });
 }
 
 function openPr() {

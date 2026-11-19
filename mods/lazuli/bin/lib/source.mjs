@@ -28,7 +28,9 @@ export function displayPath(url, { origin, root, file, home }) {
  *  symlink leads: the nearest folder above it holding `.git` (the repository), else the file's own
  *  folder. Returns `{root, rel}` (the root's real path and the file's "/"-separated real path under
  *  it), or `{error: "outside-root"}` when the file resolves outside that root (a symlink leading
- *  out), which is then not served at all; `{error: "no-folder"}` when its folder is gone. */
+ *  out), which is then not served at all; `{error: "no-folder"}` when its folder is gone. The static
+ *  server never serves a name starting with ".": a file inside such a folder (`.github/x.md`) is
+ *  served from its own folder, and a file so named gives `{error: "hidden-file"}`. */
 export async function findRoot(file) {
   const opened = path.resolve(file);
   let root = path.dirname(opened);
@@ -47,7 +49,10 @@ export async function findRoot(file) {
   );
   const rel = path.relative(realRoot, real);
   if (!rel || rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) return { error: "outside-root" };
-  return { root: realRoot, rel: rel.split(path.sep).join("/") };
+  const parts = rel.split(path.sep);
+  if (parts.at(-1).startsWith(".")) return { error: "hidden-file" };
+  if (parts.some((s) => s.startsWith("."))) return { root: path.dirname(real), rel: parts.at(-1) };
+  return { root: realRoot, rel: parts.join("/") };
 }
 
 function signature(file) {

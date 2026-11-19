@@ -83,6 +83,7 @@ export default {
   "home.next.changed": "Its question changed since you saw it: nothing was pressed, check it again",
   "home.next.noneWaiting": "No agent is waiting",
   "home.next.noneDone": "No finished agent to look at",
+  "home.next.movedToDone": "No agent needs you — moved to a finished agent",
   "home.keys.choose": "choose",
 
   // GitHub sync.

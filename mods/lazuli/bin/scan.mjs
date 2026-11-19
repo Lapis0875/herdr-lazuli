@@ -933,7 +933,7 @@ async function pool(items, limit, work) {
 // written since the week's Monday are read; a plain file is read on from its cached offset, a `.zst` again whole when
 // it changed. The cache keeps each file's merged rows from the week on.
 
-const USAGE_VERSION = 1;
+const USAGE_VERSION = 2;
 const SLOT_MS = 15 * 60000;
 const FIELDS = ["input", "output", "cacheRead", "cacheWrite", "cacheWrite1h"];
 const WANT = {

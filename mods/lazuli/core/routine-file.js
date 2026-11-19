@@ -58,23 +58,49 @@ export function frontMatter(text) {
   return { fields, body: body.join("\n").trim() };
 }
 
-/** The file's text with the field set (added at the end of the front matter when missing); the other
- *  fields and the body stay as they were. */
+// The text cut into lines, each with its own ending ("\n", "\r\n" or none for a last line without one).
+function rawLines(text) {
+  return (text.match(/[^\n]*\n|[^\n]+$/g) ?? []).map((raw) => {
+    const eol = raw.endsWith("\r\n") ? "\r\n" : raw.endsWith("\n") ? "\n" : "";
+    return { line: raw.slice(0, raw.length - eol.length), eol };
+  });
+}
+
+// A front matter line's key as `frontMatter` reads it (trimmed, lower-cased), or null for a line without one.
+function keyOf(line) {
+  const colon = line.indexOf(":");
+  return colon >= 0 ? line.slice(0, colon).trim().toLowerCase() : null;
+}
+
+/** The file's text with one field edited in place. Set: the last line with that key (the one the file's
+ *  readers take) gets the value, its key kept as written; a missing key is added before the closing `---`.
+ *  Cleared (empty value): every line with that key goes. Every other line (comments, blank lines, other
+ *  keys, line endings, the body) stays byte for byte. A text without a closed front matter gets one. */
 export function setField(text, key, value) {
-  const { fields, body } = frontMatter(text);
-  const out = ["---"];
-  let set = false;
-  for (const [k, v] of fields) {
-    if (k === key) {
-      out.push(`${key}: ${value}`);
-      set = true;
-    } else {
-      out.push(`${k}: ${v}`);
-    }
+  const t = str(text);
+  const want = str(key).trim().toLowerCase();
+  // A value is one line: line breaks in it would start new fields.
+  const v = String(value ?? "").replace(/[\r\n]+/g, " ").trim();
+  const all = rawLines(t);
+  const close = all.length && all[0].line.trim() === "---" ? all.findIndex((l, i) => i > 0 && l.line.trim() === "---") : -1;
+  if (close < 0) {
+    if (!v) return t;
+    const nl = all[0]?.eol === "\r\n" ? "\r\n" : "\n";
+    const body = t === "" ? "" : `${nl}${t.endsWith("\n") ? t : `${t}${nl}`}`;
+    return `---${nl}${want}: ${v}${nl}---${nl}${body}`;
   }
-  if (!set) out.push(`${key}: ${value}`);
-  out.push("---", "", body);
-  return `${out.join("\n")}\n`;
+  const found = [];
+  for (let i = 1; i < close; i++) if (keyOf(all[i].line) === want) found.push(i);
+  if (!v) return all.filter((_, i) => !found.includes(i)).map((l) => l.line + l.eol).join("");
+  if (found.length) {
+    const l = all[found[found.length - 1]];
+    const colon = l.line.indexOf(":");
+    const gap = /^[ \t]*/.exec(l.line.slice(colon + 1))[0] || " ";
+    l.line = `${l.line.slice(0, colon)}:${gap}${v}`;
+  } else {
+    all.splice(close, 0, { line: `${want}: ${v}`, eol: all[0].eol || "\n" });
+  }
+  return all.map((l) => l.line + l.eol).join("");
 }
 
 // "09:00", "9:30", "17h" → [hours, minutes].

@@ -14,3 +14,23 @@ test('serves only root files and rejects traversal, hosts and methods',async()=>
  await writeFile(join(root,'a b.html'),'changed'); assert.equal((await get('/a%20b.html')).body,'changed');
  } finally {if(server) await server.close(); await rm(dir,{recursive:true,force:true});}
 });
+test('never serves dot-segment paths but serves dotted names',async()=>{
+ const {mkdir}=await import('node:fs/promises'); const root=await mkdtemp(join(tmpdir(),'lazuli-dot-'));
+ for(const d of ['.git','a/.secret','.github','a.b']) await mkdir(join(root,d),{recursive:true});
+ await writeFile(join(root,'.git/config'),'git'); await writeFile(join(root,'.env'),'env'); await writeFile(join(root,'a/.secret/x'),'x'); await writeFile(join(root,'.github/x.md'),'# x'); await writeFile(join(root,'a.b/c.html'),'ok');
+ let server; try {server=await startStaticServer({root,renderMarkdown:(t)=>t}); const get=p=>request(server.port,p);
+ for(const p of ['/.git/config','/.env','/a/.secret/x','/%2egit/config','/__lazuli/md/.github/x.md']) assert.equal((await get(p)).status,404,p);
+ const r=await get('/a.b/c.html'); assert.equal(r.status,200); assert.equal(r.body,'ok');
+ } finally {if(server) await server.close(); await rm(root,{recursive:true,force:true});}
+});
+test('adds the network-blocking CSP only while blockNetwork answers true',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'lazuli-csp-')); await writeFile(join(root,'p.html'),'page');
+ let blocked, plain; try {
+  blocked=await startStaticServer({root,blockNetwork:()=>true}); plain=await startStaticServer({root});
+  let r=await request(blocked.port,'/p.html'); assert.equal(r.status,200); assert.equal(r.headers['content-security-policy'],"connect-src 'self' http: https: data: blob:");
+  r=await request(blocked.port,'/missing'); assert.equal(r.status,404); assert.equal(r.headers['content-security-policy'],"connect-src 'self' http: https: data: blob:");
+  r=await request(blocked.port,'/p.html',{headers:{'sec-fetch-dest':'sharedworker'}}); assert.equal(r.status,200); assert.equal(r.headers['content-security-policy'],"default-src 'self' data: blob:");
+  r=await request(plain.port,'/p.html'); assert.equal(r.status,200); assert.equal(r.headers['content-security-policy'],undefined);
+  r=await request(plain.port,'/p.html',{headers:{'sec-fetch-dest':'sharedworker'}}); assert.equal(r.headers['content-security-policy'],undefined);
+ } finally {if(blocked) await blocked.close(); if(plain) await plain.close(); await rm(root,{recursive:true,force:true});}
+});
