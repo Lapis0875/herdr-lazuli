@@ -163,5 +163,5 @@ export default {
 
   "gallery.tooltip.target": "여기에 마우스를 올려 두세요",
   "gallery.tooltip.text": "툴팁은 0.5초 뒤에 나타납니다",
-  "gallery.tooltip.button": "에이전트 호출 트리 열기 (⌃⌘4)",
+  "gallery.tooltip.button": "에이전트 호출 트리 열기 (⌘4)",
 };

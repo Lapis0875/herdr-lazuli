@@ -75,7 +75,7 @@ Commands (`keys.json` section `layout:lazuli`, D2):
 | ⌥⌘1/2/3 | `lazuli.go:inbox` / `go:todo` / `go:routines` | status | `layout.select {stack:"center", child}` |
 | ⌥⌘A | `lazuli.agent-view` | status | `layout.select {stack:"view"}` main ↔ agent |
 | ⌥⌘B | `lazuli.panel` | status | `layout.toggle {id:"panel"}` |
-| ⌃⌘1/2/3/4 | `lazuli.panel:review` / `files` / `changes` / `tree` | status | select in `panel-body` and show; hide if already shown |
+| ⌘1/2/3/4 | `lazuli.panel:review` / `files` / `changes` / `tree` | status | select in `panel-body` and show; hide if already shown |
 | ⌘⇧V | `lazuli.file-mode` | file | next available mode (B3) |
 | ⌘⇧O | `lazuli.quickopen` | status | quick-open dialog |
 | ⌘J, ⇧⌘J, ⇧⌘U | `lazuli.next-waiting`, `next:blocked`, `next:done` | status | `agent.focus {terminal}` on the next agent of that stage |

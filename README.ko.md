@@ -35,7 +35,7 @@ lazuli는 [cockpit](https://github.com/quaresc/cockpit)에서 생성한 포크�
   다음·지난 실행, 출력, 비용, 기록이 보이고, 자기만의 git worktree에서 돌릴 수도 있습니다. 바로 실행, 중지, 일시 정지,
   수정, 삭제를 할 수 있습니다.
 
-**사이드 패널** (⌃⌘1~⌃⌘4). 오른쪽 끝의 액티비티 레일은 가운데에 어떤 화면이 있든 늘 보입니다.
+**사이드 패널** (⌘1~⌘4). 오른쪽 끝의 액티비티 레일은 가운데에 어떤 화면이 있든 늘 보입니다.
 
 - **Review.** 포커스한 에이전트의 저장소를 diff로 봅니다. 범위는 커밋하지 않은 변경, 기준 브랜치와 비교한 이 브랜치,
   그리고 풀 리퀘스트 중에서 고릅니다. 줄마다 댓글을 달아 메시지 하나로 에이전트에게 보내거나, 변경을 단계별로 풀어 주는
@@ -231,10 +231,10 @@ rm -f ~/.omp/agent/extensions/lstack-herdr-tree.ts
 | ⌥⌘3 `cmd-alt-3` | `lazuli.go:routines` | 가운데에 Routines |
 | ⌥⌘A `cmd-alt-a` | `lazuli.agent-view` | 작업 화면을 패널 보기와 포커스한 에이전트 보기 사이에서 전환 |
 | ⌥⌘B `cmd-alt-b` | `lazuli.panel` | 사이드 패널 보이기·숨기기 |
-| ⌃⌘1 `ctrl-cmd-1` | `lazuli.panel:review` | 사이드 패널 Review 탭 |
-| ⌃⌘2 `ctrl-cmd-2` | `lazuli.panel:files` | 사이드 패널 Files 탭 |
-| ⌃⌘3 `ctrl-cmd-3` | `lazuli.panel:changes` | 사이드 패널 Changes 탭 |
-| ⌃⌘4 `ctrl-cmd-4` | `lazuli.panel:tree` | 사이드 패널 호출 트리 탭 |
+| ⌘1 `cmd-1` | `lazuli.panel:review` | 사이드 패널 Review 탭 |
+| ⌘2 `cmd-2` | `lazuli.panel:files` | 사이드 패널 Files 탭 |
+| ⌘3 `cmd-3` | `lazuli.panel:changes` | 사이드 패널 Changes 탭 |
+| ⌘4 `cmd-4` | `lazuli.panel:tree` | 사이드 패널 호출 트리 탭 |
 | ⇧⌘V `cmd-shift-v` | `lazuli.file-mode` | 포커스한 파일 탭의 다음 모드: Edit → Split → Preview |
 | ⇧⌘O `cmd-shift-o` | `lazuli.quickopen` | 포커스한 폴더 아래에서 빠르게 열기 |
 | ⌘J `cmd-j` | `lazuli.next-waiting` | 나를 기다리는 다음 에이전트, 없으면 끝난 다음 에이전트 |
@@ -245,6 +245,8 @@ rm -f ~/.omp/agent/extensions/lstack-herdr-tree.ts
 | ⌘R `cmd-r` | `lazuli.recap` | 요약 |
 | ⌘G `cmd-g` | `lazuli.pr` | 포커스한 에이전트의 풀 리퀘스트 열기 |
 | ⌘L `cmd-l` | `lazuli.ticket` | 포커스한 에이전트의 티켓 열기: PR 본문의 첫 트래커 링크, 없으면 브랜치 이름의 `KEY-123` |
+
+lazuli 레이아웃이 보이는 동안 ⌘1~⌘4는 Herdr의 탭 선택 키를 대신합니다. ⌘5~⌘9는 그대로 탭을 선택합니다.
 
 ## 설정
 

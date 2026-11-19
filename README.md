@@ -35,7 +35,7 @@ part of it. A one-time migration brings your to-do list, routines, sidebar pins 
   `weekdays 9:00,17:30`, cron), on a GitHub event (`on review`, `on ci-failed`, …) or by hand. Each shows its next and
   last run, output, cost and history; it can run in its own git worktree. Run now, stop, pause, edit, delete.
 
-**Side panel** (⌃⌘1 to ⌃⌘4), with an activity rail at the right edge that stays visible on every center view:
+**Side panel** (⌘1 to ⌘4), with an activity rail at the right edge that stays visible on every center view:
 
 - **Review.** The focused agent's repository as a diff: uncommitted changes, the branch against its base, or its pull
   request. Comment on lines and send every comment to the agent as one message, or read an AI walkthrough of the
@@ -236,10 +236,10 @@ tab already shows closes the panel.
 | ⌥⌘3 `cmd-alt-3` | `lazuli.go:routines` | Routines in the center |
 | ⌥⌘A `cmd-alt-a` | `lazuli.agent-view` | the work view switches between the panes and the focused agent |
 | ⌥⌘B `cmd-alt-b` | `lazuli.panel` | shows or hides the side panel |
-| ⌃⌘1 `ctrl-cmd-1` | `lazuli.panel:review` | side panel tab Review |
-| ⌃⌘2 `ctrl-cmd-2` | `lazuli.panel:files` | side panel tab Files |
-| ⌃⌘3 `ctrl-cmd-3` | `lazuli.panel:changes` | side panel tab Changes |
-| ⌃⌘4 `ctrl-cmd-4` | `lazuli.panel:tree` | side panel tab call tree |
+| ⌘1 `cmd-1` | `lazuli.panel:review` | side panel tab Review |
+| ⌘2 `cmd-2` | `lazuli.panel:files` | side panel tab Files |
+| ⌘3 `cmd-3` | `lazuli.panel:changes` | side panel tab Changes |
+| ⌘4 `cmd-4` | `lazuli.panel:tree` | side panel tab call tree |
 | ⇧⌘V `cmd-shift-v` | `lazuli.file-mode` | the focused file tab's next mode: Edit → Split → Preview |
 | ⇧⌘O `cmd-shift-o` | `lazuli.quickopen` | quick open under the focused folder |
 | ⌘J `cmd-j` | `lazuli.next-waiting` | the next agent that needs you, else the next finished one |
@@ -250,6 +250,8 @@ tab already shows closes the panel.
 | ⌘R `cmd-r` | `lazuli.recap` | the recap |
 | ⌘G `cmd-g` | `lazuli.pr` | opens the focused agent's pull request |
 | ⌘L `cmd-l` | `lazuli.ticket` | opens the focused agent's ticket: the first tracker link in the PR body, else a `KEY-123` in the branch name |
+
+⌘1–⌘4 replace Herdr's tab selection keys while the lazuli layout is shown; ⌘5–⌘9 still select tabs.
 
 ## Settings
 

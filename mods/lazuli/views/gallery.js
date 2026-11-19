@@ -245,7 +245,7 @@ export default class Gallery {
 
   kbds(k) {
     return [
-      this.line(["⇧⌘P", "⌥⌘0", "⌘J", "⇧⌘U", "⌃⌘1", "⌘⇧V", "⌥⌘Q"].map((keys) => Kbd(keys)), 14),
+      this.line(["⇧⌘P", "⌥⌘0", "⌘J", "⇧⌘U", "⌘1", "⌘⇧V", "⌥⌘Q"].map((keys) => Kbd(keys)), 14),
       this.line([
         h_flex().h(30).px(8).gap(8).items_center().rounded(k.radius.md).border_1().border_color(k.line.soft).bg(k.bg.card).w(240)
           .child(Icon("command", { size: 13, color: k.text.tertiary }))

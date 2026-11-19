@@ -227,7 +227,7 @@ command, and other lazuli settings). Product terms stay English in both (PR, CI,
 | ⌥⌘1 / ⌥⌘2 / ⌥⌘3 | Inbox / To-do / Routines |
 | ⌥⌘A | work view: panes ↔ focused agent |
 | ⌥⌘B | side panel show/hide |
-| ⌃⌘1 / ⌃⌘2 / ⌃⌘3 / ⌃⌘4 | panel Review / Files / Changes / call tree (pressing the shown tab's key closes the panel; closing never changes the center view) |
+| ⌘1 / ⌘2 / ⌘3 / ⌘4 | panel Review / Files / Changes / call tree (pressing the shown tab's key closes the panel; closing never changes the center view) |
 | ⌘⇧V | file tab mode: Edit → Split → Preview |
 | ⌘⇧O | quick open |
 | ⌘J / ⇧⌘J / ⇧⌘U | next waiting (an agent that needs you, else a finished one waiting for its next prompt, with a toast saying so) / next blocked (needs you only) / next done; with none, focus stays and a toast says so |
@@ -236,7 +236,7 @@ command, and other lazuli settings). Product terms stay English in both (PR, CI,
 | ⌘R | recap |
 | ⌘G / ⌘L | open focused agent's PR / ticket |
 
-New keys were checked against the `global` section of the installed `keys.json`.
+New keys were checked against the `global` section of the installed `keys.json`. ⌘1–⌘4 replace Herdr's global tab selection (`tab.select:1–4`) while this layout is shown; ⌘5–⌘9 still select tabs.
 
 **D3. Layout.** Keep the current frame: left sidebar, top bar (tabs and bell), center stack (Home, Inbox, To-do,
 Routines, work), work row (active tab or focused agent, right panel with Review, Files, Changes and call tree),

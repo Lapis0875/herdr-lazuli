@@ -61,7 +61,7 @@ export function panelVisible() {
 /**
  * Hides a shown node that lives inside the center stack (the side panel, Home's agent card) and leaves the center on
  * the view it showed. `layout.hide` on such a node moved the center stack to its next child (live run 3, D2: closing
- * the call-tree panel with ⌃⌘4 showed the Inbox), while `layout.toggle` keeps it (⌥⌘B), so this toggles a node that
+ * the call-tree panel with ⌘4 showed the Inbox), while `layout.toggle` keeps it (⌥⌘B), so this toggles a node that
  * is shown, then puts the center back if anything still moved it. Returns whether the node was shown.
  */
 export function hideInCenter(id) {
@@ -90,7 +90,7 @@ export function openPanel(child) {
   showWork();
 }
 
-/** ⌃⌘1–4: opens the panel on that child; pressing the shown child's key hides the panel, the center staying put. */
+/** ⌘1–4: opens the panel on that child; pressing the shown child's key hides the panel, the center staying put. */
 export function togglePanelChild(child) {
   if (panelVisible() && activeChild(NODE.panelBody) === child) hideInCenter(NODE.panel);
   else openPanel(child);

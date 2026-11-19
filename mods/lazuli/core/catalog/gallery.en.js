@@ -163,5 +163,5 @@ export default {
 
   "gallery.tooltip.target": "Rest the pointer here",
   "gallery.tooltip.text": "Tooltips appear after half a second",
-  "gallery.tooltip.button": "Open the agent call tree (⌃⌘4)",
+  "gallery.tooltip.button": "Open the agent call tree (⌘4)",
 };

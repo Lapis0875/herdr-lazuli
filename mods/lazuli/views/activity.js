@@ -1,7 +1,7 @@
 // The activity rail at the right edge of the main area (DESIGN D3, mockup A): Review, Files, Changes and the call
 // tree, visible on every center view. A click opens the panel on that tab (from Home, Inbox, To-do or Routines it
 // switches the center to the work view first); clicking the tab the panel shows hides the panel (sys/bus.js
-// togglePanelChild, the same as ⌃⌘1–4). Badges: the call tree's running or failed subagents (sys/scan.js badge()),
+// togglePanelChild, the same as ⌘1–4). Badges: the call tree's running or failed subagents (sys/scan.js badge()),
 // and for the other tabs whatever their views publish as shared `lazuli.badge.<tab>` = {count, tone}.
 
 import { div } from "gpui-kit";
@@ -18,10 +18,10 @@ import { ViewRoot, IconButton } from "../ui/kit.js";
 const CLEAR = "#00000000";
 
 const ITEMS = Object.freeze([
-  { child: "review", icon: "git-pull-request", key: "⌃⌘1" },
-  { child: "files", icon: "folder", key: "⌃⌘2" },
-  { child: "changes", icon: "file-diff", key: "⌃⌘3" },
-  { child: "tree", icon: "workflow", key: "⌃⌘4" },
+  { child: "review", icon: "git-pull-request", key: "⌘1" },
+  { child: "files", icon: "folder", key: "⌘2" },
+  { child: "changes", icon: "file-diff", key: "⌘3" },
+  { child: "tree", icon: "workflow", key: "⌘4" },
 ]);
 
 // Herdr's tab bar remembers the panel per space among shared("workspace.panels") (H/mods/tabs/main.js syncPanel):

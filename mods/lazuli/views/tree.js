@@ -1,4 +1,4 @@
-// The call tree panel (`view: "tree"`, ⌃⌘4; DESIGN A3,
+// The call tree panel (`view: "tree"`, ⌘4; DESIGN A3,
 // behavior of lstack-herdr's lh-tree-view.js (removed; git history ee5201a), new UI): the
 // agents a terminal started, from sys/scan.js. Two views:
 //   List: rows two lines high (16 px a level, 14 when narrow, up to depth 4, 1 px guides); a click opens a row's
