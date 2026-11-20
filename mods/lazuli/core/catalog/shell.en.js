@@ -1,6 +1,7 @@
 // UI text for the shell (sidebar, bell, status bar, headers, menus), English. Keys start with "shell.".
 // The view keys are U2's; restore (sys/resume.js), migration (sys/migrate.js) and notification (sys/notify.js) texts
-// are T14's.
+// are T14's; the herdr-caffeinate chip and palette texts (`shell.caffeinate.*`, views/status.js, sys/search.js) are
+// herdr-caffeinate L1's. "Caffeinate" is a product name and stays English in both languages.
 
 export default {
   "shell.restore.restored": "Previous sessions restored: {count}",
@@ -116,6 +117,47 @@ export default {
   "shell.status.restoreHint": "Retry restoring stopped sessions  ⌥⌘R",
   "shell.status.queued": "Queued prompts",
   "shell.status.queueHint": "Prompt queue of the focused agent  ⌥⌘Q",
+
+  "shell.caffeinate.label.on": "Awake",
+  "shell.caffeinate.label.agent": "Agents working",
+  "shell.caffeinate.label.waiting": "Agent mode",
+  "shell.caffeinate.label.timer": "Timer",
+  "shell.caffeinate.label.trigger": "On power",
+  "shell.caffeinate.left.m": "{m}m",
+  "shell.caffeinate.left.h": "{h}h",
+  "shell.caffeinate.left.hm": "{h}h {m}m",
+  "shell.caffeinate.tip.starting": "Caffeinate is starting…",
+  "shell.caffeinate.tip.off": "Caffeinate is off",
+  "shell.caffeinate.tip.waiting": "Caffeinate: awake once an agent works",
+  "shell.caffeinate.tip.on": "Caffeinate: keeping the Mac awake",
+  "shell.caffeinate.tip.agent": "Caffeinate: awake while agents work",
+  "shell.caffeinate.tip.timer": "Caffeinate: awake for {left} more",
+  "shell.caffeinate.tip.timerOpen": "Caffeinate: timer running",
+  "shell.caffeinate.tip.trigger": "Caffeinate: awake while on power",
+  "shell.caffeinate.tip.display": "display stays on",
+  "shell.caffeinate.tip.lid.engaged": "keeps running with the lid closed",
+  "shell.caffeinate.tip.lid.external": "another app keeps it awake with the lid closed",
+  "shell.caffeinate.tip.lid.blocked": "lid-closed mode paused: {reason}",
+  "shell.caffeinate.tip.lid.unavailable": "lid-closed mode unavailable",
+  "shell.caffeinate.tip.open": "click to open the menu",
+  "shell.caffeinate.blocked.ac": "not on power",
+  "shell.caffeinate.blocked.battery": "battery low",
+  "shell.caffeinate.blocked.thermal": "Mac too hot",
+  "shell.caffeinate.blocked.unknown": "power state unreadable",
+  "shell.caffeinate.blocked.other-instance": "another Herdr holds it",
+  "shell.caffeinate.cmd.menu": "Caffeinate: Open the menu",
+  "shell.caffeinate.cmd.toggle": "Caffeinate: Toggle on and off",
+  "shell.caffeinate.cmd.mode.on": "Caffeinate: Keep the Mac awake",
+  "shell.caffeinate.cmd.mode.agent": "Caffeinate: Awake while agents work",
+  "shell.caffeinate.cmd.mode.off": "Caffeinate: Turn off",
+  "shell.caffeinate.cmd.timer.15": "Caffeinate: Awake for 15 minutes",
+  "shell.caffeinate.cmd.timer.60": "Caffeinate: Awake for 1 hour",
+  "shell.caffeinate.cmd.timer.120": "Caffeinate: Awake for 2 hours",
+  "shell.caffeinate.cmd.timer.cancel": "Caffeinate: Cancel the timer",
+  "shell.caffeinate.cmd.display.toggle": "Caffeinate: Toggle keeping the display on",
+  "shell.caffeinate.cmd.closed-lid.toggle": "Caffeinate: Toggle lid-closed mode",
+  "shell.caffeinate.cmd.install": "Caffeinate: Install the lid-closed helper",
+  "shell.caffeinate.cmd.uninstall": "Caffeinate: Uninstall the lid-closed helper",
 
   "shell.activity.label": "Side panel",
   "shell.activity.review": "Review",

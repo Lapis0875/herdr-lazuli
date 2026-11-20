@@ -1,6 +1,7 @@
 // UI text for the shell (sidebar, bell, status bar, headers, menus), Korean. Keys start with "shell.".
 // The view keys are U2's; restore (sys/resume.js), migration (sys/migrate.js) and notification (sys/notify.js) texts
-// are T14's.
+// are T14's; the herdr-caffeinate chip and palette texts (`shell.caffeinate.*`, views/status.js, sys/search.js) are
+// herdr-caffeinate L1's. "Caffeinate" is a product name and stays English in both languages.
 
 export default {
   "shell.restore.restored": "이전 세션 {count}개를 복원했습니다",
@@ -116,6 +117,47 @@ export default {
   "shell.status.restoreHint": "멈춘 세션을 다시 복원합니다  ⌥⌘R",
   "shell.status.queued": "대기 프롬프트",
   "shell.status.queueHint": "지금 보는 에이전트의 프롬프트 대기열  ⌥⌘Q",
+
+  "shell.caffeinate.label.on": "깨어 있음",
+  "shell.caffeinate.label.agent": "에이전트 작업 중",
+  "shell.caffeinate.label.waiting": "에이전트 모드",
+  "shell.caffeinate.label.timer": "타이머",
+  "shell.caffeinate.label.trigger": "전원 연결됨",
+  "shell.caffeinate.left.m": "{m}분",
+  "shell.caffeinate.left.h": "{h}시간",
+  "shell.caffeinate.left.hm": "{h}시간 {m}분",
+  "shell.caffeinate.tip.starting": "Caffeinate 시작하는 중…",
+  "shell.caffeinate.tip.off": "Caffeinate 꺼짐",
+  "shell.caffeinate.tip.waiting": "Caffeinate: 에이전트가 일을 시작하면 깨워 둠",
+  "shell.caffeinate.tip.on": "Caffeinate: Mac을 깨워 두는 중",
+  "shell.caffeinate.tip.agent": "Caffeinate: 에이전트가 일하는 동안 깨워 둠",
+  "shell.caffeinate.tip.timer": "Caffeinate: {left} 더 깨워 둠",
+  "shell.caffeinate.tip.timerOpen": "Caffeinate: 타이머 실행 중",
+  "shell.caffeinate.tip.trigger": "Caffeinate: 전원에 연결된 동안 깨워 둠",
+  "shell.caffeinate.tip.display": "화면도 켜 둠",
+  "shell.caffeinate.tip.lid.engaged": "덮개를 닫아도 계속 실행",
+  "shell.caffeinate.tip.lid.external": "다른 앱이 덮개를 닫아도 깨워 둠",
+  "shell.caffeinate.tip.lid.blocked": "덮개 닫힘 모드 멈춤: {reason}",
+  "shell.caffeinate.tip.lid.unavailable": "덮개 닫힘 모드를 쓸 수 없음",
+  "shell.caffeinate.tip.open": "클릭해 메뉴 열기",
+  "shell.caffeinate.blocked.ac": "전원 연결 안 됨",
+  "shell.caffeinate.blocked.battery": "배터리 부족",
+  "shell.caffeinate.blocked.thermal": "Mac 과열",
+  "shell.caffeinate.blocked.unknown": "전원 상태를 읽을 수 없음",
+  "shell.caffeinate.blocked.other-instance": "다른 Herdr가 사용 중",
+  "shell.caffeinate.cmd.menu": "Caffeinate: 메뉴 열기",
+  "shell.caffeinate.cmd.toggle": "Caffeinate: 켜기/끄기 전환",
+  "shell.caffeinate.cmd.mode.on": "Caffeinate: Mac 계속 깨워 두기",
+  "shell.caffeinate.cmd.mode.agent": "Caffeinate: 에이전트가 일하는 동안 깨워 두기",
+  "shell.caffeinate.cmd.mode.off": "Caffeinate: 끄기",
+  "shell.caffeinate.cmd.timer.15": "Caffeinate: 15분 동안 깨워 두기",
+  "shell.caffeinate.cmd.timer.60": "Caffeinate: 1시간 동안 깨워 두기",
+  "shell.caffeinate.cmd.timer.120": "Caffeinate: 2시간 동안 깨워 두기",
+  "shell.caffeinate.cmd.timer.cancel": "Caffeinate: 타이머 취소",
+  "shell.caffeinate.cmd.display.toggle": "Caffeinate: 화면 켜 두기 전환",
+  "shell.caffeinate.cmd.closed-lid.toggle": "Caffeinate: 덮개 닫힘 모드 전환",
+  "shell.caffeinate.cmd.install": "Caffeinate: 덮개 닫힘 도우미 설치",
+  "shell.caffeinate.cmd.uninstall": "Caffeinate: 덮개 닫힘 도우미 제거",
 
   "shell.activity.label": "사이드 패널",
   "shell.activity.review": "리뷰",

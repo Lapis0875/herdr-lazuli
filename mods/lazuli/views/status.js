@@ -1,7 +1,8 @@
 // The status bar under the main area (mockup A): the agents by stage (each count goes somewhere), the focused agent's
-// program, PR and CI with ⌘G, its ticket with ⌘L, then terminals waiting to be restored (⌥⌘R) and the queued prompts
-// (⌥⌘Q). Its layout copy is the owner of the window-wide commands (sys/bus.js routes them to the view named
-// "status") and runs the services (views/shell/services.js); a `preview: true` copy only draws.
+// program, PR and CI with ⌘G, its ticket with ⌘L, then terminals waiting to be restored (⌥⌘R), the queued prompts
+// (⌥⌘Q) and, when herdr-caffeinate is installed, its chip (DESIGN D3). Its layout copy is the owner of the window-wide
+// commands (sys/bus.js routes them to the view named "status") and runs the services (views/shell/services.js); a
+// `preview: true` copy only draws.
 
 import { div } from "gpui-kit";
 import { h_flex } from "gpui-base";
@@ -10,12 +11,14 @@ import * as store from "../sys/store.js";
 import * as fleet from "../sys/fleet.js";
 import * as queue from "../sys/queue.js";
 import * as scan from "../sys/scan.js";
+import * as caffeinate from "../sys/caffeinate.js";
 import { STORE } from "../sys/state.js";
 import { showCenter } from "../sys/bus.js";
 import { treeCommand } from "./panels/tree-actions.js";
 import { t } from "../core/i18n.js";
+import { MOD as CAFFEINATE } from "../core/caffeinate-chip.js";
 import { tokens } from "../ui/tokens.js";
-import { ViewRoot, Icon, Kbd, StatusDot, ProgramIcon, Spinner, Divider, Spacer, withTooltip } from "../ui/kit.js";
+import { ViewRoot, Icon, Kbd, StatusDot, ProgramIcon, Spinner, Divider, Spacer, withTooltip, toneColor } from "../ui/kit.js";
 import { startServices, stopServices } from "./shell/services.js";
 import { act } from "./shell/actions.js";
 import { STAGES, STAGE_DOT, stageCounts, stageLabel, ciState, ciLabel } from "./shell/format.js";
@@ -30,6 +33,31 @@ const STAGE_GO = Object.freeze({
   ready: { show: "home", key: "⌥⌘0" },
   done: { command: "lazuli.next:done", key: "⇧⌘U" },
 });
+
+/** The caffeinate chip's time left, `{h, m}` → "1h 5m" / "42m"; null without one. */
+function caffeinateLeft(left) {
+  if (!left) return null;
+  if (!left.h) return t("shell.caffeinate.left.m", { m: left.m });
+  return left.m ? t("shell.caffeinate.left.hm", { h: left.h, m: left.m }) : t("shell.caffeinate.left.h", { h: left.h });
+}
+
+/** The caffeinate chip's words: the minutes left of a timer, a label while it keeps the Mac awake or waits for agents,
+ *  none while off or starting (the tooltip says those). */
+function caffeinateLabel(c) {
+  if (c.status === "timer") return caffeinateLeft(c.left) ?? t("shell.caffeinate.label.timer");
+  return c.status === "starting" || c.status === "off" ? null : t(`shell.caffeinate.label.${c.status}`);
+}
+
+/** The caffeinate chip's tooltip (also its accessibility label): the state, the display, the closed-lid state, the
+ *  click. */
+function caffeinateTip(c) {
+  const left = caffeinateLeft(c.left);
+  const parts = [c.status === "timer" ? (left ? t("shell.caffeinate.tip.timer", { left }) : t("shell.caffeinate.tip.timerOpen")) : t(`shell.caffeinate.tip.${c.status}`)];
+  if (c.display) parts.push(t("shell.caffeinate.tip.display"));
+  if (c.lid) parts.push(c.lid.blocked ? t("shell.caffeinate.tip.lid.blocked", { reason: t(`shell.caffeinate.blocked.${c.lid.blocked}`) }) : t(`shell.caffeinate.tip.lid.${c.lid.status}`));
+  parts.push(t("shell.caffeinate.tip.open"));
+  return parts.join(" · ");
+}
 
 export default class Status {
   constructor(name) {
@@ -122,6 +150,20 @@ export default class Status {
     return out;
   }
 
+  /** herdr-caffeinate's chip (sys/caffeinate.js), drawn only while that mod is installed: the coffee in its status's
+   *  tone, its words, the closed-lid mark; a click opens that mod's menu. */
+  caffeinateChip(k, c) {
+    const color = toneColor(c.tone, k);
+    const label = caffeinateLabel(c);
+    const tip = caffeinateTip(c);
+    const parts = [
+      Icon(c.icon, { size: 13, color }),
+      label ? div().text_color(color).when(c.status === "timer", (e) => e.font_family(k.fonts.mono)).child(label) : null,
+      c.lid ? Icon(c.lid.icon, { size: 12, color: toneColor(c.lid.tone, k) }) : null,
+    ];
+    return this.item(k, "st-caffeinate", parts.filter(Boolean), { tooltip: tip, onClick: () => run(`${CAFFEINATE}.menu`) }).accessibility_label(tip);
+  }
+
   render(_cx) {
     const k = tokens();
     const rows = fleet.rows();
@@ -131,6 +173,7 @@ export default class Status {
     const restore = store.get(STORE.restore);
     const lost = list(restore?.pending).length + list(restore?.failed).length;
     const queued = queue.get()?.count ?? 0;
+    const cf = caffeinate.view(Date.now());
     const agentPart = w >= 560 ? this.agent(k, a, wide) : [];
     return ViewRoot("lz-status", { bg: k.bg.app })
       .flex_row()
@@ -161,6 +204,7 @@ export default class Status {
           tooltip: t("shell.status.queueHint"),
           onClick: () => queue.open(null),
         }),
-      );
+      )
+      .when(Boolean(cf), (e) => e.child(this.caffeinateChip(k, cf)));
   }
 }

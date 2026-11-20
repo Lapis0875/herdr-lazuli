@@ -578,3 +578,54 @@ export async function startStaticServer(o: {
 | V4 | Codex prints its session id on stderr as `session id: <uuid>`; `parseOutput("codex")` returns `session: null` until this is confirmed. | T12 |
 | V5 | The exact tail of the reference `decodeRecord` condition (cut off in my read); the contract above states the intended rule. | T13/T14, from `lh-resume-tools.js:147` |
 | V6 | marked 18 token field names used by `toTree` (`strong`, `em`, `del`, `codespan`, list `task`/`checked`); the `parse` example is the acceptance check. | T15 (S7) |
+
+## herdr-caffeinate wiring (herdr-caffeinate plan node L1; its contracts C1, C3, C9, C12; DESIGN D3)
+
+herdr-caffeinate is a separate mod in its own repository. lazuli imports nothing from it: it reads the shared key
+`herdr-caffeinate.state` (its C3) and runs that mod's `herdr-caffeinate.<command>`s (its C1). Files (its C12):
+`core/caffeinate-chip.js`, `sys/caffeinate.js`, `views/status.js`, `views/shell/services.js`, `sys/search.js`,
+`core/catalog/shell.{en,ko}.js`, `ui/icons/coffee.svg`, `tests/caffeinate-chip.test.mjs`. `layouts/lazuli.json` is not
+changed.
+
+### core/caffeinate-chip.js — pure
+
+```js
+export const MOD = "herdr-caffeinate"
+export const STATE_KEY = "herdr-caffeinate.state"
+export const HOST = {mod: MOD, props: {view: "host"}, kind: "window", frame: "none", key: "herdr-caffeinate.host", width: 2, height: 2, at: {x: 0, y: 0}}   // C9; no `keep`
+export const STATUS: {[status: string]: {icon: string, tone: string}}   // starting, off, waiting, on, agent, timer, trigger
+export const LID: {[status: string]: {icon: string, tone: string}}      // engaged, external, blocked, unavailable
+export const BLOCKED: string[]       // "ac", "battery", "thermal", "unknown", "other-instance"
+export const COMMANDS: string[]      // the C1 commands the palette may offer, in order
+export function usable(state, openedAt = null): boolean
+export function timeLeft(endsAt: number, now: number): {h: number, m: number} | null
+export function chip(state, {openedAt = null, now = null} = {}): {status, icon, tone, active, display, left, lid, install}
+export function paletteCommands(chip): string[]
+export function commandKey(cmd: string): string   // "mode:on" → "mode.on"
+```
+- `usable`: an object with `v === 1`, a finite `at`, `mode` in off/on/agent/timer and a boolean `active`, and `at >= openedAt` when `openedAt` is a number. Anything else is `starting`: `active: false`, tone `unknown`, `lid: null`, `install: null`, `left: null`, `display: false`.
+- Status: active → `trigger` (reason trigger), `timer` (mode or reason timer), `agent` (mode or reason agent), else `on`; not active → `waiting` (mode agent), else `off`. `active` is true exactly for the accent statuses (on, agent, timer, trigger). Every status uses icon `coffee`; tones: starting `unknown`, off `tertiary`, waiting `secondary`, the rest `accent`.
+- `lid`: null unless `closedLid.status` is a LID key; then `{status, icon, tone, blocked}`, `blocked` a BLOCKED code for `blocked` (anything else → `unknown`), else null. Icons: engaged/external `lock` (accent/secondary), blocked/unavailable `triangle-alert` (warning). Shown whatever the mode (C10: `external` is reported with the mode Off).
+- `display`: `state.display === true && state.active`. `left`: for `timer` only, `timeLeft(endsAt, now)`: whole minutes rounded up, at least 1, as `{h, m}`; null without a finite `endsAt` or `now`.
+- `install`: `{sudo, failsafe}` when both are booleans, else null.
+- `paletteCommands`: COMMANDS minus `timer:cancel` unless status `timer`, minus `install` unless the install is known and not both parts, minus `uninstall` unless it is known and either part is installed. Timer minutes are the plan's D1 presets (15, 60, 120); lazuli never reads herdr-caffeinate's settings.
+
+```js
+chip(null) // → {status:"starting",icon:"coffee",tone:"unknown",active:false,display:false,left:null,lid:null,install:null}
+chip({v:1,at:5,mode:"timer",active:true,reason:"timer",display:true,endsAt:65*60000,closedLid:{status:"engaged",blocked:null},install:{sudo:true,failsafe:true}},{openedAt:1,now:0})
+// → {status:"timer",icon:"coffee",tone:"accent",active:true,display:true,left:{h:1,m:5},lid:{status:"engaged",icon:"lock",tone:"accent",blocked:null},install:{sudo:true,failsafe:true}}
+chip({v:1,at:5,mode:"on",active:true},{openedAt:6}).status // → "starting" (published before the host opened)
+paletteCommands(chip(null)) // → ["menu","toggle","mode:on","mode:agent","mode:off","timer:15","timer:60","timer:120","display:toggle","closed-lid:toggle"]
+```
+
+### sys/caffeinate.js — service (the status copy's)
+- `start(cx)` (from `views/shell/services.js`, after the sidecars; returns at once under `checking()`): looks for `<app home>/mods/herdr-caffeinate/mod.json` with `fs.exists` (a failure counts as absent). Absent: stops there, writing nothing and logging nothing. Present: records `openedAt`, opens `HOST` with `openOverlay` (a copy, so the same key replaces an open host; a throw is logged and the chip still shows), marks itself present, redraws, and starts a 15 s timer that redraws when a running timer's shown minutes change. Log lines (`[lazuli/caffeinate]`, and `debug.log` area `caffeinate`) only once the mod was found.
+- `stop()` (services stop): cancels the timer; the host window stays (a layout switch closes it, the next start replaces it).
+- `present()`; `view(now)` → `chip(shared(STATE_KEY), {openedAt, now})`, or null when absent (safe in render); `commands(now)` → `paletteCommands(view(now))`, or `[]` when absent.
+
+### views, palette, catalogs, icon
+- `views/status.js`: after the queue item, `.when(view)` one more `item` (`st-caffeinate`): `Icon(icon)` 13 px in `toneColor(tone)`; a label in the same tone (`shell.caffeinate.label.<status>`; the timer's minutes left in the code font through `shell.caffeinate.left.{m,h,hm}`; none for starting and off); the lid mark `Icon(lid.icon)` 12 px in its tone. Tooltip and accessibility label: `tip.<status>` (`tip.timer {left}`, `tip.timerOpen` without minutes), `tip.display`, `tip.lid.<status>` (`tip.lid.blocked {reason}` with `blocked.<code>`), `tip.open`, joined with " · ". Click: `run("herdr-caffeinate.menu")`. Absent: the bar draws exactly what it drew before.
+- `sys/search.js`: `caffeinateEntries(bound)` after Herdr's: `{id: "caffeinate:<cmd>", kind: "command", group: "herdr", icon: "command", title: t("shell.caffeinate.cmd.<commandKey>"), hint: "herdr-caffeinate", keys: the binding of "herdr-caffeinate.<cmd>" (for `menu` also "mod.open:herdr-caffeinate"), words: "caffeinate <cmd> awake sleep 잠자기 카페인", action: {kind: "command", run: "herdr-caffeinate.<cmd>"}}`. The group is `herdr` because palette group names live in the `palette` catalog, outside C12; the icon is `command` because `views/palette.js` draws only its own icon set.
+- Catalog keys (`shell.caffeinate.*`, en and ko, "Caffeinate" English in both): `label.{on,agent,waiting,timer,trigger}`, `left.{m,h,hm}`, `tip.{starting,off,waiting,on,agent,timer,timerOpen,trigger,display,open}`, `tip.lid.{engaged,external,blocked,unavailable}`, `blocked.{ac,battery,thermal,unknown,other-instance}`, `cmd.<commandKey>` for every COMMANDS entry (titles start with "Caffeinate: ").
+- `ui/icons/coffee.svg`: Lucide `coffee` at stroke width 1.75, like the rest of the set (ISC, THIRD_PARTY_NOTICES "Lucide").
+- `tests/caffeinate-chip.test.mjs`: invalid, stale and `v: 2` states give `starting` with no active styling; each STATUS and LID entry has one icon (file present) and one tone, and a sample state reaches it; minutes left, lid, install and palette rules; every key above exists in both languages.

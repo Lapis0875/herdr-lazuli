@@ -1,7 +1,7 @@
-// The palette's search index (ARCHITECTURE §4.4, DESIGN A4): lazuli's commands, Herdr's commands, layouts, the
-// language, spaces, tabs, agents, PRs from the gh store, to-dos, routines, and past sessions of OMP, Claude Code and
-// Codex. `query(text)` ranks them; each result carries an action descriptor that `perform(action)` runs, so the
-// palette view only draws and picks.
+// The palette's search index (ARCHITECTURE §4.4, DESIGN A4): lazuli's commands, Herdr's commands (with
+// herdr-caffeinate's when that mod is installed, DESIGN D3), layouts, the language, spaces, tabs, agents, PRs from the
+// gh store, to-dos, routines, and past sessions of OMP, Claude Code and Codex. `query(text)` ranks them; each result
+// carries an action descriptor that `perform(action)` runs, so the palette view only draws and picks.
 //
 // Action descriptors (plain data):
 //   {kind: "command" | "layout" | "place", run, args?, then?: [{run, args?}]}  → run(…) in order
@@ -14,8 +14,10 @@ import { openApp } from "../views/apps/nav.js";
 import * as store from "./store.js";
 import { STORE, COMMANDS, MOD, LANGUAGE_SETTINGS } from "./state.js";
 import { refreshSessions, findSessions, sessionsOf } from "./scan.js";
+import * as caffeinate from "./caffeinate.js";
 import { TOOLS, resumeArgv } from "../core/resume-tools.js";
 import { forkArgv } from "../core/agent-cmd.js";
+import { MOD as CAFFEINATE, commandKey } from "../core/caffeinate-chip.js";
 import { t } from "../core/i18n.js";
 
 /** Group codes in the order an empty query lists them; the palette words them with `palette.group.<code>`. */
@@ -157,6 +159,17 @@ function herdrEntries(bound) {
   return out;
 }
 
+/** herdr-caffeinate's commands (its C1), listed with Herdr's and only while that mod is installed (sys/caffeinate.js),
+ *  with the command glyph as every command row. The menu shows the key that opens the mod when no key names the
+ *  command itself. */
+function caffeinateEntries(bound) {
+  return caffeinate.commands(Date.now()).map((cmd) => {
+    const action = `${CAFFEINATE}.${cmd}`;
+    const key = bound.get(action) ?? (cmd === "menu" ? bound.get(`mod.open:${CAFFEINATE}`) : null) ?? null;
+    return { id: `caffeinate:${cmd}`, kind: "command", group: "herdr", icon: "command", title: t(`shell.caffeinate.cmd.${commandKey(cmd)}`), hint: CAFFEINATE, keys: key, words: `caffeinate ${cmd} awake sleep 잠자기 카페인`, action: { kind: "command", run: action } };
+  });
+}
+
 function languageEntries() {
   return LANGUAGE_SETTINGS.map((value) => ({
     id: `language:${value}`, kind: "language", group: "language", icon: "languages", title: t(`palette.language.${value}`), hint: "",
@@ -253,7 +266,7 @@ function sessionEntries(q) {
 /** Every entry, in group order. */
 export function entries(q = "") {
   const bound = bindings();
-  const all = [...lazuliEntries(bound), ...placeEntries(), ...herdrEntries(bound), ...languageEntries(), ...prEntries(), ...todoEntries(), ...routineEntries(), ...sessionEntries(q)];
+  const all = [...lazuliEntries(bound), ...placeEntries(), ...herdrEntries(bound), ...caffeinateEntries(bound), ...languageEntries(), ...prEntries(), ...todoEntries(), ...routineEntries(), ...sessionEntries(q)];
   return all.sort((a, b) => GROUPS.indexOf(a.group) - GROUPS.indexOf(b.group));
 }
 
