@@ -21,8 +21,9 @@ const log = (msg) => {
   debugLog("caffeinate", msg);
 };
 
-// The running service; null while stopped. present: the mod was found and its host opened; openedAt: when (a state
-// published before it is stale); shown: the timer minutes the ticker last redrew for.
+// The running service; null while stopped. present: the mod was found; openedAt: when its host opened (a state
+// published before it is stale), null when the open threw, so no state counts as stale; shown: the timer minutes the
+// ticker last redrew for.
 let svc = null;
 
 /** Looks for the mod and opens its host (the status copy's init). Replaces a running service. */
@@ -34,9 +35,12 @@ export function start(cx) {
   cx.spawn(async (cx) => {
     const there = await fs.exists(`${appHome()}/mods/${MOD}/mod.json`).catch(() => false);
     if (svc !== s || there !== true) return;
-    s.openedAt = Date.now();
+    // Taken before the call, kept only once it returns: a throw leaves null, since a host from an earlier start may
+    // still be publishing and every state would otherwise read as stale until the next start.
+    const opening = Date.now();
     try {
       const id = openOverlay({ ...HOST, props: { ...HOST.props }, at: { ...HOST.at } });
+      s.openedAt = opening;
       debugLog("caffeinate", `host opened (${id})`);
     } catch (e) {
       log(`host did not open: ${errText(e)}`);
