@@ -245,6 +245,28 @@ bottom status bar, floating queue. The right panel's default tab is Files.
   Clicking an icon from Home, Inbox, To-do or Routines switches the center to the work view and opens that panel tab.
 - The top tab strip is Herdr's shipped `tabs` mod. The file-tab markers `●` (unsaved) and `◦` (preview) are plain text in
   the tab name.
+- The status bar ends with the herdr-caffeinate chip while that mod is installed in the app home (its own repository;
+  herdr-caffeinate plan D6, D11 and its contract C9, owner-approved 2026-11-20). lazuli imports nothing from it. On
+  every services start (Herdr start, a switch back to lazuli, a reload) it checks `mods/herdr-caffeinate/mod.json`;
+  when present it opens that mod's hidden 2×2 host window (no `keep`), which keeps its engine running, and draws the
+  chip from `shared("herdr-caffeinate.state")`:
+
+  | State | Chip |
+  |---|---|
+  | starting (no state, not version 1, or published before the host opened) | Lucide `coffee`, unknown tone, no words |
+  | Off | `coffee`, tertiary, no words |
+  | Agent mode, no agent working | `coffee`, secondary, "Agent mode" |
+  | Awake: On, Agent (agents working), power-adapter trigger | `coffee` and its word in the accent: "Awake", "Agents working", "On power" |
+  | Awake: Timer | `coffee` and the minutes left in the accent, code font ("42m", "1h 5m") |
+  | Lid closed will not sleep the Mac | a `lock` mark: accent when ours (engaged), secondary when another app set it (external) |
+  | Lid-closed mode blocked or unavailable | a `triangle-alert` mark in the warning tone |
+
+  Its tooltip (also its accessibility label) states the mode, a display kept on, the lid state with the block reason,
+  and that a click opens the menu; a click runs `herdr-caffeinate.menu`. The palette lists that mod's commands with
+  Herdr's: menu, toggle, On, Agent, Off, 15/60/120-minute timers (the herdr-caffeinate plan's D1 presets), cancel while
+  a timer runs, display and lid-closed toggles, install while the lid-closed helper is missing or incomplete, uninstall
+  while any part of it is installed. Without the mod: no chip, no host window, no palette entries and no log lines; the
+  rest of the bar is unchanged.
 
 **D4. herdr-relay.** Relay devices get read-only lazuli: Home, Inbox, To-do and Routines from snapshots the Mac writes
 under `data/lazuli/`, the call tree, spend, and Markdown preview of file tabs already open. Actions (`gh`, `omp`, `sh`,

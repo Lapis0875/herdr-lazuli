@@ -3,7 +3,8 @@
 // against `herdr-app check`; a `preview: true` copy never calls this (views/status.js).
 //
 // Order: the migration first (the to-do and queue services wait for it before their first read), then the data
-// services, then what acts on them (notifications), then the file tabs and the PDF sidecar.
+// services, then what acts on them (notifications), then the file tabs and the PDF sidecar, then herdr-caffeinate's
+// host when that mod is installed (sys/caffeinate.js; absent, it does nothing).
 
 import { handle } from "../../sys/bus.js";
 import * as migrate from "../../sys/migrate.js";
@@ -17,6 +18,7 @@ import * as resume from "../../sys/resume.js";
 import * as notify from "../../sys/notify.js";
 import { startFileTabs } from "../../sys/filetabs.js";
 import { startSidecars, stopSidecars } from "../../sys/sidecars.js";
+import * as caffeinate from "../../sys/caffeinate.js";
 import { togglePalette } from "./actions.js";
 
 const log = (msg) => console.log(`[lazuli/status] ${msg}`);
@@ -55,7 +57,9 @@ export function startServices(cx) {
   const sweep = step("filetabs", () => startFileTabs(cx));
   if (sweep) s.stops.push(() => sweep.cancel());
   step("sidecars", () => startSidecars(cx));
+  step("caffeinate", () => caffeinate.start(cx));
   s.stops.push(
+    () => caffeinate.stop(),
     () => stopSidecars(),
     () => notify.stop(),
     () => resume.stop(),
