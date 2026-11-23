@@ -1,9 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { mkdtemp, mkdir, symlink, rm } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { tmpdir, platform } from 'node:os';
+import { join } from 'node:path';
 import {
   SESSIONS_SQL, mapRows, mapSessionList, normalizeCwd, buildList, normalizeUi, pruneUi, isProfileName, isSessionId, sessionKey, parseKey,
+  firmlinkShort, pathsToResolve,
 } from '../mods/lazuli/core/assistant-list.js';
+import { resolvePaths, shortFolder } from '../mods/lazuli/sys/assistant-sessions.js';
 
 const HOME = '/Users/u';
 const FOLDER = '/Users/u/work/notes';
@@ -187,4 +193,53 @@ test('150 rows in one group, newest first', () => {
   assert.deepEqual(got.map((r) => r.sessionId), rows.map((r) => r.id).reverse());
   assert.equal(new Set(got.map((r) => r.key)).size, 150);
   assert.ok(got.every((r) => r.local === false && r.running === false && r.selected === false));
+});
+
+test('macOS /private paths have a short form; the paths to resolve are each folder once', () => {
+  assert.equal(firmlinkShort('/private/tmp/lz-assistant-a'), '/tmp/lz-assistant-a');
+  assert.equal(firmlinkShort('/private/var/folders/ab/'), '/var/folders/ab');
+  for (const p of ['/private', '/private/', '/privateX/y', '/tmp/x', '/Users/u/private/x', '', 42, null]) assert.equal(firmlinkShort(p), null, String(p));
+  const profiles = [{ profile: 'default', rows: [...rowsIn(1, '/private/tmp/lz-a', 1), ...rowsIn(1, '/tmp/lz-a/', 2), ...rowsIn(1, '/tmp/other', 3), ...rowsIn(1, null, 4)] }, { profile: 'work', rows: null }];
+  assert.deepEqual(pathsToResolve({ folder: '/tmp/lz-a', home: HOME, profiles, local: [{ cwd: '/tmp/lz-a' }, { cwd: '~/x' }, { cwd: 'rel' }] }), ['/Users/u/x', '/private/tmp/lz-a', '/tmp/lz-a', '/tmp/other']);
+  assert.deepEqual(pathsToResolve({}), []);
+});
+
+test('a session made in either form of the folder is listed once the paths are resolved (AT-03)', () => {
+  const rows = [...rowsIn(1, '/private/tmp/lz-a', 1), ...rowsIn(1, '/tmp/lz-a/', 2), ...rowsIn(1, '/tmp/other', 3), ...rowsIn(1, '/tmp/link-to-a', 4)];
+  const real = { '/tmp/lz-a': '/private/tmp/lz-a', '/private/tmp/lz-a': '/private/tmp/lz-a', '/tmp/link-to-a': '/private/tmp/lz-a', '/tmp/other': '/private/tmp/other' };
+  const ids = (o) => buildList({ home: HOME, profiles: [{ profile: 'default', rows }], ...o }).groups[0].rows.map((r) => r.sessionId);
+  assert.deepEqual(ids({ folder: '/tmp/lz-a' }), [sid(2)], 'without resolving, only the same spelling matches');
+  assert.deepEqual(ids({ folder: '/tmp/lz-a', real }), [sid(4), sid(2), sid(1)]);
+  assert.deepEqual(ids({ folder: '/private/tmp/lz-a', real }), [sid(4), sid(2), sid(1)], 'a folder kept in the long form');
+  assert.deepEqual(ids({ folder: '/tmp/lz-a', real: { ...real, '/tmp/lz-a': '' } }), [sid(2)], 'a folder that does not resolve compares by its path');
+  assert.deepEqual(ids({ folder: '/tmp/lz-a', real: { '/tmp/lz-a': '/private/tmp/lz-a' } }), [sid(2)], 'a cwd not resolved yet compares by its path');
+  const local = [{ profile: 'default', sessionId: sid(9), cwd: '/private/tmp/lz-a', updatedAt: 9000 }];
+  assert.deepEqual(ids({ folder: '/tmp/lz-a', real, local }), [sid(9), sid(4), sid(2), sid(1)]);
+});
+
+const run = (cmd, args, opts = {}) => new Promise((resolve, reject) => execFile(cmd, args, { timeout: opts.timeout, encoding: 'utf8' }, (err, stdout, stderr) => {
+  if (err && typeof err.code !== 'number') return reject(err);
+  resolve({ code: err ? err.code : 0, stdout, stderr });
+}));
+
+test('folders resolve through symlinks and macOS firmlinks; the short form is kept when it is the same folder', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'lazuli-cwd-'));
+  try {
+    const real = join(dir, 'real');
+    await mkdir(real);
+    await symlink(real, join(dir, 'link'));
+    const r = await resolvePaths(run, [real, join(dir, 'link'), join(dir, 'missing'), 'relative', `${real}\nx`]);
+    assert.deepEqual(Object.keys(r).sort(), [join(dir, 'link'), join(dir, 'missing'), real].sort());
+    assert.ok(r[real].endsWith('/real') && r[real].startsWith('/'));
+    assert.equal(r[join(dir, 'link')], r[real]);
+    assert.equal(r[join(dir, 'missing')], '');
+    // A session made through the link is listed in the folder.
+    const rows = [...rowsIn(1, join(dir, 'link'), 1), ...rowsIn(1, real, 2)];
+    const resolved = await resolvePaths(run, pathsToResolve({ folder: real, home: HOME, profiles: [{ profile: 'default', rows }] }));
+    assert.deepEqual(buildList({ folder: real, home: HOME, profiles: [{ profile: 'default', rows }], real: resolved }).groups[0].rows.map((x) => x.sessionId), [sid(2), sid(1)]);
+    // The picker's long form is kept short only when the short form is the same folder.
+    assert.equal(await shortFolder(run, real), real);
+    assert.equal(await shortFolder(run, '/private/lazuli-no-such-folder'), '/private/lazuli-no-such-folder');
+    if (platform() === 'darwin' && r[real] === `/private${real}`) assert.equal(await shortFolder(run, `/private${real}`), real);
+  } finally { await rm(dir, { recursive: true, force: true }); }
 });

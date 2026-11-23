@@ -52,6 +52,7 @@ test('classify tells requests, updates, notifications, answers and junk apart',(
 
 test('bridge lines: first lines, ASCII encoding, chunked writes, records',()=>{
  assert.deepEqual(w.streamLine('t',5,'mod'),{op:'stream',token:'t',since:5,client:'mod'}); assert.equal(w.streamLine('t').since,null); assert.equal(w.streamLine('t',-1).since,null); assert.equal(w.streamLine('t',1.5).since,null);
+ assert.deepEqual(w.streamLine('t',null,'mod',true),{op:'stream',token:'t',since:null,client:'mod',turns:true},'turns: the running turns, only with since null'); assert.equal(w.streamLine('t',5,'mod',true).turns,undefined); assert.equal(w.streamLine('t',null,'mod',1).turns,undefined);
  assert.deepEqual(w.sendLine('t',{a:1}),{op:'send',token:'t',msg:{a:1}}); assert.deepEqual(w.shutdownLine('t'),{op:'shutdown',token:'t'});
  const line=w.encodeLine({text:'한글 😀 é',n:1}); assert.match(line,/^[\x00-\x7f]*\n$/); assert.deepEqual(JSON.parse(line),{text:'한글 😀 é',n:1}); assert.equal(Buffer.byteLength(line),line.length);
  const big=w.encodeLine({pad:'가'.repeat(400000)}); const parts=w.writeChunks(big); assert.ok(parts.length>=3); assert.ok(parts.every(p=>Buffer.byteLength(p)<=w.MAX_WRITE_BYTES)); assert.equal(parts.join(''),big);
@@ -62,22 +63,27 @@ test('bridge lines: first lines, ASCII encoding, chunked writes, records',()=>{
  for(const bad of [null,[],{},{seq:'1',msg:{}},{ev:''},{ok:false},{ok:false,error:{}}]) assert.deepEqual(w.parseRecord(bad),{kind:'invalid'});
 });
 
-test('discovery files: ready, failed, invalid; reuse match',()=>{
- const good={version:1,pid:10,agentPid:11,port:5000,token:'a'.repeat(64),profile:'default',cwd:'/tmp/f',herdrPid:9,startedAt:1};
+test('discovery files: ready, failed, invalid; reuse match by profile, folder, Herdr and agent argv',()=>{
+ const ARGV=['/opt/homebrew/bin/hermes','-p','default','acp'];
+ const good={version:1,pid:10,agentPid:11,port:5000,token:'a'.repeat(64),profile:'default',cwd:'/tmp/f',herdrPid:9,startedAt:1,argv:ARGV};
  const d=w.parseDiscovery(JSON.stringify(good)); assert.deepEqual(d,{state:'ready',...Object.fromEntries(Object.entries(good).filter(([k])=>k!=='version'))});
- assert.ok(w.discoveryMatches(d,{profile:'default',cwd:'/tmp/f',herdrPid:9})); for(const want of [{profile:'work',cwd:'/tmp/f',herdrPid:9},{profile:'default',cwd:'/tmp/f/',herdrPid:9},{profile:'default',cwd:'/tmp/f',herdrPid:8}]) assert.ok(!w.discoveryMatches(d,want));
+ const want={profile:'default',cwd:'/tmp/f',herdrPid:9,argv:ARGV};
+ assert.ok(w.discoveryMatches(d,want)); for(const other of [{profile:'work'},{cwd:'/tmp/f/'},{herdrPid:8},{argv:['/usr/local/bin/hermes','-p','default','acp']},{argv:['/usr/bin/node','/x/fake-acp-agent.mjs','-p','default','acp']},{argv:ARGV.slice(0,3)},{argv:undefined},{argv:[]}]) assert.ok(!w.discoveryMatches(d,{...want,...other}),JSON.stringify(other));
+ // A file written before the argv was kept (or with a bad one) is read, and never reused.
+ for(const argv of [undefined,'hermes',[],[1,2],null]){const old=w.parseDiscovery(JSON.stringify({...good,argv})); assert.equal(old.state,'ready'); assert.equal(old.argv,null); assert.ok(!w.discoveryMatches(old,want));}
+ assert.notEqual(w.parseDiscovery(JSON.stringify(good)).argv,good.argv,'a copy');
  assert.deepEqual(w.parseDiscovery(JSON.stringify({version:1,pid:10,error:{code:'init-timeout',detail:'no answer'}})),{state:'failed',pid:10,code:'init-timeout',detail:'no answer'});
  assert.equal(w.parseDiscovery(JSON.stringify({version:1,pid:10,error:{code:'weird'}})).code,'init-failed');
  for(const bad of ['','{',JSON.stringify({...good,version:2}),JSON.stringify({...good,token:'A'.repeat(64)}),JSON.stringify({...good,token:'ab'}),JSON.stringify({...good,port:0}),JSON.stringify({...good,port:70000}),JSON.stringify({...good,cwd:'rel'}),JSON.stringify({...good,agentPid:0}),JSON.stringify({...good,herdrPid:-1}),JSON.stringify({...good,pid:1.5})])
   assert.deepEqual(w.parseDiscovery(bad),{state:'invalid'},bad.slice(0,60));
- assert.ok(!w.discoveryMatches({state:'failed'},{profile:'default',cwd:'/tmp/f',herdrPid:9}));
+ assert.ok(!w.discoveryMatches({state:'failed'},want));
 });
 
 test('tracker: prompts in flight, steer alongside, agent requests, the idle rule',()=>{
  const t=w.createTracker(1000); const P=(id,s,text='x')=>w.sessionPrompt(id,s,[{type:'text',text}]);
  assert.ok(!t.busy()); assert.ok(!t.idleExpired(1999,1000)); assert.ok(t.idleExpired(2000,1000));
- t.fromClient(P('c:1','s1'),2000); assert.deepEqual(t.running(),[{id:'c:1',sessionId:'s1',at:2000}]); assert.ok(t.busy()); assert.ok(!t.idleExpired(99999,1000),'a prompt in flight never idles');
- t.fromClient(P('c:2','s1','/steer go left'),2100); assert.deepEqual(t.runningSessions(),['s1']); assert.equal(t.running().length,2);
+ t.fromClient(P('c:1','s1'),2000,40); assert.deepEqual(t.running(),[{id:'c:1',sessionId:'s1',at:2000,seq:40,prompt:[{type:'text',text:'x'}]}]); assert.ok(t.busy()); assert.ok(!t.idleExpired(99999,1000),'a prompt in flight never idles');
+ t.fromClient(P('c:2','s1','/steer go left'),2100); assert.deepEqual(t.runningSessions(),['s1']); assert.equal(t.running().length,2); assert.equal(t.running()[1].seq,null); assert.deepEqual([...t.turnStarts()],[['s1',40]],'a turn starts at its oldest running prompt');
  t.fromAgent({jsonrpc:'2.0',id:9,method:'session/request_permission',params:{sessionId:'s1'}},2200,17);
  assert.deepEqual(t.pending().map(p=>[p.id,p.method,p.sessionId,p.at,p.seq]),[[9,'session/request_permission','s1',2200,17]]);
  t.fromAgent({jsonrpc:'2.0',id:'c:2',result:{stopReason:'end_turn'}},2300); assert.equal(t.running().length,1); assert.equal(t.pending().length,1,'the steer ending leaves the turn and its request');
@@ -94,6 +100,27 @@ test('tracker: prompts in flight, steer alongside, agent requests, the idle rule
  const kinds=[t.fromClient({jsonrpc:'2.0',method:'session/cancel',params:{sessionId:'s'}},1).kind,t.fromAgent('junk',1).kind]; assert.deepEqual(kinds,['notification','invalid']);
 });
 
+test('tracker: running turns, session loads and the records that belong to a turn',()=>{
+ const t=w.createTracker(0); const P=(id,s,text)=>w.sessionPrompt(id,s,[{type:'text',text},{type:'resource_link',uri:'file:///tmp/a%20b.md',name:'a b.md'}]);
+ const upd=(s,k='agent_message_chunk')=>t.fromAgent({jsonrpc:'2.0',method:'session/update',params:{sessionId:s,update:{sessionUpdate:k,content:{type:'text',text:'x'}}}},1);
+ assert.equal(t.turnRecord(upd('s1')),false,'no prompt running');
+ t.fromClient(P('c:1','s1','go'),1,7); assert.deepEqual(t.running()[0].prompt,P('c:1','s1','go').params.prompt);
+ assert.equal(t.turnRecord(upd('s1')),true); assert.equal(t.turnRecord(upd('s2')),false,'another session');
+ assert.equal(t.turnRecord(t.fromAgent({jsonrpc:'2.0',id:9,method:'session/request_permission',params:{sessionId:'s1'}},1)),false,'requests are hello pending');
+ assert.equal(t.turnRecord(t.fromAgent({jsonrpc:'2.0',method:'x/other',params:{sessionId:'s1'}},1)),false); assert.equal(t.turnRecord(null),false);
+ // A load of the running session: its updates replay the history until its answer.
+ t.fromClient(w.sessionLoad('c:2','s1','/f'),2); assert.equal(t.turnRecord(upd('s1','user_message_chunk')),false);
+ t.fromClient(w.sessionLoad('c:3','s2','/f'),2); t.fromAgent({jsonrpc:'2.0',id:'c:2',result:{models:{}}},3); assert.equal(t.turnRecord(upd('s1')),true,'its load answered');
+ t.fromAgent({jsonrpc:'2.0',id:'c:1',result:{stopReason:'end_turn'}},4); assert.equal(t.turnRecord(upd('s1')),false,'the turn ended'); assert.deepEqual([...t.turnStarts()],[]);
+ t.fromClient(P('c:4','s1','again'),5,20); t.fromClient(w.sessionLoad('c:5','s1','/f'),5); t.clear(); t.fromClient(P('c:6','s1','after'),6,30); assert.equal(t.turnRecord(upd('s1')),true,'clear ends the loads too');
+});
+
+test('prompt paths: the file links promptBlocks makes',()=>{
+ assert.deepEqual(w.promptPaths(w.promptBlocks('hi',['/Users/me/한 글/a#b.md','/tmp/x'])),['/Users/me/한 글/a#b.md','/tmp/x']);
+ assert.deepEqual(w.promptPaths([{type:'resource_link',uri:'https://x/y'},{type:'resource_link',uri:'file:///bad%zz'},{type:'resource_link',uri:'file:///a%00b'},{type:'text',text:'file:///t'},null]),[]);
+ assert.deepEqual(w.promptPaths(null),[]);
+});
+
 test('stderr filter keeps prompt text out of the log',()=>{
  const lengths={s1:250}; const f=w.createStderrFilter({promptLength:s=>lengths[s]??null});
  assert.deepEqual(f.push('2026-11-23 07:20:32 [INFO] acp_adapter.server: Prompt on session s1: secret plans for'),[]);
@@ -108,4 +135,32 @@ test('stderr filter keeps prompt text out of the log',()=>{
  assert.deepEqual(f.push('plain line\nPrompt on session s1: no prefix'),['plain line']); assert.deepEqual(f.end(),['Prompt on session s1: [250 chars]']); assert.deepEqual(f.end(),[]);
  const g=w.createStderrFilter(); assert.deepEqual(g.push('INFO Prompt on session abc: 한글 비밀\n'),['INFO Prompt on session abc: [redacted]']);
  assert.ok(!JSON.stringify(f.push('2026-11-23 07:20:38 [INFO] a: Prompt on session s1: 😀😀 secret\n')).includes('secret'));
+});
+
+test('stderr: the turn line keeps no prompt text; Hermes error lines become agent-error texts',()=>{
+ const f=w.createStderrFilter();
+ const head="2026-11-23 18:08:53 [INFO] agent.turn_context: conversation turn: session=15e8 model=gpt-5.4-mini provider=openai-codex platform=acp history=0 msg=";
+ assert.deepEqual(f.push(`${head}'Run this exact shell command: rm -r /tmp/x'\n`),[`${head}[redacted]`]);
+ // Hermes's stderr for a failed turn (the bridge log of 2026-11-23 09:09:33Z), then other shapes.
+ const lines=[
+  '2026-11-23 18:09:33 [WARNING] agent.conversation_loop: API call failed (attempt 1/3) error_type=BadRequestError',
+  '\u26A0\uFE0F  API call failed (attempt 1/3): BadRequestError [HTTP 400]',
+  "   \u{1F4DD} Error: HTTP 400: The 'gpt-5.3-codex' model is not supported when using Codex with a ChatGPT account.",
+  "\u274C Non-retryable error (HTTP 400): HTTP 400: The 'gpt-5.3-codex' model is not supported when using Codex with a ChatGPT account.",
+  '\u274C Non-retryable client error (HTTP 400). Aborting.',
+  "   \u{1F4A1} This type of error won't be fixed by retrying.",
+  "2026-11-23 18:09:33 [ERROR] agent.conversation_loop: Non-retryable client error: Error code: 400 - {'detail': 'nope'}",
+  '[B1:P2] \u274C Max retries (3) exceeded',
+  '2026-11-23 18:09:34,120 [CRITICAL] x: down',
+  '[ERROR] bare: record',
+ ];
+ assert.deepEqual(lines.map((l)=>w.agentErrorText(l)),[null,null,null,
+  "Non-retryable error (HTTP 400): HTTP 400: The 'gpt-5.3-codex' model is not supported when using Codex with a ChatGPT account.",
+  'Non-retryable client error (HTTP 400). Aborting.',null,
+  "Non-retryable client error: Error code: 400 - {'detail': 'nope'}",
+  'Max retries (3) exceeded','down','record']);
+ // Never a prompt preview, even one that carries an error mark.
+ for(const l of ['2026-11-23 07:20:40 [INFO] acp_adapter.server: Prompt on session s1: \u274C secret','Prompt on session s1: [ERROR] x: secret',"2026-11-23 18:08:53 [ERROR] t: conversation turn: session=1 msg='\u274C secret'",'','   ','info \u274C mid-line','\u274C ',null,7])
+  assert.equal(w.agentErrorText(l),null,String(l));
+ const long=w.agentErrorText(`\u274C ${'e'.repeat(1500)}`); assert.equal(long.length,w.AGENT_ERROR_MAX+1); assert.ok(long.endsWith('\u2026'));
 });

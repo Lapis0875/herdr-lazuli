@@ -282,7 +282,7 @@ Scheduler, a reducer over `H/data/lazuli/routines-state.json`:
 | Chrome broker `bin/chrome-broker.mjs` | the first viewer that finds none | `spawn(process.execPath, [broker], {detached:true, stdio:"ignore"}).unref()`; the broker holds an exclusive flock on `~/.cache/lazuli/broker.lock` for its whole life (review fix) | `~/.cache/lazuli/chrome.json` (0600) | 300 s after the last lease closes |
 | PDF daemon `~/.cache/lazuli/bin/pdfd-<sha8>` | `sys/sidecars.js`, on the first PDF | `hc run --bg --json --cwd ~ --label lazuli.sidecar=pdfd -- <bin> --cache <H>/data/lazuli/cache/pdf --discovery ~/.cache/lazuli/pdfd-<home8>.json --idle 300` | `~/.cache/lazuli/pdfd-<home8>.json` (0600; `<home8>` = first 8 hex of sha256(app home); reused only when the build and the recorded `cache` both match this home) | 300 s with no connection |
 | Headless run `bin/run-agent.mjs` | `sys/runner.js` | §4.8 | label `lazuli.run=<id>` + run files | command exit |
-| ACP bridge `bin/acp-bridge.mjs`, one per Hermes profile | `sys/assistant-bridge.js`, when the Assistant screen opens | `hc run --bg --json --no-parent --no-notify --cwd <folder> --label lazuli.assistant=<profile> -- <abs node> <bridge> …` (§13.2) | `~/.cache/lazuli/assistant/<home8>/<profile>.json` (0600, folder 0700; reused only when its pid lives, profile, folder and Herdr pid match and `hello` comes within 5 s) | 30 min idle with nothing running or pending, Herdr gone, `{op:"shutdown"}`, a signal, or the agent's exit |
+| ACP bridge `bin/acp-bridge.mjs`, one per Hermes profile | `sys/assistant-bridge.js`, when the Assistant screen opens | `hc run --bg --json --no-parent --no-notify --cwd <folder> --label lazuli.assistant=<profile> -- <abs node> <bridge> …` (§13.2) | `~/.cache/lazuli/assistant/<home8>/<profile>.json` (0600, folder 0700; reused only when its pid lives, profile, folder, Herdr pid and agent argv match and `hello` comes within 5 s) | 30 min idle with nothing running or pending, Herdr gone, `{op:"shutdown"}`, a signal, or the agent's exit; the service's 60 s reaper removes its finished terminal (found with `hc ls --all`) |
 
 **HTML viewer (B7, B8)**
 - Chrome is driven over CDP: `Page.startScreencast {format:"png"}` (F6), each frame drawn as one Kitty image replaced in place.
@@ -443,7 +443,7 @@ Install (README): copy to `~/.herdr/herdr-relay/profiles/lazuli.json`, `chmod 60
 | i18n | `i18n.test.mjs` | key sets equal in both languages; placeholders equal; no empty text; fallback order |
 | other pure logic | `todo-doc.test.mjs`, `queue-doc.test.mjs`, `spend.test.mjs`, `agent-cmd.test.mjs`, `resume-tools.test.mjs`, `md-tree.test.mjs`, `lru.test.mjs`, `proto.test.mjs` | upstream to-do and queue cases; Claude duplicate usage lines counted once; unknown model unpriced; argv per tool; a partial JSON line held until complete; oversized line refused |
 | structure | `purity.test.mjs`, `layout.test.mjs`, `theme.test.mjs`, `relay-profile.test.mjs`, `static-server.test.mjs` | forbidden imports in `core/`; unique layout ids; every `view` exists in `VIEWS`; every `keys.json` action is in the bus table; `panel-body.active === "files"`; the Assistant's center child, columns, views and ⌥⌘4; the settings 1→2 pins migration; contrast ≥ 4.5 for each text/background token pair; 16 ANSI colors; profile scripts exist; `..` and a wrong `Host` are refused |
-| Assistant (§13) | `acp-wire.test.mjs`, `assistant-agents.test.mjs`, `assistant-chat.test.mjs`, `assistant-list.test.mjs`, `assistant-sessions-sql.test.mjs`, `acp-bridge.test.mjs`, `fake-acp-agent.test.mjs` | the chat reducer's ten rules with deadlines at 59,999/60,000/60,001 ms and approval buttons by option id; cwd equality, hidden profiles, `default` first, Nod last, UI state of another folder reset; argv always with `-p`; the bridge's auth, file modes, token kept out of the log, loopback, hello, replay and `gap`, `replaced`, ping, idle exit and none with a prompt or approval open, Herdr gone within 5 s (12 s with a running prompt), SIGHUP, agent crash, a 5 MiB burst in order, a 16 MiB line dropped; the session query on a WAL database built from Hermes's schema and a missing column read as `schema`; every fake-agent row against the recorded Hermes shapes |
+| Assistant (§13) | `acp-wire.test.mjs`, `assistant-agents.test.mjs`, `assistant-chat.test.mjs`, `assistant-list.test.mjs`, `assistant-sessions-sql.test.mjs`, `acp-bridge.test.mjs`, `fake-acp-agent.test.mjs` | the chat reducer's eleven rules with deadlines at 59,999/60,000/60,001 ms, approval buttons by option id, a reply-less turn failing with its agent error or no-reply, and a running turn applied again after a load showing once; cwd equality, firmlink short forms, hidden profiles, `default` first, Nod last, UI state of another folder reset; argv always with `-p`; discovery reuse by profile, folder, Herdr and agent argv; the tracker's turns and loads; stderr lines redacted and Hermes's error lines read as agent errors; the bridge's auth, file modes, token kept out of the log, loopback, hello, replay and `gap`, a stream that starts over with `turns`, `agent-error` records, `replaced`, ping, idle exit and none with a prompt or approval open, Herdr gone within 5 s (12 s with a running prompt), SIGHUP, agent crash, a 5 MiB burst in order, a 16 MiB line dropped; the session query on a WAL database built from Hermes's schema and a missing column read as `schema`; every fake-agent row against the recorded Hermes shapes |
 
 **Live window** (`docs/TESTING.md`, owner: testcode-writer):
 1. Start a second Herdr with a scratch home: `HERDR_APP_HOME=/tmp/lazuli-home`, with `mods/lazuli`, the layout, themes and keys copied in. [INFERENCE] a second instance per home works; S6 confirms it.
@@ -555,8 +555,8 @@ hc run --bg … node bin/acp-bridge.mjs --profile <p> …    (terminal label laz
 | Path | Mode | Writer | Content |
 |---|---|---|---|
 | `~/.cache/lazuli/assistant/<home8>/` | 0700 | the bridge | `<home8>` = first 8 hex of sha256(app home), as for pdfd (§5) |
-| `<profile>.json` | 0600 | the bridge, via a 0600 temp file and a rename, only after `initialize` succeeded | `{version:1, pid, agentPid, port, token, profile, cwd, herdrPid, startedAt}`; a failed start `{version:1, pid, error:{code: agent-exit\|init-failed\|init-timeout, detail}}` |
-| `<profile>.log`, `<profile>.log.1` | 0600 | the bridge | method names, ids, sizes, the agent's stderr; 5 MiB with one rotation |
+| `<profile>.json` | 0600 | the bridge, via a 0600 temp file and a rename, only after `initialize` succeeded | `{version:1, pid, agentPid, argv, port, token, profile, cwd, herdrPid, startedAt}` (`argv`: the agent argv it runs); a failed start `{version:1, pid, error:{code: agent-exit\|init-failed\|init-timeout, detail}}` |
+| `<profile>.log`, `<profile>.log.1` | 0600 | the bridge | method names, ids, sizes, the agent's stderr (prompt text cut out); 5 MiB with one rotation. Where a failed turn's cause is when Hermes said nothing in the chat |
 
 The token is 32 random bytes in hex. It lives in the discovery file and in the mod's memory only: never in a log, a
 snapshot or `shared.json`.
@@ -576,33 +576,63 @@ snapshot or `shared.json`.
   `run-agent.mjs`), sends `initialize` once (protocol 1, client `fs` and `terminal` capabilities off, `clientInfo`
   lazuli) and keeps the answer for every `hello`. No answer in 40 s is `init-timeout`. The mod polls the discovery file
   every 100 ms for up to 45 s (S9: cold start 0.6–1.6 s; `initialize` may refresh the provider login over the network).
-- **Reuse.** A discovery is reused when its pid lives, its `profile`, `cwd` and `herdrPid` match, and `hello` arrives
-  within 5 s. Otherwise its labelled terminal gets `hc kill` and `hc rm`, the file is removed, and an agent group a dead
-  bridge left is killed once `ps -o command=` shows it is that profile's `acp`. So a mod reload or a layout switch keeps
-  the same bridge; a new folder or a new Herdr gets a new one.
+- **Reuse.** A discovery is reused when its pid lives, its `profile`, `cwd`, `herdrPid` and agent `argv` match, and
+  `hello` arrives within 5 s. A running bridge of this folder and Herdr that runs another argv (`assistant.debugAgent`
+  set or cleared, another `hermes` path) gets `{op:"shutdown"}` and is replaced, also when a connected one no longer
+  matches. Any other discovery that may not be reused has its labelled terminal killed and removed (`hc kill`,
+  `hc rm`), the file removed, and an agent group a dead bridge left killed once `ps -o command=` shows it is that
+  profile's `acp`. So a mod reload or a layout switch keeps the same bridge; a new folder, a new Herdr or another agent
+  gets a new one.
 - **Ends.** Idle: 30 minutes with no `send` and no agent line, no prompt in flight and no agent request open (pings and
   stream connects do not count). Herdr: `process.kill(herdrPid, 0)` every second. SIGHUP (`hc kill`), SIGTERM, SIGINT
   or Herdr gone take the fast path: `session/cancel` for running sessions without waiting, SIGTERM to the agent group,
-  SIGKILL 300 ms later, discovery removed, exit within 400 ms. `{op:"shutdown"}` (a folder change) cancels running
-  sessions and waits up to 3 s, then SIGTERM and SIGKILL 2 s later (5 s after a cancel): out within 3 s with nothing
-  running, 11 s with a turn. The agent's exit sends `agent-exit` and `bye`, then exit 1; nothing respawns it. The
-  service removes finished `lazuli.assistant=*` terminals (`hc rm`) every 60 s.
-- **Log.** Hermes logs the first 100 characters of every prompt to stderr (`acp_adapter/server.py:1383`); the bridge
-  rewrites that line to its session id and `[<n> chars]`.
+  SIGKILL 300 ms later, discovery removed, exit within 400 ms. `{op:"shutdown"}` (a folder or agent change) cancels
+  running sessions and waits up to 3 s, then SIGTERM and SIGKILL 2 s later (5 s after a cancel): out within 3 s with
+  nothing running, 11 s with a turn. The agent's exit sends `agent-exit` and `bye`, then exit 1; nothing respawns it.
+- **Reaper.** A bridge that ended leaves its terminal behind until `hc rm` (S5). Herdr's `terminals()` lists live
+  terminals only, and the JSON of `hc ls --all --json` carries no labels and no pids, so a profile's bridge
+  terminals, finished ones included, are listed with hc's own filter: `hc ls --all --json --label
+  lazuli.assistant=<profile>` (`--label` takes `K=V` only: one call per profile). Every 60 s the service removes the
+  finished ones of every profile it knows (`default`, Hermes's profile folders, the listed, connected and discovered
+  ones); retiring or replacing a profile's bridge also removes that profile's finished ones.
+- **Log.** Hermes logs the first 100 characters of every prompt to stderr (`acp_adapter/server.py:1383`) and the first
+  80 again in a `conversation turn: … msg='…'` line (`agent/turn_context.py:213-217`); the bridge rewrites the first to
+  its session id and `[<n> chars]` and the second to `msg=[redacted]`.
+- **Agent errors.** Hermes ends a failed turn (a model the provider rejects, an expired login) with `stop_reason:
+  "end_turn"` and no message; the cause goes to stderr only (`acp_adapter/server.py:1557-1562`, 1593-1672). After
+  `initialize`, each stderr line that is Hermes's `❌ …` line or an `[ERROR]`/`[CRITICAL]` log record (never a
+  prompt-preview or turn line) also becomes an `agent-error {text}` record (at most 1,000 characters) with its own seq,
+  kept in the replay ring like an agent line.
 
 ### 13.3 Connection (`sys/acp-client.js`)
 
-- **Two channels.** One stream connection per profile (first line `{op:"stream", token, since, client}`, then `hello`
-  and every agent line as a numbered record) and one short connection per message (`{op:"send", token, msg}` →
+- **Two channels.** One stream connection per profile (first line `{op:"stream", token, since, client, turns?}`, then
+  `hello` and every agent line as a numbered record) and one short connection per message (`{op:"send", token, msg}` →
   `{ok}`). The client never writes on the stream after its first line.
 - **Host limits (S8).** A Herdr `net` read that waits 30 s fails with "os error 35": the bridge pings after 10 s of
   silence, the client reads again after such a failure and counts the stream lost after 3 in a row or at its end. One
   `net` write carries at most 1 MiB, so a longer line goes in pieces. At most 8 sends per profile at once and no timer
   per line or read (1,024 host tasks per runtime).
+- **Promise-job drain.** Herdr's QuickJS scheduler drains promise jobs with a cap per entry point (its message: "stopped
+  draining promise jobs after …: a continuation is queueing work faster than it completes. The remaining jobs run at the
+  next entry point"). One 1 MiB read can hold thousands of records (a `session/load` of the 2,100-tool `burst` session
+  is 4,220), and handling them one after another without a host call stopped the read loop: in the live window it
+  handled no further line after about 1 s of such work (2,500–2,840 lines), for minutes, so the load never ended,
+  every later answer (`session/list` included) timed out with `bridge-timeout`, and only a mod reload helped. The loop
+  now gives the host a turn (`cx.sleep(1)`) after every 64 lines or 20 ms of work.
 - **Recovery.** A dropped stream whose bridge still runs reconnects with `since` = the last record held and gets what
-  it missed (the ring keeps 4,000 records or 8 MiB; older is `gap`, and the chats reload). `hello` lists the prompts
-  still running and the agent requests still open, so a reload restores running turns and approval cards. A bridge that
-  is gone fails the chats' open requests and shows a banner with Retry.
+  it missed (the ring keeps 4,000 records or 8 MiB; older is `gap`, and the chats reload); where a stream stopped is
+  kept across a stop of the service, and a record seen already is not applied again. A client with no record of a
+  bridge (after a mod reload) opens with `turns: true`: `hello.running[]` gives each running prompt's start seq and
+  blocks, and the bridge sends that session's records since the turn began (outside its history loads), so a turn that
+  began before the reload shows once and whole. `hello.pending` restores open approval cards. A bridge that is gone
+  fails the chats' open requests and shows a banner with Retry.
+- **Stalls.** A stream whose loop handled no line for 30 s (pings come after 10 s of silence), a `session/list`
+  unanswered within 30 s, and a `session/load` unanswered within 45 s all reopen the stream (`since` = the last record
+  held): the waiting requests end `disconnected`, the bridge replays what was missed, and a load tries once more after
+  that replay was handled (`caughtUp`), on the bridge still running (no launch). A bridge that does not answer the new
+  stream turns the group to `error` (the banner's Retry). A list that fails keeps the rows read before, so neither the
+  rows nor the selection go.
 
 ### 13.4 Service (`sys/assistant.js`)
 
@@ -612,8 +642,9 @@ snapshot or `shared.json`.
   one `store.set` per 80 ms.
 - **`start(cx)`** launches nothing and runs no `hermes`: it reconnects to running bridges of the current folder and
   Herdr (the reuse rule), so notices keep coming after a reload while another screen shows. Its one-second tick expires
-  approval cards, removes finished bridge terminals every 60 s, rereads the folder's files every 10 s and the list
-  every 30 s while the screen shows, and follows a folder changed in `settings.json` by hand.
+  approval cards, reopens a stream that handled no line for 30 s (13.3 Stalls), removes finished bridge terminals every
+  60 s, rereads the folder's files every 10 s and the list every 30 s while the screen shows, and follows a folder
+  changed in `settings.json` by hand.
 - **`open(cx)`**, called by a local Assistant view on every show (idempotent): the folder (unset → `no-folder`; not a
   folder on disk → `folder-missing`); once per start `hermes acp --check` (with `debugAgent`, `debugAgent ++ ["acp",
   "--check"]`; not found or not executable → `hermes-missing` with where it looked; a non-zero exit →
@@ -622,30 +653,59 @@ snapshot or `shared.json`.
 - **List.** Profiles: `default` (`~/.hermes`) and each folder of `~/.hermes/profiles` with a valid name
   (`^[a-z0-9][a-z0-9_-]{0,63}$`). Rows: `/usr/bin/sqlite3 -readonly -json <state.db> SESSIONS_SQL` per profile that has
   a database: Hermes's own listing (`source='acp'`, at least one message, not archived, compression children folded into
-  their first row), with the cwd compared in JS as Hermes normalizes it. Empty output is no rows. Error `(14)` with no
-  `-wal` file (Hermes removed it on a clean exit) is retried once on `file:<db>?immutable=1`; a missing column or table
-  is `schema`. A profile whose query fails lists through its connected bridge with `session/list {cwd, cursor}` (no
-  stats), as every profile does with `debugAgent` set. Chats made in this run show until the database has them. The
-  list is read again about a second after each turn. The shared key `lazuli.assistant.ui` keeps the selection and the
-  collapsed groups (DESIGN E5): reset for another folder, the selection cleared once its row is gone.
+  their first row). The cwd filter runs in JS: a row belongs to the folder when its cwd, normalized as Hermes does
+  (`~` expanded, `.` and `..` resolved, no trailing `/`), is the folder's path, or when both resolve to the same
+  physical folder (`/bin/sh` with `cd -P` and `pwd -P`: symlinks and macOS firmlinks, so `/tmp/x` and `/private/tmp/x`
+  match; each distinct path resolved once per run, one that does not resolve asked again). Empty output is no rows.
+  Error `(14)` with no `-wal` file (Hermes removed it on a clean exit) is retried once on `file:<db>?immutable=1`; a
+  missing column or table is `schema`. A profile whose query fails lists through its connected bridge with
+  `session/list {cwd, cursor}` (no stats), as every profile does with `debugAgent` set. Chats made in this run show
+  until the database has them. The list is read again about a second after each turn. The shared key
+  `lazuli.assistant.ui` keeps the selection and the collapsed groups (DESIGN E5): reset for another folder, the
+  selection cleared once its row is gone.
 - **Chats.** `+` makes `session/new` (an unused empty chat of that profile made in this run is reused); selecting runs
   `session/load`, whose history replays into the chat; Fork runs `session/fork`. Text goes as described in 13.6. Stop
   sends `session/cancel` and pauses the chips. An approval answer is `{outcome:{outcome:"selected", optionId}}`, refused
-  with `too-late` after the card's 60 s. The model changes with `session/set_model`, refused with `busy` while a turn
-  runs. A folder change with a turn running returns `busy` until confirmed; then each bridge gets `shutdown`, the
-  folder is saved, and the screen opens there.
+  with `too-late` after the card's 60 s. A card still open when its turn ends closes as `expired` when that is within
+  2 s of its deadline or later (Hermes gave up at its own 60 s; its clock starts a moment before the bridge's receive
+  time), else as `cancelled`; a late answer to either is refused with `too-late`. The model changes with
+  `session/set_model`, refused with `busy` while a turn runs. A folder change with a turn running returns `busy` until
+  confirmed; then each bridge gets `shutdown`, the folder is saved, and the screen opens there.
+- **Mid-turn loads.** Hermes saves a turn only when it ends, so a `session/load` while a turn runs (a selection, a
+  reload) replays a history without it. The service keeps each running turn's events (the prompts sent, every update
+  it streamed, a steer's answer as its notice; at most 4,000) and applies them again after the load, the prompts only
+  as their user items: the turn shows once and whole. A turn too long to keep marks the chat stale (it reloads once
+  idle); a turn that ended during the load loads the chat once more.
+- **Agent errors and failed turns.** An `agent-error` record is not tied to a session: every chat of that profile gets
+  it, and a chat whose turn runs keeps the newest one. A prompt's turn that ends `end_turn` with no assistant text, no
+  tool item and no approval card gets a `failed` notice with that text, or "Hermes ended the turn without a reply; see
+  the bridge log" when there was none (K5 rule 11; an error line arriving within 5 s after still fills it in), and a
+  `failed` notification instead of `done`.
+- **Titles.** A row and the chat header show the agent's title: the newest `session_info_update` of this run, else the
+  list row's (Hermes's database or `session/list`). A session made this run shows its first prompt's line only until
+  the agent's title is known, so after a bridge reconnect the row keeps the agent's title. The header takes the list's
+  title when the chat has none yet (a load sends none) or only that stand-in; a title the agent sent stays.
+- **Folder form.** The macOS folder picker reports a folder under `/tmp` or `/var` by its firmlink target
+  (`/private/tmp/x` for `/tmp/x`). `setFolder` keeps the short form when both forms resolve to the same folder, so the
+  bridges' `--cwd`, Hermes's session cwds and the settings agree; its result carries the folder as kept (`path`).
 - **Notices** `{id, kind: permission|done|failed, key, title, body, at}`: an approval request, a prompt that ended (not
-  cancelled), and a failed prompt or a lost bridge with a prompt in flight. None while the screen shows that chat in
-  the active window. `sys/notify.js` delivers them (§7) with the target `assistant:<profile>:<session>`.
+  cancelled) with a reply, and a failed prompt, a reply-less turn or a lost bridge with a prompt in flight. None while
+  the screen shows that chat in the active window. `sys/notify.js` delivers them (§7) with the target
+  `assistant:<profile>:<session>`.
 
 ### 13.5 Views, commands, settings
 
 - **Views** (§3): `assistant-list` (groups, rows with running spinner or "Needs you", Fork on hover, the new-chat
   profile picker with Nod Planned), `assistant` (header with title, profile, running time, model menu and Fork; bridge
-  banner; virtualized transcript; plan strip; composer; or a gate), `assistant-info` (model, mode, context, last turn,
+  banner; virtualized transcript, where a single line break in Hermes's text is kept and a long error detail is clamped
+  with Show all; plan strip; composer; or a gate), `assistant-info` (model, mode, context, last turn,
   totals with API calls, cost and cost status), and `files` with `scope:"assistant"`: rooted at the folder whatever has
   focus, refreshed while `assistant-files` shows, a click opens the file with `filetabs.open` in the active space and
   shows the work view (no active space: a notice), and a file row's Attach runs `lazuli.assistant:attach:<rel>`.
+- **Menus.** The approval card's More, the header's model menu and the list's new-chat picker are gpui-base `Popover`s
+  whose triggers come from `views/assistant/menu.js`. A Popover opens from a mouse-down listener around its trigger, and
+  the kit's Button and IconButton stop mouse-down (so a press on a control never drags the window): those triggers
+  draw like the kit's buttons without that listener.
 - **Relay gate.** The views probe the host as Home does (`views/apps/snapshot.js`); on a herdr-relay device they draw
   the desktop-only notice and never call `open`. Copies with `props.preview` or `props.sample` draw the canned states of
   `views/assistant/sample.js` (the approved prototype's).
@@ -653,9 +713,16 @@ snapshot or `shared.json`.
   `lazuli.target:assistant:<profile>:<session>` (a notification or palette row) shows the screen with that chat
   selected; the profile must be a Hermes profile name and the session `^[0-9a-f-]{36}$`. `lazuli.assistant:<verb>`
   reaches every copy's `command()`: `new[:<profile>]`, `select:<profile>/<session>`, `focus`, `stop`,
-  `attach:<rel path>`, `allow`, `deny`, `send:<text>` (test hook) and `sample:<name>` (preview copies).
-- **Composer keys** in the chat view's `on_key_down`, ahead of the text box: Enter sends (steers while a turn runs),
-  ⇧Enter is a new line, ⌥Enter queues a chip.
+  `attach:<rel path>`, `allow`, `deny`, `send:<text>` (test hook) and `sample:<name>` (preview copies). `allow` and
+  `deny` answer the selected chat's newest pending card, else its newest expired or cancelled one, which the service
+  refuses with the "too late" notice.
+- **Composer keys** are key bindings, not key-down handlers: GPUI runs the focused textarea's own bindings (Enter: a
+  new line) before any key-down listener. The composer binds its actions once with `cx.bind_keys` in a key context its
+  frame declares above the textarea (`lz_assistant_composer`, or `lz_assistant_list` while the @ or / list is open), as
+  Herdr's chat mod does: Enter sends (steers while a turn runs), ⌥Enter and ⌘Enter queue a chip, and in the list
+  Up/Down move, Tab/Enter take a row and Escape closes it. ⇧Enter keeps the textarea's new line. ⌘Enter exists because
+  the Korean input source takes ⌥Enter. With an input method composing, Enter first commits the syllable, then sends
+  the whole text. The `lazuli.key:<keystroke>` test hook reaches the same actions.
 - **Elsewhere.** Sidebar item `assistant` (pinned by default; a count of chats waiting on an approval, else a working
   dot while a turn runs); palette rows "Assistant" and the folder's chats; the settings view's Assistant section (the
   folder, with the confirm of a folder change while a turn runs). Settings: `assistant.folder` (absolute path or null)
@@ -672,7 +739,7 @@ snapshot or `shared.json`.
 | model menu, `/model x` | `session/set_model` | not while a turn runs |
 | send while idle | `session/prompt` with a `text` block and one `resource_link` (`file://…`) per attachment | |
 | Enter while a turn runs | `session/prompt` with `/steer <text>` | attachments become `@path` text: Hermes drops a running prompt's attachments, and they turn slash handling off |
-| ⌥Enter, typed `/queue x` | none until the turn ends, then `session/prompt` | chips are lazuli's: Hermes's own `/queue` cannot remove or pause |
+| ⌥Enter or ⌘Enter, typed `/queue x` | none until the turn ends, then `session/prompt` | chips are lazuli's: Hermes's own `/queue` cannot remove or pause |
 | other advertised `/command` | `session/prompt` with the text | Hermes answers `help`, `model`, `tools`, `context`, `reset`, `compact`, `version` itself; after `/reset` or `/compact` the chat reloads |
 | Stop | `session/cancel` | the turn ends `cancelled`; chips pause |
 | approval card | answer to `session/request_permission` | buttons by option id: `allow_once`, `allow_always`, `deny`; the rest (`allow_session`, `deny_always`) under More |
@@ -682,6 +749,9 @@ snapshot or `shared.json`.
   active turn: …`, `No active turn — queued for the next turn. (n queued)`, `⚠️ Steer failed: …`, `Usage: /steer
   <guidance>`) turn it into a notice; a reply that merely starts with "Queued" is not one.
 - **Diffs** show only while a conversation is live: Hermes's history replay has no diff and no tool timing.
+- **Failed turns.** Hermes reports a turn that failed before any reply (a model the provider rejects, an expired login)
+  only on stderr and ends it `end_turn`: lazuli shows it from the `agent-error` records (13.2, 13.4). An error Hermes
+  logs without the `❌` mark or an `[ERROR]`/`[CRITICAL]` level is not recognized and reads "without a reply".
 - **Approvals.** Hermes waits 60 s and sends no deadline, so the card counts down from the bridge's receive time.
   Edit approvals (`toolCallId` `edit-approval-…`) carry the diff and two options, `allow_once` and `deny`.
 - **Database.** `state.db` is Hermes's private schema, read with Hermes 0.17.0's own query; another version may fail it

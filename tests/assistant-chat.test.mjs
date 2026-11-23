@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  emptyChat, reduce, isRunning, rows, queueHead, canAnswer, approvalButtons, MAX_ITEMS, MAX_MESSAGE, MAX_TOOL_TEXT,
+  emptyChat, reduce, isRunning, rows, queueHead, canAnswer, approvalButtons, MAX_ITEMS, MAX_MESSAGE, MAX_TOOL_TEXT, EXPIRY_GRACE_MS, NO_REPLY,
 } from '../mods/lazuli/core/assistant-chat.js';
 
 // Shapes as Hermes 0.17.0 sends them (docs/spikes/S9/*.jsonl, acp_adapter/tools.py, permissions.py).
@@ -181,6 +181,32 @@ test('rule 4: the deadline is 60 s after the bridge received the request', () =>
   assert.deepEqual(lateCancel.items, []);
   // without a receive time, `at` is now
   assert.equal(reduce(live(), { ...ask(3, 0), at: undefined }, 700).permissions['3'].deadline, 60700);
+});
+
+test('rule 4: an approval the agent gives up at its own 60 s ends expired, and a late answer is too late (AT-08)', () => {
+  const turn = (requestId, at) => run(live(), [{ type: 'prompt-sent', requestId: 'c:1', kind: 'prompt', text: 'approve four' }, ask(requestId, at)], at);
+  // The agent's 60 s started a moment before the bridge received the request: its turn ends just before the deadline.
+  let s = reduce(turn('b:1', 1000), { type: 'prompt-done', requestId: 'c:1', stopReason: 'end_turn' }, 60995);
+  assert.equal(s.permissions['b:1'].state, 'expired');
+  for (const t of [60995, 61000, 61001]) assert.deepEqual(canAnswer(s, 'b:1', t, 'deny'), { error: 'too-late' });
+  const late = reduce(s, { type: 'permission-answered', requestId: 'b:1', optionId: 'deny' }, 61001);
+  assert.equal(late.permissions['b:1'].state, 'expired');
+  assert.deepEqual(late.items.at(-1), { type: 'notice', code: 'too-late', seq: late.items.at(-1).seq });
+  // at or after the deadline, and through a failed request too
+  assert.equal(reduce(turn('b:2', 0), { type: 'prompt-done', requestId: 'c:1', stopReason: 'end_turn' }, 60000).permissions['b:2'].state, 'expired');
+  assert.equal(reduce(turn('b:3', 0), { type: 'prompt-failed', requestId: 'c:1', error: 'x' }, 61000).permissions['b:3'].state, 'expired');
+  // the grace is the edge: a turn that ends earlier closes the card as cancelled
+  assert.equal(EXPIRY_GRACE_MS, 2000);
+  assert.equal(reduce(turn('b:4', 0), { type: 'prompt-done', requestId: 'c:1', stopReason: 'end_turn' }, 60000 - EXPIRY_GRACE_MS).permissions['b:4'].state, 'expired');
+  const early = reduce(turn('b:5', 0), { type: 'prompt-done', requestId: 'c:1', stopReason: 'end_turn' }, 60000 - EXPIRY_GRACE_MS - 1);
+  assert.equal(early.permissions['b:5'].state, 'cancelled');
+  // a cancelled card is refused as too late whatever the time, and the late answer says so
+  for (const t of [1000, 59999, 61000]) assert.deepEqual(canAnswer(early, 'b:5', t, 'deny'), { error: 'too-late' });
+  const refused = reduce(early, { type: 'permission-answered', requestId: 'b:5', optionId: 'deny' }, 61000);
+  assert.equal(refused.permissions['b:5'].state, 'cancelled');
+  assert.equal(refused.items.at(-1).code, 'too-late');
+  // an unknown request stays not-found
+  assert.deepEqual(canAnswer(early, 'b:9', 1000, 'deny'), { error: 'not-found' });
 });
 
 test('approval buttons are chosen by option id (D29)', () => {
@@ -523,4 +549,90 @@ test('inputs are never changed', () => {
   ], 70000);
   rows(s0);
   assert.equal(JSON.stringify(s0), before);
+});
+
+test('rule 11: a prompt turn that ends without a reply fails with its newest agent error, or no-reply', () => {
+  const sent = (id, text = 'hi') => ({ type: 'prompt-sent', requestId: id, kind: 'prompt', text });
+  const end = (id, stopReason = 'end_turn') => ({ type: 'prompt-done', requestId: id, stopReason });
+  const err = (text) => ({ type: 'agent-error', text });
+  // Hermes's failed turn: error lines on stderr, then end_turn and no message; the newest error is shown
+  let s = run(live(), [sent('c:1'), err('Non-retryable error (HTTP 400): model not supported'), err('Non-retryable client error: Error code: 400'), end('c:1')], 5);
+  assert.deepEqual(s.items.at(-1), { type: 'notice', code: 'failed', vars: { detail: 'Non-retryable client error: Error code: 400' }, seq: 1 });
+  assert.deepEqual(s.lastError, { code: null, message: 'Non-retryable client error: Error code: 400' });
+  assert.equal(s.turn, null);
+  assert.equal(isRunning(s), false);
+  // no error line: a generic detail, which an error line that comes just after fills in (separate pipes)
+  s = run(live(), [sent('c:1'), end('c:1')], 5);
+  assert.deepEqual([s.items.at(-1).code, s.items.at(-1).vars], ['failed', { detail: NO_REPLY }]);
+  const late = reduce(s, err('boom'), 5 + 5000);
+  assert.deepEqual(late.items.at(-1), { type: 'notice', code: 'failed', vars: { detail: 'boom' }, seq: 1 });
+  assert.deepEqual(late.lastError, { code: null, message: 'boom' });
+  assert.equal(reduce(late, err('again'), 5001), late, 'filled once');
+  assert.equal(reduce(s, err('boom'), 5 + 5001), s, 'too late');
+  const busy = run(s, [{ type: 'notice', code: 'busy' }], 6);
+  assert.equal(reduce(busy, err('boom'), 6), busy, 'not the last item');
+  const idle = live();
+  assert.equal(reduce(idle, err('x'), 0), idle, 'between turns');
+  assert.equal(reduce(run(idle, [sent('c:1')]), err('  '), 0).turn.error, null);
+  // assistant text, a tool item or a permission is a reply; a thought or usage is not
+  for (const reply of [say('ok'), toolCall('t1'), ask('b:1', 0)]) {
+    const r = run(live(), [sent('c:1'), err('e'), reply, end('c:1')], 1);
+    assert.ok(!r.items.some((i) => i.code === 'failed'), JSON.stringify(reply).slice(0, 60));
+  }
+  for (const quiet of [think('hmm'), upd({ sessionUpdate: 'usage_update', size: 1, used: 1 })]) {
+    assert.equal(run(live(), [sent('c:1'), quiet, end('c:1')], 1).items.at(-1).code, 'failed');
+  }
+  // only a prompt's turn that ends with end_turn: not a stop, another stop reason, a failure, a command, an idle steer
+  assert.equal(run(live(), [sent('c:1'), end('c:1', 'cancelled')]).items.at(-1).code, 'cancelled');
+  assert.equal(run(live(), [sent('c:1'), end('c:1', 'max_tokens')]).items.at(-1).code, 'stopped');
+  const failedOnce = run(live(), [sent('c:1'), err('e'), { type: 'prompt-failed', requestId: 'c:1', error: { code: -32603, message: 'Internal error' } }]);
+  assert.deepEqual(failedOnce.items.filter((i) => i.code === 'failed').map((i) => i.vars.detail), ['Internal error (-32603)']);
+  assert.ok(!run(live(), [{ ...sent('c:1', '/help'), kind: 'command' }, end('c:1')]).items.some((i) => i.type === 'notice'));
+  assert.ok(!run(live(), [{ ...sent('c:1', 'go'), kind: 'steer' }, end('c:1')]).items.some((i) => i.type === 'notice'));
+  // a steer's answer ends the steer, not the turn, and is not the turn's reply
+  s = run(live(), [sent('c:1', 'slow'), { ...sent('c:2', 'go left'), kind: 'steer' }, say(ACK), end('c:2')]);
+  assert.equal(isRunning(s), true);
+  assert.equal(s.turn.reply, false);
+  assert.equal(reduce(s, end('c:1'), 1).items.at(-1).code, 'failed');
+  // the history a load replays is not the turn's reply
+  s = run(live(), [sent('c:1'), { type: 'load-start' }, say('old answer'), toolCall('h1'), { type: 'loaded' }, end('c:1')]);
+  assert.equal(s.items.at(-1).code, 'failed');
+  // each prompt's turn starts clean
+  s = run(live(), [sent('c:1'), err('first'), say('x'), end('c:1'), sent('c:2'), end('c:2')]);
+  assert.deepEqual(s.items.at(-1).vars, { detail: NO_REPLY });
+});
+
+test('a running turn applied again after its history loads shows once and whole', () => {
+  const steer = { type: 'prompt-sent', requestId: 'c:2', kind: 'steer', text: 'go left' };
+  const turn = [
+    { type: 'prompt-sent', requestId: 'c:1', kind: 'prompt', text: 'slow' },
+    say('Slow chunk 1/20. '),
+    say('Slow chunk 2/20. '),
+    steer,
+  ];
+  let s = run(live(), [...turn, say(ACK)], 1);
+  const at = s.inflight['c:1'].at;
+  // What the service keeps of the turn: its events, the steer's answer as its notice.
+  const log = [...turn, { type: 'notice', code: 'steer-ack', vars: { preview: 'go left' } }];
+  s = run(s, [
+    { type: 'load-start' },
+    upd({ sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'earlier' } }),
+    say('earlier answer'),
+    { type: 'loaded' },
+    ...log.map((e) => (e.type === 'prompt-sent' ? { ...e, again: true } : e)),
+    say('Slow chunk 3/20. '),
+  ], 50);
+  assert.deepEqual(types(s), ['user', 'assistant', 'user', 'assistant', 'user', 'notice', 'assistant']);
+  assert.deepEqual(s.items.map((i) => i.text ?? i.code), ['earlier', 'earlier answer', 'slow', 'Slow chunk 1/20. Slow chunk 2/20. ', 'go left', 'steer-ack', 'Slow chunk 3/20. ']);
+  assert.deepEqual(s.items.map((i) => i.replayed === true), [true, true, false, false, false, false, false]);
+  assert.equal(s.items.filter((i) => typeof i.text === 'string' && i.text.includes('Slow chunk 1/20')).length, 1);
+  // the requests stay as they were: the prompt running, the steer answered
+  assert.deepEqual([s.inflight['c:1'].at, s.inflight['c:1'].acked, s.inflight['c:2'].acked], [at, false, true]);
+  assert.equal(isRunning(s), true);
+  assert.equal(s.turn.reply, true);
+  assert.equal(rows(s).find((r) => r.via === 'steer').sending, false);
+  // a prompt already in flight sent again only adds its user item; `again` never starts a request
+  const again = reduce(live(), { type: 'prompt-sent', requestId: 'c:9', kind: 'steer', text: 'done before', again: true }, 3);
+  assert.deepEqual([again.inflight, isRunning(again), again.items[0].text], [{}, false, 'done before']);
+  assert.equal(reduce(s, { type: 'prompt-sent', requestId: 'c:1', kind: 'prompt', text: 'slow' }, 99).inflight['c:1'].at, at);
 });

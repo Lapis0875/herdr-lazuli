@@ -12,7 +12,7 @@
 
 import { props, home } from "herdr";
 import { div } from "gpui-kit";
-import { h_flex, Popover } from "gpui-base";
+import { h_flex } from "gpui-base";
 import { t } from "../core/i18n.js";
 import { tokens } from "../ui/tokens.js";
 import { ViewRoot, Text, Icon, IconButton, Button, Spinner, Chip, Banner, Empty, Menu, MenuItem, Spacer } from "../ui/kit.js";
@@ -30,6 +30,7 @@ import { PlanDock } from "./assistant/cards.js";
 import { Composer } from "./assistant/composer.js";
 import { Gate } from "./assistant/gate.js";
 import { chooseFolder, FolderConfirm } from "./assistant/folder.js";
+import { MenuButton, MenuPopover } from "./assistant/menu.js";
 
 const HOST_MS = 2000;
 const TICK_MS = 1000;
@@ -54,7 +55,7 @@ export default class Assistant {
     this.scrolls = new Scrolls();
     this.notice = new Notice();
     this.handle = cx.focus_handle();
-    this.composer = new Composer(this);
+    this.composer = new Composer(this, cx);
     // The folder question (D22, folder.js) and whether open() ran for the current showing of the screen.
     this.folderAsk = null;
     this.folderError = null;
@@ -138,9 +139,9 @@ export default class Assistant {
     cx.notify();
   }
 
-  /** Enter (`how: "send"`) sends, or steers while a turn runs; ⌥Enter (`"queue"`) adds a chip. A typed `/queue x` is a
-   *  chip and `/model x` the model menu's choice; anything else, a typed `/steer x` or a command too, goes to the
-   *  agent (K4 slash routing, core/assistant-agents.js routeText). */
+  /** Enter (`how: "send"`) sends, or steers while a turn runs; ⌥Enter or ⌘Enter (`"queue"`) adds a chip. A typed
+   *  `/queue x` is a chip and `/model x` the model menu's choice; anything else, a typed `/steer x` or a command too,
+   *  goes to the agent (K4 slash routing, core/assistant-agents.js routeText). */
   submit(cx, how) {
     const s = this.state();
     const chat = this.chat(s);
@@ -191,17 +192,22 @@ export default class Assistant {
     this.act(cx, (cx) => this.svc.answerPermission(cx, key, requestId, optionId));
   }
 
-  /** `lazuli.assistant:allow` / `:deny`: the newest open request of the selected session, answered with the agent's
-   *  quick answer (Hermes: allow_once, deny). A request past its deadline still gets the answer, so the service
-   *  refuses it as too late (AT-08). */
+  /** `lazuli.assistant:allow` / `:deny`: answered with the agent's quick answer (Hermes: allow_once, deny). The target
+   *  is the selected session's newest pending request, else its newest closed one (expired, or cancelled by the agent):
+   *  that answer still goes to the service, which refuses it as too late and puts the "too late" notice in the
+   *  transcript (AT-08), so the transcript follows to show it. Answered requests are not asked again. */
   answerNewest(cx, verb) {
     const chat = this.chat();
     const optionId = agentOf(chat?.agent)?.quickAnswers?.[verb];
     if (!chat || !optionId) return;
-    const open = Object.entries(chat.permissions ?? {})
-      .filter(([, p]) => p?.state === "pending" || p?.state === "expired")
-      .sort((a, b) => (b[1].at ?? 0) - (a[1].at ?? 0));
-    if (open.length) this.answer(cx, chat.key, open[0][0], optionId);
+    const newest = (states) =>
+      Object.entries(chat.permissions ?? {})
+        .filter(([, p]) => states.includes(p?.state))
+        .sort((a, b) => (b[1].at ?? 0) - (a[1].at ?? 0))[0];
+    const target = newest(["pending"]) ?? newest(["expired", "cancelled"]);
+    if (!target) return;
+    this.scrolls.of(chat.key).follow = true;
+    this.answer(cx, chat.key, target[0], optionId);
   }
 
   fork(cx) {
@@ -275,30 +281,28 @@ export default class Assistant {
     const since = runningSince(chat);
     const model = currentModel(chat);
     const busy = running || this.mode.preview;
-    const trigger = Button("ac-model", model?.name ?? "—", { variant: "ghost", size: "sm", disabled: busy || !model, tooltip: running ? t("assistant.chat.modelBusy") : model ? t("assistant.chat.model", { model: model.name }) : undefined, a11y: model ? t("assistant.chat.model", { model: model.name }) : undefined })
-      .font_family(k.fonts.mono)
-      .text_size(k.fontSize.xs)
-      .child(Icon("chevron-down", { size: 12, color: k.text.tertiary }));
-    let menu = trigger;
-    if (!busy && model) {
-      menu = Popover.new("ac-model-menu")
-        .trigger(trigger)
-        .open(this.modelMenu)
-        .on_open_change((value, cx) => {
-          this.modelMenu = value;
-          cx.notify();
-        });
-      if (this.modelMenu) {
-        menu = menu.content(
-          Menu({
-            id: "ac-models",
-            width: 260,
-            label: t("assistant.chat.models"),
-            children: modelChoices(chat).map((m) => MenuItem(`ac-m-${m.id}`, { label: m.name, detail: m.detail || undefined, checked: m.current, onClick: (_e, cx) => this.setModel(cx, m.id) })),
-          }),
-        );
-      }
-    }
+    const label = model ? t("assistant.chat.model", { model: model.name }) : undefined;
+    const menu =
+      busy || !model
+        ? Button("ac-model", model?.name ?? "—", { variant: "ghost", size: "sm", disabled: true, tooltip: running ? t("assistant.chat.modelBusy") : label, a11y: label })
+            .font_family(k.fonts.mono)
+            .text_size(k.fontSize.xs)
+            .child(Icon("chevron-down", { size: 12, color: k.text.tertiary }))
+        : MenuPopover("ac-model-menu", {
+            trigger: MenuButton("ac-model", model.name, { open: this.modelMenu, mono: true, a11y: label, tooltip: this.modelMenu ? undefined : label }),
+            open: this.modelMenu,
+            anchor: "top_right",
+            onOpen: (value) => {
+              this.modelMenu = value;
+            },
+            menu: () =>
+              Menu({
+                id: "ac-models",
+                width: 260,
+                label: t("assistant.chat.models"),
+                children: modelChoices(chat).map((m) => MenuItem(`ac-m-${m.id}`, { label: m.name, detail: m.detail || undefined, checked: m.current, onClick: (_e, cx) => this.setModel(cx, m.id) })),
+              }),
+          });
     return head
       .child(Text(chat.title || t("assistant.list.untitled"), { size: "sm", weight: "semibold", truncate: true, tone: chat.title ? "primary" : "secondary" }).flex_shrink_1())
       .child(Chip(chat.profile, { mono: true }))

@@ -304,7 +304,9 @@ Three columns: chats grouped by Hermes profile; the chat; a side column with ses
 **E2. Folder.** One assistant folder on this Mac, in lazuli's settings (`assistant.folder`). Unset, the screen opens
 with a folder picker; gone from disk, it shows the folder-missing state with the picker and Retry. Changing the folder
 while a turn runs asks first, then cancels the turn and restarts the bridges there; with no turn running it switches
-at once and lists the new folder's chats.
+at once and lists the new folder's chats. The macOS picker reports `/tmp/x` as `/private/tmp/x` (a firmlink); such a
+folder is kept in its short form when both name the same folder, and a chat counts as the folder's when its cwd is
+either form (paths are compared after resolving symlinks and firmlinks).
 
 **E3. Agent.** Hermes only, behind an adapter registry. Nod (n8n-io/nod) is "Planned": disabled in the new-chat picker
 and as a disabled "Nod · Planned" group at the bottom of the list. A chat stays with the profile it was made in.
@@ -331,13 +333,16 @@ lost bridge or crashed agent a banner with Retry.
 **E7. Approvals.** A card in the chat with Allow once, Allow always and Deny as buttons, chosen by Hermes's option ids
 (Hermes marks "allow for this session" with the kind `allow_always`), and Hermes's other options under More. An edit
 approval shows the two options Hermes sends with the diff. The time left counts down from 60 s after the card
-arrives (Hermes waits 60 s and sends no deadline); an expired card refuses a late answer.
+arrives (Hermes waits 60 s and sends no deadline). A card is answered once: a late answer to an expired card, or to
+one the turn's end closed (cancelled), is refused with a "too late" notice; a card Hermes gives up at its own 60 s
+(within 2 s of the deadline) reads as expired.
 
 **E8. Composer.** Enter sends, ⇧Enter is a new line, @ lists the folder's files (images excluded) and attaches the pick,
 / lists the commands Hermes advertises without `/steer` and `/queue`. While a turn runs, Enter steers it (Hermes's
-`/steer`) and ⌥Enter adds a chip that lazuli holds and sends as a plain prompt when the turn ends; chips are
-removable, and Stop pauses them until resumed. A typed `/queue x` makes a chip, `/model x` changes the model. Image
-attachments are Planned.
+`/steer`) and ⌥Enter or ⌘Enter adds a chip that lazuli holds and sends as a plain prompt when the turn ends (⌘Enter
+because the Korean input source takes ⌥Enter; owner, 2026-11-23); chips are removable, and Stop pauses them until
+resumed. With an input method composing (Korean), Enter sends the whole text, the last syllable included. A typed
+`/queue x` makes a chip, `/model x` changes the model. Image attachments are Planned.
 
 **E9. Model and mode.** The chat header shows the session's model and changes it for that session, not while a turn
 runs; new chats take Hermes's own default. The info panel shows the mode read-only; Hermes's auto-allow modes are

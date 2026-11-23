@@ -10,7 +10,10 @@
 // <bridge> --profile <p> --cwd <folder> --discovery … --log … --herdr-pid <pid> --idle-min 30 --agent -- <argv…>`.
 // The Herdr process carries HC_TERMINAL_ID, so without --no-parent --no-notify the bridge's terminal would get a
 // parent and hc would type notes into it (S8). A terminal that ended is kept by hc until `hc rm` (S5): the reaper
-// removes finished `lazuli.assistant=*` terminals every minute.
+// removes finished `lazuli.assistant=<profile>` terminals every minute. `terminals()` lists live terminals only (as
+// `hc ls` does: a finished one is counted in `hidden_finished`), and the JSON of `hc ls --all` carries no labels and no
+// pids, so a profile's bridge terminals are listed by hc's own filter: `hc ls --all --json --label
+// lazuli.assistant=<profile>` (one call per profile; `--label` takes K=V only).
 //
 // Every function here runs host commands: callers check `checking()` first.
 
@@ -202,9 +205,27 @@ async function removeDiscovery(profile, pid) {
 
 // ---- terminals ---------------------------------------------------------------------------------------------------
 
-/** The bridge terminals of a profile (every profile without one). */
-export function bridgeTerminals(profile = null) {
-  return (terminals() ?? []).filter((t) => isObj(t?.labels) && typeof t.labels[LABEL] === "string" && (profile === null || t.labels[LABEL] === profile));
+const labelled = (profile) => (t) => isObj(t?.labels) && t.labels[LABEL] === profile;
+
+/** A profile's bridge terminals, finished ones included: `hc ls --all --json --label lazuli.assistant=<profile>` (that
+ *  JSON has no labels or pids, so hc filters), each with the pid `terminals()` gives a live one (null for a finished
+ *  one). The live ones `terminals()` lists when hc cannot be read. */
+export async function bridgeTerminals(profile) {
+  let list = null;
+  try {
+    const r = await hc(["ls", "--all", "--json", "--label", `${LABEL}=${profile}`]);
+    if (r.code === 0) {
+      const v = JSON.parse(r.stdout);
+      list = Array.isArray(v) ? v : Array.isArray(v?.terminals) ? v.terminals : null;
+    } else log(`hc ls --all --label ${LABEL}=${profile}: ${(r.stderr || r.stdout).trim()}`);
+  } catch (e) {
+    log(`hc ls --all --label ${LABEL}=${profile} failed: ${errText(e)}`);
+  }
+  const live = terminals() ?? [];
+  if (!list) return live.filter(labelled(profile));
+  return list
+    .filter((t) => isObj(t) && typeof t.address === "string")
+    .map((t) => ({ ...t, pid: live.find((x) => x?.address === t.address)?.pid ?? null }));
 }
 
 async function hcQuiet(args) {
@@ -224,12 +245,18 @@ async function killAndRemove(term) {
   await hcQuiet(["rm", term.address]);
 }
 
-/** Removes every finished bridge terminal whose process no longer runs (K3: every 60 s). Resolves how many went. */
-export async function reap() {
+/** Whether a listed terminal ended (its process gone). */
+const ended = async (term) => term.state !== "live" && !(await pidAlive(term.pid));
+
+/** Removes the finished bridge terminals of these profiles (K3: every 60 s). Resolves how many went. */
+export async function reap(profiles) {
   let n = 0;
-  for (const term of bridgeTerminals()) {
-    if (term.state === "live" || (await pidAlive(term.pid))) continue;
-    if (await hcQuiet(["rm", term.address])) n++;
+  for (const profile of new Set(profiles)) {
+    if (typeof profile !== "string" || profile === "") continue;
+    for (const term of await bridgeTerminals(profile)) {
+      if (!(await ended(term))) continue;
+      if (await hcQuiet(["rm", term.address])) n++;
+    }
   }
   if (n) log(`removed ${n} finished bridge terminal(s)`);
   return n;
@@ -257,25 +284,26 @@ async function killOrphanAgent(profile, agentPid) {
 }
 
 /**
- * A discovery that may not be reused (another folder or Herdr, a dead bridge, no hello within 5 s, a failed start):
- * its labelled terminal gets `hc kill` and `hc rm` (K3), an agent a dead bridge left is killed, the file removed.
+ * A discovery that may not be reused (another folder, Herdr or agent argv, a dead bridge, no hello within 5 s, a failed
+ * start): its labelled terminal gets `hc kill` and `hc rm` (K3), the profile's finished bridge terminals are removed,
+ * an agent a dead bridge left is killed, the file removed.
  */
 export async function retire(profile, d) {
   if (d.state === "ready" || d.state === "failed") {
-    for (const term of bridgeTerminals(profile)) if (term.pid === d.pid) await killAndRemove(term);
+    for (const term of await bridgeTerminals(profile)) if (term.pid === d.pid || (await ended(term))) await killAndRemove(term);
     if (d.state === "ready" && Number.isInteger(d.agentPid) && !(await pidAlive(d.pid))) await killOrphanAgent(profile, d.agentPid);
   }
   if (d.state !== "absent") await removeDiscovery(profile, d.pid ?? null);
 }
 
-/** Waits until a bridge's process is gone (after `shutdown`), then removes its terminal; a bridge still running
- *  after SHUTDOWN_WAIT_MS gets `hc kill`. */
+/** Waits until a bridge's process is gone (after `shutdown`), then removes its terminal (finished, so found by the
+ *  profile's finished terminals); a bridge still running after SHUTDOWN_WAIT_MS gets `hc kill`. */
 export async function awaitExit(cx, profile, pid) {
   for (let waited = 0; waited < SHUTDOWN_WAIT_MS; waited += 200) {
     if (!(await pidAlive(pid))) break;
     await cx.sleep(200);
   }
-  for (const term of bridgeTerminals(profile)) if (term.pid === pid) await killAndRemove(term);
+  for (const term of await bridgeTerminals(profile)) if (term.pid === pid || (await ended(term))) await killAndRemove(term);
 }
 
 // ---- launch -----------------------------------------------------------------------------------------------------
@@ -313,27 +341,33 @@ export async function launch(cx, { profile, folder, herdrPid: pid, argv }) {
     return { error: "bridge-launch-failed", detail: errText(e) };
   }
   log(`launched the ${profile} bridge as terminal ${address ?? "?"} in ${folder}`);
+  // `terminals()` lists live terminals only: a launched terminal that is no longer listed (or listed as finished)
+  // ended. A failed start is also read from its discovery file.
   const term = () => (address ? (terminals() ?? []).find((t) => t?.address === address) ?? null : null);
+  let seen = null;
   for (let waited = 0; waited < LAUNCH_WAIT_MS; waited += POLL_MS) {
     await cx.sleep(POLL_MS);
     const d = await readDiscovery(profile);
     const t = term();
-    const mine = !t?.pid || d.pid === t.pid;
-    if (d.state === "ready" && mine && d.startedAt >= at - 1000 && wire.discoveryMatches(d, { profile, cwd: folder, herdrPid: pid })) {
+    if (t) seen = t;
+    const mine = !seen?.pid || d.pid === seen.pid;
+    if (d.state === "ready" && mine && d.startedAt >= at - 1000 && wire.discoveryMatches(d, { profile, cwd: folder, herdrPid: pid, argv })) {
       log(`${profile} bridge pid ${d.pid} ready on port ${d.port} after ${Date.now() - at} ms`);
       return { discovery: d, address };
     }
-    if (t && t.state !== "live" && !(await pidAlive(t.pid))) {
+    const gone = (seen !== null && (!t || t.state !== "live")) || (d.state === "failed" && mine);
+    if (gone && !(await pidAlive(seen?.pid ?? d.pid))) {
       const last = await readDiscovery(profile);
-      await hcQuiet(["rm", t.address]);
-      if (last.state === "failed" && last.pid === t.pid) {
+      if (address) await hcQuiet(["rm", address]);
+      if (last.state === "failed" && (!seen?.pid || last.pid === seen.pid)) {
         log(`${profile} bridge failed to start: ${last.code} ${last.detail}`);
         return { error: START_ERROR[last.code] ?? "bridge-launch-failed", detail: last.detail };
       }
-      return { error: "bridge-launch-failed", detail: `the bridge ended (${t.reason ?? t.state})` };
+      return { error: "bridge-launch-failed", detail: `the bridge ended (${t?.reason ?? t?.state ?? "finished"})` };
     }
   }
   const t = term();
   if (t) await killAndRemove(t);
+  else if (address) await hcQuiet(["rm", address]);
   return { error: "bridge-timeout", detail: `no discovery file in ${LAUNCH_WAIT_MS / 1000} s` };
 }

@@ -89,6 +89,30 @@ export function normalizeCwd(p, home) {
   return normalize(s);
 }
 
+/** A path under macOS's `/private` (`/private/tmp/x`, `/private/var/…`) → the short form without `/private`, which
+ *  the system folder picker resolves away; null for any other path. Whether the short form is the same folder is the
+ *  caller's to check (by resolving both). */
+export function firmlinkShort(path) {
+  const m = typeof path === "string" ? /^\/private(\/[^/].*)$/.exec(path) : null;
+  return m ? normalize(m[1]) : null;
+}
+
+/** The absolute paths the list compares, each once, sorted: the folder and every cwd of the rows and local sessions,
+ *  normalized as normalizeCwd does. The caller resolves them (symlinks, macOS firmlinks) and passes `real` to
+ *  buildList. */
+export function pathsToResolve({ folder, home, profiles, local } = {}) {
+  const out = new Set();
+  const add = (p) => {
+    if (typeof p !== "string" || p.trim() === "") return;
+    const n = normalizeCwd(p, home);
+    if (n.startsWith("/")) out.add(n);
+  };
+  add(folder);
+  for (const src of Array.isArray(profiles) ? profiles : []) for (const r of Array.isArray(src?.rows) ? src.rows : []) add(r?.cwd);
+  for (const l of Array.isArray(local) ? local : []) add(l?.cwd);
+  return [...out].sort();
+}
+
 /** Hermes's list title (hermes_state.py:2296-2302, session.py:73-81). */
 function titleOf(title, preview, cwd) {
   const explicit = typeof title === "string" ? title.trim() : "";
@@ -216,7 +240,9 @@ const byRecent = (a, b) => (b.updatedAt ?? -Infinity) - (a.updatedAt ?? -Infinit
  *  - `profiles`: `[{profile, rows, error?}]`, rows from `mapRows`/`mapSessionList` (null = not loaded);
  *  - `local`: sessions this run made, `[{profile, sessionId, title?, updatedAt?, model?, cwd?}]`, shown
  *    while the database has no row for them (new empty sessions);
- *  - `running`: keys with a turn running; `bridges`: `{[profile]: state | {state}}`; `ui`: the shared key.
+ *  - `running`: keys with a turn running; `bridges`: `{[profile]: state | {state}}`; `ui`: the shared key;
+ *  - `real`: optional `{[normalized path]: resolved path}` (pathsToResolve's paths with symlinks resolved; "" for one
+ *    that does not resolve): a cwd is in the folder when it is the folder's path, or resolves to where the folder does.
  *  A group: `{agent, profile, visible, collapsed, bridge, running, rows, loading, error?}`; `default` is
  *  always visible and first, another profile only with rows in the folder. A row: `{key, profile,
  *  sessionId, title, updatedAt, model, messageCount, running, selected, local, stats}`, newest first.
@@ -230,7 +256,14 @@ export function buildList(o) {
   const bridges = isPlain(o?.bridges) ? o.bridges : {};
   const local = Array.isArray(o?.local) ? o.local.filter(isPlain) : [];
   const sel = ui.selected && ui.selected.agent === "hermes" ? `${ui.selected.profile}/${ui.selected.session}` : null;
-  const inFolder = (cwd) => want !== null && normalizeCwd(cwd, home) === want;
+  const real = isPlain(o?.real) ? o.real : null;
+  const realOf = (p) => (real && typeof real[p] === "string" && real[p] !== "" ? real[p] : null);
+  const wantReal = want === null ? null : realOf(want);
+  const inFolder = (cwd) => {
+    if (want === null) return false;
+    const n = normalizeCwd(cwd, home);
+    return n === want || (wantReal !== null && realOf(n) === wantReal);
+  };
 
   const groups = sources(o?.profiles).map((src) => {
     const row = (profile, id, r, isLocal) => {

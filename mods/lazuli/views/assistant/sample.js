@@ -3,7 +3,8 @@
 // `reduce` over the ACP updates and service events Hermes 0.17.0 sends (docs/spikes/S9). It answers the K4 calls
 // with the service's names, signatures and result shapes; preview copies (`props.preview`, `props.sample`) draw it,
 // and a render harness can drive the views through it without Hermes. Nothing here talks to Hermes: a sent prompt
-// ends at once with no reply; a steer gets Hermes's acknowledgement text.
+// ends at once with a one-line answer saying so (a turn with no answer would read as failed, K5 rule 11); a steer gets
+// Hermes's acknowledgement text.
 //
 // Module scope is shared by every copy (ARCHITECTURE F3): one sample shows in all three views at once.
 // `use(name)` switches it (`lazuli.assistant:sample:<name>`); `props().sample` pins one copy to a sample.
@@ -406,6 +407,10 @@ const apply = (key, ...events) => {
 };
 let seq = 0;
 const nextRequest = () => `sample:${++seq}`;
+/** The sample's answer to a prompt sent to it: a preview reaches no agent, and a turn that ends without an answer
+ *  reads as failed (K5 rule 11). */
+const answer = () =>
+  up({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: language() === "ko" ? "미리보기라 Hermes에 보내지 않았습니다." : "This is a preview, so nothing went to Hermes." } });
 
 /** The gates' Retry: the sample has a folder and Hermes, so it opens the new-chat sample. */
 export function recheck(_cx) {
@@ -499,7 +504,7 @@ export function send(_cx, key, { text, attachments = [] } = {}) {
     apply(key, { type: "prompt-sent", requestId: id, kind: "steer", text, attachments: atts }, up({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: `\u23E9 Steer queued for the active turn: ${preview}` } }), { type: "prompt-done", requestId: id, stopReason: "end_turn" });
     return ok();
   }
-  apply(key, { type: "queue-resumed" }, { type: "prompt-sent", requestId: id, kind: "prompt", text, attachments: atts }, { type: "prompt-done", requestId: id, stopReason: "end_turn" });
+  apply(key, { type: "queue-resumed" }, { type: "prompt-sent", requestId: id, kind: "prompt", text, attachments: atts }, answer(), { type: "prompt-done", requestId: id, stopReason: "end_turn" });
   const local = state().source?.local.find((l) => `${l.profile}/${l.sessionId}` === key);
   if (local && !local.title) {
     local.title = text.split("\n")[0].slice(0, 60);
@@ -515,7 +520,7 @@ function flushQueue(key) {
   const head = c ? queueHead(c) : null;
   if (!head) return;
   const id = nextRequest();
-  apply(key, { type: "queue-flush", requestId: id, chipId: head.id }, { type: "prompt-done", requestId: id, stopReason: "end_turn" });
+  apply(key, { type: "queue-flush", requestId: id, chipId: head.id }, answer(), { type: "prompt-done", requestId: id, stopReason: "end_turn" });
   flushQueue(key);
 }
 

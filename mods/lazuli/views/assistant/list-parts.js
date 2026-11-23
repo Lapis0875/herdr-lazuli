@@ -3,13 +3,14 @@
 // on hover), the disabled "Nod · Planned" group, and the new-chat profile picker with Nod Planned (AT-14).
 
 import { div } from "gpui-kit";
-import { h_flex, v_flex, Popover } from "gpui-base";
+import { h_flex, v_flex } from "gpui-base";
 import { t } from "../../core/i18n.js";
 import { tokens } from "../../ui/tokens.js";
 import { Text, Icon, IconButton, Button, Spinner, Row, Badge, Menu, MenuItem, MenuLabel, MenuSeparator, Spacer, Kbd } from "../../ui/kit.js";
 import { stopPress } from "../panels/common.js";
 import { BridgeDot, rowTime, bannerCode } from "./common.js";
 import { waitsForYou } from "./model.js";
+import { MenuIconButton, MenuPopover } from "./menu.js";
 
 const PICKER_ROWS = 9;
 
@@ -149,36 +150,35 @@ export function PlannedGroup(pl) {
 /** The new-chat button and its profile picker: every Hermes profile (default first), then Nod disabled with Planned. */
 export function NewChatPicker(view, state, { disabled = false } = {}) {
   const k = tokens();
-  const trigger = IconButton("al-new", "message-square-plus", t("assistant.list.new"), { selected: view.picker, disabled });
-  if (disabled) return trigger;
-  const menu = Popover.new("al-picker")
-    .trigger(trigger)
-    .open(view.picker)
-    .on_open_change((open, cx) => {
-      view.picker = open;
-      cx.notify();
-    });
-  // A closed picker builds no rows: only the trigger draws.
-  if (!view.picker) return menu;
+  if (disabled) return IconButton("al-new", "message-square-plus", t("assistant.list.new"), { disabled: true });
   const profiles = state.list?.pickable?.length ? state.list.pickable : ["default"];
   const pick = (profile) => (_e, cx) => {
     view.picker = false;
     view.newSession(cx, profile);
   };
-  const items = profiles.map((p) =>
-    MenuItem(`al-pick-${p}`, { label: p, icon: p === "default" ? "bot" : "user", detail: p === "default" ? t("assistant.picker.default") : undefined, onClick: pick(p) }),
-  );
-  const planned = (state.list?.planned ?? []).map((pl) => MenuItem(`al-pick-${pl.agent}`, { label: pl.name ?? pl.agent, icon: "circle-dashed", detail: t("assistant.group.planned"), disabled: true }));
-  return menu.content(
-    Menu({
-      id: "al-picker-menu",
-      width: 252,
-      label: t("assistant.list.new"),
-      children: [
-        h_flex().child(MenuLabel(t("assistant.picker.label")).flex_1()).child(Kbd(String(profiles.length)).mr(8)),
-        v_flex().id("al-picker-rows").max_h(k.row.md * PICKER_ROWS + PICKER_ROWS).overflow_y_scrollbar().gap(1).children(items),
-        ...(planned.length ? [MenuSeparator(), MenuLabel(t("assistant.picker.other")), ...planned] : []),
-      ],
-    }),
-  );
+  // A closed picker builds no rows: only the trigger draws.
+  return MenuPopover("al-picker", {
+    trigger: MenuIconButton("al-new", "message-square-plus", t("assistant.list.new"), { open: view.picker }),
+    open: view.picker,
+    anchor: "top_right",
+    onOpen: (open) => {
+      view.picker = open;
+    },
+    menu: () => {
+      const items = profiles.map((p) =>
+        MenuItem(`al-pick-${p}`, { label: p, icon: p === "default" ? "bot" : "user", detail: p === "default" ? t("assistant.picker.default") : undefined, onClick: pick(p) }),
+      );
+      const planned = (state.list?.planned ?? []).map((pl) => MenuItem(`al-pick-${pl.agent}`, { label: pl.name ?? pl.agent, icon: "circle-dashed", detail: t("assistant.group.planned"), disabled: true }));
+      return Menu({
+        id: "al-picker-menu",
+        width: 252,
+        label: t("assistant.list.new"),
+        children: [
+          h_flex().child(MenuLabel(t("assistant.picker.label")).flex_1()).child(Kbd(String(profiles.length)).mr(8)),
+          v_flex().id("al-picker-rows").max_h(k.row.md * PICKER_ROWS + PICKER_ROWS).overflow_y_scrollbar().gap(1).children(items),
+          ...(planned.length ? [MenuSeparator(), MenuLabel(t("assistant.picker.other")), ...planned] : []),
+        ],
+      });
+    },
+  });
 }

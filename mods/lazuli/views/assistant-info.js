@@ -60,8 +60,9 @@ export default class AssistantInfo {
       return root.child(div().flex_1().flex().items_center().justify_center().p(12).child(Text(note, { size: "sm", tone: "tertiary" }).text_center()));
     }
     const u = usageOf(chat, selectedRow(s)?.row);
-    const none = Text(t("assistant.info.none"), { size: "sm", tone: "tertiary", nowrap: true });
-    const unknown = Text(t("assistant.info.unknown"), { size: "sm", tone: "tertiary", nowrap: true });
+    // Elements are single-use: each row gets its own "—" and "unknown" (an older chat or a fork lacks several values).
+    const none = () => Text(t("assistant.info.none"), { size: "sm", tone: "tertiary", nowrap: true });
+    const unknown = () => Text(t("assistant.info.unknown"), { size: "sm", tone: "tertiary", nowrap: true });
     const mono = (text) => Text(text, { size: "xs", mono: true, truncate: true });
     const row = (label, ...value) =>
       h_flex()
@@ -82,23 +83,23 @@ export default class AssistantInfo {
         .px(12)
         .py(8)
         .gap(2)
-        .child(row("assistant.info.model", model ? mono(model.name) : none))
-        .child(row("assistant.info.mode", mode ? mono(mode) : none))
+        .child(row("assistant.info.model", model ? mono(model.name) : none()))
+        .child(row("assistant.info.mode", mode ? mono(mode) : none()))
         .child(
           row(
             "assistant.info.context",
             ...(u.context
               ? [mono(t("assistant.info.contextValue", { used: shortTokens(u.context.used), size: shortTokens(u.context.size) })).flex_shrink_1(), div().w(56).flex_none().accessibility_label(`${Math.round(u.context.ratio * 100)}%`).child(Bar(u.context.ratio))]
-              : [none]),
+              : [none()]),
           ),
         )
-        .child(row("assistant.info.lastTurn", u.lastTurn ? mono(t("assistant.info.lastTurnValue", { input: shortTokens(u.lastTurn.input), output: shortTokens(u.lastTurn.output) })) : none))
-        .child(row("assistant.info.total", u.totals ? mono(t("assistant.info.totalValue", { tokens: shortTokens(u.totals.tokens), calls: u.totals.calls })) : none))
+        .child(row("assistant.info.lastTurn", u.lastTurn ? mono(t("assistant.info.lastTurnValue", { input: shortTokens(u.lastTurn.input), output: shortTokens(u.lastTurn.output) })) : none()))
+        .child(row("assistant.info.total", u.totals ? mono(t("assistant.info.totalValue", { tokens: shortTokens(u.totals.tokens), calls: u.totals.calls })) : none()))
         .child(
           row(
             "assistant.info.cost",
             ...(!cost || cost.usd === null || cost.usd === undefined
-              ? [unknown]
+              ? [unknown()]
               : [mono(money(cost.usd)).flex_none(), Text(t(`assistant.info.costStatus.${["actual", "estimated", "included"].includes(cost.status) ? cost.status : "unknown"}`), { size: "sm", tone: "tertiary", nowrap: true })]),
           ),
         ),

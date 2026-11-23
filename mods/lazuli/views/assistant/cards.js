@@ -5,14 +5,15 @@
 // Expanded items and the open More menu are the chat view's own state (`view.expanded`, `view.more`).
 
 import { div } from "gpui-kit";
-import { h_flex, v_flex, Popover } from "gpui-base";
+import { h_flex, v_flex } from "gpui-base";
 import { t } from "../../core/i18n.js";
 import { tokens, withAlpha } from "../../ui/tokens.js";
 import { Text, Icon, Button, Spinner, Badge, Spacer, Menu, MenuItem } from "../../ui/kit.js";
 import { Markdown } from "../panels/tree-parts.js";
 import { lineDiff } from "./diff.js";
-import { approvalButtons } from "../../core/assistant-chat.js";
+import { approvalButtons, NO_REPLY } from "../../core/assistant-chat.js";
 import { permissionState, secondsLeft, toolWaits, planProgress } from "./model.js";
+import { MenuButton, MenuPopover } from "./menu.js";
 
 const OUTPUT_LINES = 12;
 // At most this many diff lines in a card, and this many characters of any one code or diff line (the lines do not
@@ -145,7 +146,56 @@ export function UserItem(id, it) {
     );
 }
 
-/** Hermes's text through lazuli's markdown view; a breathing accent caret under it while it streams. */
+// A fence line (CommonMark: up to 3 spaces, then 3 or more backticks or tildes; a backtick fence's info string has
+// no backtick, so "```x```" on one line is inline code) and the line that closes it.
+const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+const opens = (line) => {
+  const m = FENCE.exec(line);
+  return m && !(m[1][0] === "`" && m[2].includes("`")) ? m[1] : null;
+};
+const closes = (line, open) => {
+  const m = /^ {0,3}(`{3,}|~{3,})\s*$/.exec(line);
+  return Boolean(m) && m[1][0] === open[0] && m[1].length >= open.length;
+};
+const INDENTED = /^( {4}|\t)/;
+
+/** Agent text with its single line breaks kept. Markdown joins the lines of a paragraph, so Hermes's plain replies
+ *  (`/help`: one command per line) would read as one run-on paragraph; a line followed by another non-blank line
+ *  ends with two spaces instead, a hard break. Fenced and indented code and table rows keep their lines untouched,
+ *  and a hard break before a list item, a heading, a fence or a blank line ends its block anyway, which markdown
+ *  drops: lists, headings, tables and code render as before. Memoized per item (a streaming message is a new item per
+ *  chunk). */
+const broken = new WeakMap();
+export function hardBreaks(it) {
+  const cached = broken.get(it);
+  if (cached !== undefined) return cached;
+  const lines = String(it?.text ?? "").split(/\r?\n/);
+  let fence = null;
+  // Indented code starts after a blank line (or the start) and runs while lines stay indented.
+  let code = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (fence) {
+      if (closes(line, fence)) fence = null;
+      continue;
+    }
+    fence = opens(line);
+    if (fence) continue;
+    const blankBefore = i === 0 || !lines[i - 1].trim();
+    code = INDENTED.test(line) && (blankBefore || code);
+    const next = lines[i + 1];
+    // Table rows (pipes on this line and a neighbor) stay as they are, delimiter row included.
+    const table = line.includes("|") && Boolean(next?.includes("|") || (i > 0 && lines[i - 1].includes("|")));
+    if (code || table || next === undefined || !line.trim() || !next.trim() || / {2}$|\\$/.test(line)) continue;
+    lines[i] = `${line}  `;
+  }
+  const out = lines.join("\n");
+  if (it && typeof it === "object") broken.set(it, out);
+  return out;
+}
+
+/** Hermes's text through lazuli's markdown view, its line breaks kept (hardBreaks); a breathing accent caret under it
+ *  while it streams. */
 export function AgentText(id, it) {
   const k = tokens();
   return v_flex()
@@ -154,7 +204,7 @@ export function AgentText(id, it) {
     .min_w(0)
     .gap(4)
     .px(2)
-    .child(Markdown(id, it.text ?? "", { size: "md" }))
+    .child(Markdown(id, hardBreaks(it), { size: "md" }))
     .when(Boolean(it.streaming), (e) => e.child(div().w(7).h(15).rounded(1).bg(k.accent).loop("opacity", { from: 0.35, to: 1, period: 700 })));
 }
 
@@ -337,37 +387,33 @@ export function ApprovalCard(view, chat, p, now) {
   const actions = [...buttons];
   if (others.length) {
     const open = live && view.more === id;
-    const trigger = Button(`${cardId}-more`, t("assistant.approval.more"), { variant: "ghost", size: "sm", disabled: !live, look: open ? "active" : undefined }).child(Icon("chevron-down", { size: 12 }));
-    let more = trigger;
-    if (live) {
-      more = Popover.new(`${cardId}-more-menu`)
-        .trigger(trigger)
-        .open(open)
-        .on_open_change((value, cx) => {
-          view.more = value ? id : null;
-          cx.notify();
-        });
-      if (open) {
-        more = more.content(
-          Menu({
-            id: `${cardId}-menu`,
-            width: 220,
-            label: t("assistant.approval.moreLabel"),
-            children: others.map((o) =>
-              MenuItem(`${cardId}-m-${o.optionId}`, {
-                label: optionLabel(o),
-                icon: String(o.kind ?? "").startsWith("reject") ? "circle-x" : "shield-check",
-                danger: String(o.kind ?? "").startsWith("reject"),
-                onClick: (_e, cx) => {
-                  view.more = null;
-                  view.answer(cx, chat.key, id, o.optionId);
-                },
-              }),
-            ),
-          }),
-        );
-      }
-    }
+    const more = live
+      ? MenuPopover(`${cardId}-more-menu`, {
+          trigger: MenuButton(`${cardId}-more`, t("assistant.approval.more"), { open }),
+          open,
+          anchor: "top_right",
+          onOpen: (value) => {
+            view.more = value ? id : null;
+          },
+          menu: () =>
+            Menu({
+              id: `${cardId}-menu`,
+              width: 220,
+              label: t("assistant.approval.moreLabel"),
+              children: others.map((o) =>
+                MenuItem(`${cardId}-m-${o.optionId}`, {
+                  label: optionLabel(o),
+                  icon: String(o.kind ?? "").startsWith("reject") ? "circle-x" : "shield-check",
+                  danger: String(o.kind ?? "").startsWith("reject"),
+                  onClick: (_e, cx) => {
+                    view.more = null;
+                    view.answer(cx, chat.key, id, o.optionId);
+                  },
+                }),
+              ),
+            }),
+        })
+      : Button(`${cardId}-more`, t("assistant.approval.more"), { variant: "ghost", size: "sm", disabled: true }).child(Icon("chevron-down", { size: 12 }));
     actions.push(Spacer(), more);
   }
   const ratio = live ? Math.max(0, Math.min(1, left / 60)) : 0;
@@ -417,24 +463,69 @@ const EVENT_ICON = {
   gap: ["triangle-alert", "warning"],
 };
 
-/** A notice line (K5 `notice{code, vars}`): its icon, lazuli's words for the code, a detail (an error) in code font. */
-export function NoticeItem(id, it) {
+// A notice's detail stays on its line while it is short; a longer one (an agent's error text, up to a few thousand
+// characters) wraps under it, shown up to DETAIL_LINES lines or DETAIL_CHARS characters until "Show all" opens it.
+const DETAIL_INLINE = 60;
+const DETAIL_LINES = 4;
+const DETAIL_CHARS = 280;
+
+function clampDetail(text) {
+  let out = text.split("\n").slice(0, DETAIL_LINES).join("\n");
+  if (out.length > DETAIL_CHARS) out = out.slice(0, DETAIL_CHARS);
+  return out.length < text.length ? `${out.trimEnd()}…` : text;
+}
+
+/** A notice's detail text as the notice shows it: `{text, inline, words, more}` (`words`: lazuli's words for rule 11's
+ *  NO_REPLY; `more`: the detail is longer than shown, or open), or null without one. `open`: "Show all" pressed. */
+export function noticeBody(it, open = false) {
+  const vars = it?.vars ?? {};
+  const detail = typeof vars.detail === "string" ? vars.detail : typeof vars.text === "string" ? vars.text : null;
+  if (!detail) return null;
+  if (it.code === "failed" && detail === NO_REPLY) return { text: t("assistant.event.noReply"), inline: false, words: true, more: false };
+  if (detail.length <= DETAIL_INLINE && !detail.includes("\n")) return { text: detail, inline: true, words: false, more: false };
+  const clamped = clampDetail(detail);
+  return { text: open ? detail : clamped, inline: false, words: false, more: open || clamped !== detail };
+}
+
+/** A notice line (K5 `notice{code, vars}`): its icon and lazuli's words for the code; a short detail beside them in
+ *  code font, a long one (an agent's error) wrapped below, clamped with Show all; rule 11's NO_REPLY in words. */
+export function NoticeItem(view, id, it) {
   const k = tokens();
   const known = Object.prototype.hasOwnProperty.call(EVENT_ICON, it.code);
   const [icon, tone] = known ? EVENT_ICON[it.code] : ["info", "secondary"];
   const vars = it.vars ?? {};
-  const detail = typeof vars.detail === "string" ? vars.detail : typeof vars.text === "string" ? vars.text : null;
-  return h_flex()
-    .id(id)
+  const title = t(known ? `assistant.event.${it.code}` : "assistant.event.other", vars);
+  const key = `notice:${it.seq}`;
+  const open = view.expanded.has(key);
+  const body = noticeBody(it, open);
+  const head = h_flex()
     .flex_none()
     .min_h(20)
-    .px(2)
     .gap(7)
     .items_center()
-    .role("status")
     .child(Icon(icon, { size: 13, color: tone === "secondary" ? k.text.secondary : tone === "accent" ? k.accent : k.state[tone] }))
-    .child(Text(t(known ? `assistant.event.${it.code}` : "assistant.event.other", vars), { size: "sm", tone: "secondary" }).flex_shrink_1())
-    .when(Boolean(detail), (e) => e.child(Text(detail, { size: "xs", tone: "tertiary", mono: true, truncate: true }).flex_shrink_1()));
+    .child(Text(title, { size: "sm", tone: "secondary" }).flex_shrink_1())
+    .when(Boolean(body?.inline), (e) => e.child(Text(body.text, { size: "xs", tone: "tertiary", mono: true, truncate: true }).flex_shrink_1()));
+  const root = v_flex().id(id).flex_none().w_full().min_w(0).px(2).gap(2).role("status").accessibility_label(body ? `${title} · ${body.text}` : title).child(head);
+  if (!body || body.inline) return root;
+  return root.child(
+    v_flex()
+      .w_full()
+      .min_w(0)
+      .pl(20)
+      .gap(2)
+      .items_start()
+      .child(Text(body.text, body.words ? { size: "sm", tone: "secondary" } : { size: "xs", tone: "tertiary", mono: true }).w_full().min_w(0))
+      .when(body.more, (e) =>
+        e.child(
+          Button(`${id}-more`, t(open ? "assistant.event.showLess" : "assistant.event.showAll"), {
+            variant: "ghost",
+            size: "sm",
+            onClick: (_e, cx) => view.toggle(cx, key),
+          }).ml(-8),
+        ),
+      ),
+  );
 }
 
 /** The session's plan, docked above the composer: one row closed (Plan, n of m, the entry in progress), the entries

@@ -37,8 +37,8 @@ part of it. A one-time migration brings your to-do list, routines, sidebar pins 
   last run, output, cost and history; it can run in its own git worktree. Run now, stop, pause, edit, delete.
 - **Assistant** (비서). Chats with Hermes Agent in one folder: your chats on the left, grouped by Hermes profile; the
   chat in the middle, with replies streaming as Markdown, tool calls as cards (file edits as a diff), approval cards,
-  Stop, steering a running reply with Enter and queueing the next message with ⌥Enter; the folder's files and the
-  chat's model, context, tokens and cost on the right ([Assistant](#assistant)).
+  Stop, steering a running reply with Enter and queueing the next message with ⌥Enter or ⌘Enter; the folder's files
+  and the chat's model, context, tokens and cost on the right ([Assistant](#assistant)).
 
 **Side panel** (⌘1 to ⌘4), with an activity rail at the right edge that stays visible on every center view:
 
@@ -280,7 +280,7 @@ are kept.
 | `pins` | `["inbox", "todo", "routines", "assistant"]` | the apps pinned in the sidebar, in order. Settings from before the Assistant gain `"assistant"` once |
 | `pdf.zoom` | `"fit"` | the zoom a PDF opens at: `"fit"`, `50`, `75`, `100`, `125`, `150` or `200` |
 | `editor` | `"code"` | the external editor command for "Open in editor" (`code`, `cursor`, `zed`, …); a remote folder opens with `--folder-uri vscode-remote://ssh-remote+<host><path>` |
-| `assistant.folder` | `null` | the folder on this Mac the Assistant works in; the screen asks for one while it is unset |
+| `assistant.folder` | `null` | the folder on this Mac the Assistant works in; the screen asks for one while it is unset. A folder the picker reports under `/private` (`/private/tmp/x` for `/tmp/x`) is kept in its short form |
 
 ## Assistant
 
@@ -300,22 +300,30 @@ Using it:
   "Nod · Planned" last and disabled. "+" starts a chat in a profile; a chat row opens it with its history, or forks it.
   The selected chat and the collapsed groups are remembered.
 - **Composer.** Enter sends, ⇧Enter starts a new line, `@` attaches a file from the folder (not pictures), `/` lists
-  Hermes's commands. While Hermes answers, Enter steers the running reply (Hermes's `/steer`) and ⌥Enter adds the
-  message as a chip that is sent when the reply ends; Stop ends the reply and pauses the chips.
+  Hermes's commands. While Hermes answers, Enter steers the running reply (Hermes's `/steer`) and ⌥Enter or ⌘Enter adds
+  the message as a chip that is sent when the reply ends; ⌘Enter is there because the Korean input source takes
+  ⌥Enter. With Korean input, Enter sends the whole text, the syllable being typed included. Stop ends the reply and
+  pauses the chips.
 - **Approvals.** When Hermes asks to run something, a card offers Allow once, Allow always and Deny, with Hermes's other
-  choices under More, and counts down Hermes's 60 seconds.
+  choices under More, and counts down Hermes's 60 seconds; an answer after that is refused as too late.
 - **Model.** The chat header shows the chat's model and changes it for that chat; Hermes's own default stays as it is.
 - **Side column.** The chat's model, mode, context used, last reply's tokens, and the totals and cost Hermes recorded;
   under it the folder's files: a click opens a file in the work view, Attach adds it to the message.
 - **Notifications.** An approval request, a finished reply and a failed one notify you while the Assistant is not in
   front; the notification opens that chat.
+- **When Hermes fails.** Hermes ends a reply it could not give (a model your provider rejects, an expired login) with
+  no message and writes the reason to its error output. The chat then shows a failed notice with Hermes's error line
+  (Show all opens a long one), or says Hermes ended the turn without a reply; the whole story is in the bridge log,
+  `~/.cache/lazuli/assistant/<home8>/<profile>.log`.
 
 How it runs: for each Hermes profile in use, lazuli starts a small bridge, `mods/lazuli/bin/acp-bridge.mjs`, with
 `hc run --bg` in the folder. The bridge runs `hermes -p <profile> acp` and talks to lazuli over 127.0.0.1, only with
 clients that hold the token in its discovery file. Its files are in `~/.cache/lazuli/assistant/<home8>/` (the folder
 0700; `<profile>.json` and `<profile>.log` 0600; `<home8>` names the Herdr app home); the log holds method names and
-sizes, never the token or what you write. A bridge keeps running behind other screens and across reloads, and exits
-after 30 minutes with nothing running or waiting for you, or when Herdr quits.
+sizes, never the token or what you write (Hermes's lines that quote a prompt are cut). A bridge keeps running behind
+other screens and across reloads, and exits after 30 minutes with nothing running or waiting for you, or when Herdr
+quits. A reload reuses it only while it runs the same `hermes`; a turn that was running shows once, whole. Every
+minute lazuli removes the terminals of bridges that ended.
 
 ## What it runs, reads and writes
 
@@ -379,11 +387,12 @@ panel's listing, file reads, quick open, `git`, Review's `gh`, the session looku
 - Assistant: `/bin/sh -c` with `command -v`, and the login shell's `command -v` with `tail` (finding `hermes` and
   `node`), `hermes acp --check` (once per start), `/bin/sh -c 'echo "$PPID"'` (Herdr's pid),
   `/usr/bin/sqlite3 -readonly -json` (the chat list from Hermes's `state.db`), `/usr/bin/find` (Hermes's profiles and
-  the folder's files for @), `/bin/test`, `/bin/ls`, `/bin/kill -0`, `/bin/rm -f` (a stale discovery file),
+  the folder's files for @), `cd -P` and `pwd -P` under `/bin/sh -c` (where a folder really is: a chat made in `/tmp/x`
+  belongs to `/private/tmp/x`), `/bin/test`, `/bin/ls`, `/bin/kill -0`, `/bin/rm -f` (a stale discovery file),
   `/bin/ps -o command=` and `kill -s KILL` (only for an agent a dead bridge left, after `ps` shows it is that profile's
-  `hermes … acp`), and `hc run --bg`, `hc kill`, `hc rm` (the bridges). The bridge, `bin/acp-bridge.mjs` under node,
-  runs `hermes -p <profile> acp` in its own process group, in the folder, with the same `PATH` additions as
-  `run-agent.mjs`.
+  `hermes … acp`), and `hc run --bg`, `hc kill`, `hc rm`, `hc ls --all --json` (the bridges and their finished
+  terminals). The bridge, `bin/acp-bridge.mjs` under node, runs `hermes -p <profile> acp` in its own process group, in
+  the folder, with the same `PATH` additions as `run-agent.mjs`.
 
 **Reads**, outside its own folders:
 
@@ -498,7 +507,8 @@ To install it:
   the list then comes from Hermes's ACP `session/list`, without tokens or cost. Totals of a chat Hermes compressed may
   count only part of it. File edits show as a diff only while the chat is live (Hermes's history replay has none).
   Pictures cannot be attached; archive, delete and rename of chats, and Hermes's auto-allow modes, are not there. One
-  folder at a time, on this Mac only.
+  folder at a time, on this Mac only. A failed reply shows Hermes's reason only when Hermes logs it as a `❌` line or an
+  `[ERROR]` record; otherwise the chat says the turn ended without a reply.
 - **Files panel:** 500 entries a folder and 5,000 in all. Without `/usr/bin/trash` a delete is permanent, and the
   confirm says so. **Quick open** lists at most 20,000 files (outside git, `find` to depth 6) and shows the best 50.
 - **herdr-relay devices** are read-only (above).

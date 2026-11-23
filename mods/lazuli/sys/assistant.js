@@ -30,14 +30,14 @@ import { checking, exec, home, shared, setShared, pickFolder as pickFolderDialog
 import { t } from "../core/i18n.js";
 import * as wire from "../core/acp-wire.js";
 import { emptyChat, reduce, isRunning, queueHead, canAnswer, MAX_MESSAGE } from "../core/assistant-chat.js";
-import { buildList, normalizeUi, pruneUi, mapSessionList, parseKey, sessionKey, isProfileName, isSessionId } from "../core/assistant-list.js";
+import { buildList, normalizeUi, pruneUi, mapSessionList, parseKey, sessionKey, isProfileName, isSessionId, pathsToResolve } from "../core/assistant-list.js";
 import { agentArgv, routeText } from "../core/assistant-agents.js";
 import { normalize } from "../core/paths.js";
 import * as store from "./store.js";
 import { KEY } from "./state.js";
 import { showCenter } from "./bus.js";
 import { blockShown } from "../views/panels/common.js";
-import { AcpClient } from "./acp-client.js";
+import { AcpClient, shutdownBridge } from "./acp-client.js";
 import * as bridge from "./assistant-bridge.js";
 import * as disk from "./assistant-sessions.js";
 
@@ -52,10 +52,16 @@ const FILES_EVERY = 10;
 const LIST_EVERY = 30;
 const LIST_AFTER_TURN_MS = 1200;
 const NEW_MS = 60000;
-const LOAD_MS = 120000;
+/** A `session/load` without an answer by then counts as lost: the stream reopens and the load tries once more. */
+const LOAD_MS = 45000;
 const LIST_MS = 30000;
+/** A stream whose read loop handled no line for this long (the bridge pings after 10 s of silence) has stopped: the
+ *  service reopens it from the last record held. */
+const STALL_MS = 30000;
 const NOTICES_KEPT = 20;
 const BODY_MAX = 300;
+/** A running turn's events kept for a load mid-turn (as many as the bridge's ring holds records). */
+const TURN_LOG_MAX = 4000;
 
 const log = (msg) => {
   console.log(`[lazuli/assistant] ${msg}`);
@@ -89,6 +95,7 @@ let built = { version: -1, value: null };
 let flushing = false;
 let service = null; // {stopped} while started
 let checked = null; // {key, result} of this start's agent check
+let hermesBin = null; // the hermes program this start checked or looked up (never debugAgent's): the bridges' argv
 const clients = new Map(); // profile → AcpClient
 const launches = new Map(); // profile → Promise of ensureBridge
 const loads = new Map(); // key → Promise of a session/load
@@ -99,6 +106,18 @@ let listing = null;
 let switching = null;
 let filesAt = 0;
 const listSoon = new Set();
+// Where each folder of the list really is (symlinks and macOS firmlinks resolved, once per distinct path): a session
+// made in `/tmp/x` belongs to a folder picked as `/private/tmp/x` and the other way round (core/assistant-list.js).
+const real = {};
+// The turn running in each chat, as events to apply again after its history loads: Hermes saves a turn only when it
+// ends, so a load mid-turn (a reload, a selection) replays the history without it. The prompts sent, then every update
+// the turn streamed (a steer's answer as its notice). Null once the turn outgrew TURN_LOG_MAX: the chat then reloads
+// once idle.
+const turns = new Map(); // key → events | null
+const loadingKeys = new Set(); // chats whose session/load is open: their updates replay the history
+const endedInLoad = new Set(); // chats whose turn ended while their history loaded: they load once more
+const seen = new Map(); // profile → {pid, seq}: the newest record applied from that bridge (a replay of it is dropped)
+const resume = new Map(); // profile → {pid, seq}: where the last stream of that bridge stopped, for the next one
 let clientSeq = 0;
 const NONCE = `l${Date.now().toString(36)}`;
 
@@ -179,7 +198,8 @@ function ensureChat(key, meta = {}) {
   return S.sessions[key];
 }
 
-/** Reduces events into a chat (the same state object when nothing changed). */
+/** Reduces events into a chat (the same state object when nothing changed). A turn's log goes once the turn ended
+ *  (unless its history is loading: the turn is then checked after the load). */
 function apply(cx, key, ...events) {
   let c = S.sessions[key];
   if (!c) return null;
@@ -189,7 +209,88 @@ function apply(cx, key, ...events) {
     S.sessions[key] = c;
     changed(cx);
   }
+  if (turns.has(key) && !loadingKeys.has(key) && !isRunning(c)) turns.delete(key);
   return c;
+}
+
+/** Adds an event to a chat's turn log, before it is applied: a prompt sent while nothing runs starts a new log. */
+function logTurn(key, event) {
+  if (event.type === "prompt-sent" && (!turns.has(key) || !isRunning(S.sessions[key]))) {
+    turns.set(key, [event]);
+    return;
+  }
+  const events = turns.get(key);
+  if (!events) return;
+  if (events.length >= TURN_LOG_MAX) turns.set(key, null);
+  else events.push(event);
+}
+
+/** After a load: the turn still running there, applied again after the history (its prompts only add their user
+ *  items). A turn too long to keep marks the chat stale instead: it reloads once idle (K5 rule 8). */
+function resumeTurn(cx, key) {
+  if (!turns.has(key)) return;
+  if (!isRunning(S.sessions[key])) {
+    turns.delete(key);
+    return;
+  }
+  const events = turns.get(key);
+  if (events === null) apply(cx, key, { type: "gap" });
+  else apply(cx, key, ...events.map((e) => (e.type === "prompt-sent" ? { ...e, again: true } : e)));
+}
+
+/** Notes a record's seq from a bridge; false when it was applied already (a stream asked for it again). */
+function firstSight(profile, pid, seq) {
+  if (!Number.isInteger(seq)) return true;
+  const s = seen.get(profile);
+  if (s && s.pid === pid && seq <= s.seq) return false;
+  seen.set(profile, { pid, seq });
+  return true;
+}
+
+// Titles (row and header): the agent's title (a `session_info_update` this run, else the list row's: Hermes's database
+// or `session/list`), and only while there is none a new session's first prompt line (`local.prompt`). The header
+// takes it when the chat has no title yet or only one fillTitle put there; a title the agent sent stays.
+const agentTitles = new Map(); // key → the title the agent last sent this run
+const filledTitles = new Map(); // key → the title fillTitle put into that chat
+
+const storedOf = (key) => {
+  const k = parseKey(key);
+  return k ? (S.profiles.find((p) => p.profile === k.profile)?.rows ?? []).find((r) => r.id === k.sessionId) ?? null : null;
+};
+const localOf = (key) => S.local.find((l) => `${l.profile}/${l.sessionId}` === key) ?? null;
+const titleText = (s) => (typeof s === "string" && s.trim() ? s : null);
+
+/** A session's title as the list shows it (null: none known). */
+function listTitle(key) {
+  const l = localOf(key);
+  return titleText(agentTitles.get(key)) ?? titleText(storedOf(key)?.title) ?? titleText(l?.title) ?? titleText(l?.prompt);
+}
+
+/** The header's title, as the list shows it: into a chat with no title yet (a load sends none) or with the one this
+ *  function put there, so a first-prompt stand-in gives way to the agent's title. */
+function fillTitle(cx, key) {
+  const chat = S.sessions[key];
+  const title = listTitle(key);
+  if (!chat || !title || chat.title === title) return;
+  if (chat.title && chat.title !== filledTitles.get(key)) return;
+  filledTitles.set(key, title);
+  apply(cx, key, { type: "update", update: { sessionUpdate: "session_info_update", title } });
+}
+
+/** The list's sources with the titles as listTitle gives them: the agent's newest over a stored row's, a local
+ *  session's first prompt only while it has no other. */
+function listSources() {
+  const profiles = agentTitles.size
+    ? S.profiles.map((p) => {
+        if (!Array.isArray(p.rows) || !p.rows.some((r) => agentTitles.has(`${p.profile}/${r.id}`))) return p;
+        return { ...p, rows: p.rows.map((r) => (titleText(agentTitles.get(`${p.profile}/${r.id}`)) ? { ...r, title: agentTitles.get(`${p.profile}/${r.id}`) } : r)) };
+      })
+    : S.profiles;
+  const local = S.local.map((l) => {
+    const title = listTitle(`${l.profile}/${l.sessionId}`);
+    return title === l.title ? l : { ...l, title };
+  });
+  return { profiles, local };
 }
 
 const chatsOf = (profile) => Object.values(S.sessions).filter((c) => c.profile === profile);
@@ -203,7 +304,7 @@ export function snapshot() {
   const running = Object.values(S.sessions)
     .filter((c) => isRunning(c))
     .map((c) => c.key);
-  const list = buildList({ folder: S.folder, home: home(), profiles: S.profiles, local: S.local, running, bridges: S.bridges, ui: uiNow() });
+  const list = buildList({ folder: S.folder, home: home(), ...listSources(), running, bridges: S.bridges, ui: uiNow(), real });
   const value = { gate: S.gate, gateDetail: S.gateDetail, folder: S.folder, hermes: S.hermes, bridges: S.bridges, list, sessions: S.sessions, notices: S.notices };
   built = { version, value };
   return value;
@@ -225,16 +326,13 @@ export function onNotice(fn) {
 // ---- notices ----------------------------------------------------------------------------------------------------
 
 function rowOf(key) {
-  const k = parseKey(key);
-  if (!k) return null;
-  const rows = S.profiles.find((p) => p.profile === k.profile)?.rows ?? [];
-  return rows.find((r) => r.id === k.sessionId) ?? S.local.find((l) => l.profile === k.profile && l.sessionId === k.sessionId) ?? null;
+  return storedOf(key) ?? localOf(key);
 }
 
 function titleOf(key) {
   const c = S.sessions[key];
   const first = c?.items?.find((it) => it.type === "user" && it.text)?.text;
-  return c?.title || rowOf(key)?.title || (first ? first.split("\n")[0].slice(0, 60) : "") || t("assistant.list.untitled");
+  return c?.title || listTitle(key) || (first ? first.split("\n")[0].slice(0, 60) : "") || t("assistant.list.untitled");
 }
 
 const oneLine = (s) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, BODY_MAX);
@@ -264,15 +362,23 @@ function lastAnswer(key) {
 // ---- records from the bridges -----------------------------------------------------------------------------------
 
 function onRecord(cx, profile, client, rec) {
+  if (!firstSight(profile, client.pid, rec.seq)) return;
   const c = rec.c;
   if (c.kind === "update") {
     const key = c.sessionId ? sessionKey(profile, c.sessionId) : null;
     if (!key) return;
-    ensureChat(key);
-    apply(cx, key, { type: "update", update: c.update });
-    if (c.updateKind === "session_info_update" && typeof c.update?.title === "string") {
-      const local = S.local.find((l) => l.profile === profile && l.sessionId === c.sessionId);
-      if (local) local.title = c.update.title;
+    const before = ensureChat(key);
+    const event = { type: "update", update: c.update };
+    const after = apply(cx, key, event);
+    // A running turn's update is kept for a load mid-turn; one its history replays (load open) is not.
+    if (turns.has(key) && !loadingKeys.has(key)) logTurn(key, steerNotice(before, after) ?? event);
+    if (c.updateKind === "session_info_update" && Object.prototype.hasOwnProperty.call(c.update ?? {}, "title")) {
+      // The agent's title: the row and the header show it over a first-prompt stand-in.
+      if (titleText(c.update.title)) agentTitles.set(key, c.update.title);
+      else agentTitles.delete(key);
+      const local = localOf(key);
+      if (local) local.title = titleText(c.update.title);
+      changed(cx);
     }
     return;
   }
@@ -292,6 +398,15 @@ function onRecord(cx, profile, client, rec) {
   if (c.kind === "result" || c.kind === "error") onAnswer(cx, String(c.id), c);
 }
 
+/** A chunk that acknowledged a steer became a notice (K5 rule 5): the turn log keeps that notice, since applied again
+ *  later the chunk would find no steer waiting. */
+function steerNotice(before, after) {
+  const last = after?.items?.[after.items.length - 1];
+  if (!last || last.type !== "notice" || !String(last.code).startsWith("steer-")) return null;
+  if (before?.items?.[before.items.length - 1]?.seq === last.seq) return null;
+  return last.vars ? { type: "notice", code: last.code, vars: last.vars } : { type: "notice", code: last.code };
+}
+
 function onAnswer(cx, id, c) {
   const entry = promptKeys.get(id);
   if (!entry) return;
@@ -300,12 +415,17 @@ function onAnswer(cx, id, c) {
   if (!S.sessions[key]) return;
   if (c.kind === "result") {
     const stopReason = typeof c.result?.stopReason === "string" ? c.result.stopReason : "end_turn";
-    apply(cx, key, { type: "prompt-done", requestId: id, stopReason, ...(isObj(c.result?.usage) ? { usage: c.result.usage } : {}) });
-    if (kind === "prompt" && stopReason !== "cancelled") raise(cx, "done", key, lastAnswer(key));
+    const after = apply(cx, key, { type: "prompt-done", requestId: id, stopReason, ...(isObj(c.result?.usage) ? { usage: c.result.usage } : {}) });
+    // A turn that ended without a word (K5 rule 11) is a failure, not an answer.
+    if (kind === "prompt" && stopReason !== "cancelled") {
+      if (after?.lastError && !isRunning(after)) raise(cx, "failed", key, after.lastError.message);
+      else raise(cx, "done", key, lastAnswer(key));
+    }
   } else {
     apply(cx, key, { type: "prompt-failed", requestId: id, error: c.error });
     raise(cx, "failed", key, c.error?.message ?? "");
   }
+  if (loadingKeys.has(key) && !isRunning(S.sessions[key])) endedInLoad.add(key);
   afterTurn(cx, key, entry);
 }
 
@@ -325,21 +445,39 @@ function afterTurn(cx, key, entry) {
   refreshFiles(cx);
 }
 
-function onEvent(cx, profile, ev) {
+function onEvent(cx, profile, client, ev) {
+  if (!firstSight(profile, client.pid, ev.seq)) return;
   if (ev.ev === "gap") {
     for (const c of chatsOf(profile)) {
       apply(cx, c.key, { type: "gap" });
       if (selectedKey() === c.key && !isRunning(S.sessions[c.key])) reload(cx, c.key);
     }
+  } else if (ev.ev === "agent-error") {
+    // Not tied to a session: each chat of the profile keeps it for its running turn (K5 rule 11).
+    if (typeof ev.text === "string") for (const c of chatsOf(profile)) apply(cx, c.key, { type: "agent-error", text: ev.text });
   } else if (ev.ev === "dropped") {
     log(`${profile}: the bridge dropped an agent line of ${ev.bytes} bytes`);
   }
 }
 
+/** A profile's bridge is gone (or left): its chats' requests fail and the chats turn stale (they load again with the
+ *  next bridge). */
+function failChats(cx, profile, code) {
+  for (const chat of chatsOf(profile)) {
+    const open = Object.keys(chat.inflight ?? {});
+    for (const id of open) {
+      promptKeys.delete(id);
+      apply(cx, chat.key, { type: "prompt-failed", requestId: id, error: code });
+    }
+    apply(cx, chat.key, { type: "disconnected" });
+    if (open.length) raise(cx, "failed", chat.key, t(`assistant.banner.${code}`));
+  }
+}
+
 /** The stream of a profile's bridge ended. A drop with the bridge still running reconnects and replays what was
- *  missed; otherwise the bridge is gone: its chats' requests fail, the chats turn stale (they load again with the next
- *  bridge) and the group shows why. */
+ *  missed; otherwise the bridge is gone: its chats' requests fail, the chats turn stale and the group shows why. */
 async function onEnd(cx, profile, client, why) {
+  if (Number.isInteger(client.seq)) resume.set(profile, { pid: client.pid, seq: client.seq });
   if (clients.get(profile) !== client) return;
   clients.delete(profile);
   log(`${profile} stream ended: ${why.reason}${why.bye ? ` (bye ${why.bye})` : ""}${why.detail ? `: ${why.detail}` : ""}`);
@@ -353,21 +491,22 @@ async function onEnd(cx, profile, client, why) {
     if (again.ok) return;
   }
   const code = crashed ? "agent-exit" : "disconnected";
-  for (const chat of chatsOf(profile)) {
-    const open = Object.keys(chat.inflight ?? {});
-    for (const id of open) {
-      promptKeys.delete(id);
-      apply(cx, chat.key, { type: "prompt-failed", requestId: id, error: code });
-    }
-    apply(cx, chat.key, { type: "disconnected" });
-    if (open.length) raise(cx, "failed", chat.key, t(`assistant.banner.${code}`));
-  }
+  failChats(cx, profile, code);
   const quiet = why.bye === "idle" || why.bye === "shutdown";
   setBridge(cx, profile, quiet ? { state: "stopped" } : { state: "error", error: code });
 }
 
-/** A new stream's `hello`: the agent's version, the prompts still running (their answers come later) and the agent
- *  requests still waiting (approval cards), restored into their chats. */
+/** A running prompt of `hello` as its chat shows it (K3 hello `running[].prompt`): a steer's text without `/steer`,
+ *  attachments by path. */
+function restoredPrompt(r) {
+  const text = wire.promptText(r?.prompt);
+  const attachments = wire.promptPaths(r?.prompt).map((path) => ({ path }));
+  if (/^\/steer\s/.test(text)) return { kind: "steer", text: text.replace(/^\/steer\s+/, ""), attachments };
+  return { kind: text.startsWith("/") ? "command" : "prompt", text, attachments };
+}
+
+/** A new stream's `hello`: the agent's version, the prompts still running (their answers come later; their user
+ *  items and turn logs restored) and the agent requests still waiting (approval cards), restored into their chats. */
 function onHello(cx, profile, hello) {
   const version = hello?.agent?.agentInfo?.version;
   if (typeof version === "string") S.hermes = { path: S.hermes?.path ?? null, version };
@@ -375,8 +514,13 @@ function onHello(cx, profile, hello) {
     const key = sessionKey(profile, r?.sessionId);
     if (!key || r.id === undefined) continue;
     const chat = ensureChat(key);
-    if (!promptKeys.has(String(r.id))) promptKeys.set(String(r.id), { key, kind: "prompt" });
-    if (!chat.inflight[String(r.id)]) apply(cx, key, { type: "prompt-sent", requestId: r.id, kind: "prompt" });
+    const id = String(r.id);
+    const prompt = restoredPrompt(r);
+    if (!promptKeys.has(id)) promptKeys.set(id, { key, kind: prompt.kind });
+    if (chat.inflight[id]) continue;
+    const event = { type: "prompt-sent", requestId: r.id, ...prompt };
+    logTurn(key, event);
+    apply(cx, key, event);
   }
   for (const p of Array.isArray(hello?.pending) ? hello.pending : []) {
     if (p?.method !== wire.METHOD.requestPermission) continue;
@@ -391,30 +535,46 @@ function onHello(cx, profile, hello) {
 
 // ---- bridges ----------------------------------------------------------------------------------------------------
 
-/** A client on a bridge's discovery: its stream, then its hello. Resolves `{ok, client}` or `{error}`. */
+/** A client on a bridge's discovery: its stream, then its hello. Resolves `{ok, client}` or `{error}`. `since` null
+ *  (a bridge this run holds no record of) asks also for the turns still running there (K3 `turns`), so a turn that
+ *  began before a reload shows whole; its hello (the prompts running) is applied before those records. */
 async function attach(cx, profile, d, since = null) {
   const client = new AcpClient({
     profile,
     discovery: d,
     nonce: `${NONCE}${++clientSeq}`,
     onRecord: (rec, tcx) => onRecord(tcx, profile, client, rec),
-    onEvent: (ev, tcx) => onEvent(tcx, profile, ev),
+    onEvent: (ev, tcx) => onEvent(tcx, profile, client, ev),
     onEnd: (why, tcx) => onEnd(tcx, profile, client, why),
   });
-  const h = await client.connect(cx, since);
-  if (h.error) return h;
-  const old = clients.get(profile);
-  clients.set(profile, client);
-  if (old && old !== client) old.close();
-  setBridge(cx, profile, { state: "ready" });
-  onHello(cx, profile, h.hello);
-  return { ok: true, client };
+  const ready = (hello) => {
+    const old = clients.get(profile);
+    clients.set(profile, client);
+    if (old && old !== client) old.close();
+    setBridge(cx, profile, { state: "ready" });
+    onHello(cx, profile, hello);
+  };
+  const h = await client.connect(cx, since, { turns: since === null, ready });
+  return h.error ? h : { ok: true, client };
 }
 
 /** The argv a profile's bridge runs (K3): `<hermes> -p <profile> acp`, or debugAgent's. */
 function argvFor(profile) {
   const debug = debugAgent();
-  return debug ? agentArgv({ debugAgent: debug, profile }) : agentArgv({ bin: S.hermes?.path ?? null, profile });
+  return debug ? agentArgv({ debugAgent: debug, profile }) : agentArgv({ bin: hermesBin, profile });
+}
+
+/** argvFor, with hermes looked up when this start has not found it yet (a lookup, not a hermes command). Null when
+ *  there is no hermes. */
+async function expectedArgv(profile) {
+  if (!debugAgent() && !hermesBin) hermesBin = await bridge.hermesPath();
+  return argvFor(profile);
+}
+
+/** Whether a connected bridge runs the agent this profile starts now (debugAgent set or cleared, another hermes). */
+function sameAgent(client, profile) {
+  const argv = argvFor(profile);
+  return !argv || wire.discoveryMatches(client.d, { profile: client.d.profile, cwd: client.d.cwd, herdrPid: client.d.herdrPid, argv });
 }
 
 async function connectBridge(cx, profile, { launch = true } = {}) {
@@ -426,23 +586,44 @@ async function connectBridge(cx, profile, { launch = true } = {}) {
     return { error: "bridge-launch-failed", detail: "Herdr's pid is unknown" };
   }
   if (launch) setBridge(cx, profile, { state: "starting" });
+  const connected = clients.get(profile);
+  if (connected && !sameAgent(connected, profile)) {
+    // The agent changed under a connected bridge: its requests end here, the bridge is shut down below.
+    clients.delete(profile);
+    connected.close();
+    failChats(cx, profile, "disconnected");
+  }
+  const argv = await expectedArgv(profile);
   const d = await bridge.readDiscovery(profile);
-  if (d.state === "ready" && wire.discoveryMatches(d, { profile, cwd: folder, herdrPid: pid }) && (await bridge.pidAlive(d.pid))) {
-    const r = await attach(cx, profile, d);
+  const ours = d.state === "ready" && d.profile === profile && d.cwd === folder && d.herdrPid === pid && (await bridge.pidAlive(d.pid));
+  let retired = false;
+  if (ours && argv && wire.discoveryMatches(d, { profile, cwd: folder, herdrPid: pid, argv })) {
+    const from = resume.get(profile);
+    const r = await attach(cx, profile, d, from?.pid === d.pid ? from.seq : null);
     if (r.ok) {
       log(`reusing the ${profile} bridge pid ${d.pid}`);
       return r;
     }
     log(`the ${profile} bridge pid ${d.pid} gave no hello (${r.error}): replacing it`);
+  } else if (ours && argv) {
+    // A bridge of this folder and Herdr that runs another agent is not reused (K3): it is shut down (running prompts
+    // cancelled first) and a new one starts.
+    log(`the ${profile} bridge pid ${d.pid} runs ${d.argv ? `"${d.argv.join(" ").slice(0, 160)}"` : "an unknown agent"}: shutting it down`);
+    const r = await shutdownBridge(cx, d);
+    if (r.ok) await bridge.awaitExit(cx, profile, d.pid);
+    await bridge.retire(profile, d);
+    retired = true;
   }
-  if (!launch) return { error: "disconnected" };
-  if (d.state !== "absent") await bridge.retire(profile, d);
+  if (!launch) {
+    if (retired) setBridge(cx, profile, { state: "off" });
+    return { error: "disconnected" };
+  }
+  if (d.state !== "absent" && !retired) await bridge.retire(profile, d);
   // A new bridge starts only once open() passed the gates (K4).
   if (S.gate !== "ok" || S.folder !== folder) {
     setBridge(cx, profile, { state: "off" });
     return { error: gateError() };
   }
-  const argv = argvFor(profile);
   if (!argv) {
     setBridge(cx, profile, { state: "error", error: "hermes-missing" });
     return { error: "hermes-missing" };
@@ -458,12 +639,41 @@ async function connectBridge(cx, profile, { launch = true } = {}) {
   return r;
 }
 
-/** A profile's client, connecting to its running bridge or launching one. Shared by concurrent callers. */
+/** A profile's client, connecting to its running bridge or launching one. Shared by concurrent callers. A connected
+ *  bridge that runs another agent than the one this profile starts now is replaced. */
 function ensureBridge(cx, profile, options) {
   const c = clients.get(profile);
-  if (c?.open) return Promise.resolve({ ok: true, client: c });
+  if (c?.open && sameAgent(c, profile)) return Promise.resolve({ ok: true, client: c });
   if (launches.has(profile)) return launches.get(profile);
   const p = owned(cx, (tcx) => connectBridge(tcx, profile, options));
+  launches.set(profile, p);
+  p.then(() => launches.delete(profile));
+  return p;
+}
+
+/**
+ * Reopens a profile's stream that stopped delivering (its read loop handled no line for STALL_MS, or a load or list got
+ * no answer within its bound): the client closes (its waiting requests end `disconnected`; a load then tries once
+ * more) and a new one attaches from the last record held, so the bridge replays what was missed (K3 ring; `gap` when
+ * the ring no longer has it). Shared with ensureBridge's callers meanwhile. A bridge that no longer answers turns the
+ * group's state to `error` (the banner's Retry).
+ */
+function reopenStream(cx, profile, client, why) {
+  if (clients.get(profile) !== client || !client.open) return Promise.resolve({ ok: false });
+  if (launches.has(profile)) return launches.get(profile);
+  log(`${profile}: the stream stopped (${why}); reopening it from seq ${client.seq}`);
+  clients.delete(profile);
+  if (Number.isInteger(client.seq)) resume.set(profile, { pid: client.pid, seq: client.seq });
+  client.close();
+  const p = owned(cx, async (tcx) => {
+    const r = await attach(tcx, profile, client.d, client.seq);
+    if (r.error) {
+      log(`${profile}: the stream did not reopen (${r.error})`);
+      failChats(tcx, profile, "disconnected");
+      setBridge(tcx, profile, { state: "error", error: "disconnected" });
+    }
+    return r;
+  });
   launches.set(profile, p);
   p.then(() => launches.delete(profile));
   return p;
@@ -509,6 +719,7 @@ async function doOpen(cx, retry = false) {
     return { error: agent.gate };
   }
   if (S.hermes?.path !== agent.bin) S.hermes = { path: agent.bin, version: S.hermes?.version ?? null };
+  if (!debugAgent()) hermesBin = agent.bin;
   setGate(cx, "ok");
   await refreshList(cx);
   const failed = S.bridges.default?.state === "error" && !retry ? { error: S.bridges.default.error } : null;
@@ -559,7 +770,8 @@ function restoreSelection(cx) {
 // ---- the list ---------------------------------------------------------------------------------------------------
 
 /** A profile's sessions through its bridge (`session/list {cwd, cursor}`), when the database cannot be read or
- *  debugAgent is set (K6). */
+ *  debugAgent is set (K6). An unanswered list reopens the stream (reopenStream) and keeps the rows read before, so a
+ *  passing failure neither empties the group nor drops the selection. */
 async function listViaAgent(cx, profile) {
   const client = clients.get(profile);
   // No bridge yet: the group is still loading (a remembered selection stays, core/assistant-list.js pruneUi).
@@ -568,7 +780,12 @@ async function listViaAgent(cx, profile) {
   let cursor;
   for (let page = 0; page < 10; page++) {
     const r = await client.request(cx, wire.METHOD.sessionList, cursor ? { cwd: S.folder, cursor } : { cwd: S.folder }, { timeoutMs: LIST_MS });
-    if (r.error) return rows.length ? { profile, rows } : { profile, rows: [], error: r.error };
+    if (r.error) {
+      if (r.error === "bridge-timeout") reopenStream(cx, profile, client, "session/list unanswered");
+      if (rows.length) return { profile, rows };
+      const before = S.profiles.find((p) => p.profile === profile)?.rows;
+      return Array.isArray(before) && before.length ? { profile, rows: before, error: r.error } : { profile, rows: [], error: r.error };
+    }
     rows.push(...mapSessionList(r.result));
     cursor = typeof r.result?.nextCursor === "string" && r.result.nextCursor ? r.result.nextCursor : null;
     if (!cursor) break;
@@ -588,9 +805,15 @@ async function listProfile(cx, profile) {
   return { profile, rows: [], error: r.error };
 }
 
-/** Stats of the database rows into the chats (K8: refreshed on select and after each turn). */
-function syncStats(cx) {
+/** Stats of the database rows into the chats (K8: refreshed on select and after each turn), the list's title into the
+ *  header (fillTitle), and a stored row's title into the session made this run (kept for when the list cannot be read). */
+function syncRows(cx) {
+  for (const l of S.local) {
+    const stored = titleText(storedOf(`${l.profile}/${l.sessionId}`)?.title);
+    if (stored && !titleText(l.title)) l.title = stored;
+  }
   for (const chat of Object.values(S.sessions)) {
+    fillTitle(cx, chat.key);
     const stats = rowOf(chat.key)?.stats;
     if (!isObj(stats) || JSON.stringify(stats) === JSON.stringify(chat.usage?.stats)) continue;
     apply(cx, chat.key, { type: "stats", stats });
@@ -610,16 +833,25 @@ async function doList(cx, only) {
     if (at < 0) S.profiles = [...S.profiles, src];
     else S.profiles = S.profiles.map((p, i) => (i === at ? src : p));
   }
+  await resolveCwds();
+  if (S.folder !== folder) return { error: "disconnected" };
   if (!only) {
     S.profiles = S.profiles.filter((p) => names.includes(p.profile));
     // Every profile is listed: a remembered selection that no longer exists is cleared (K2).
     const ui = uiNow();
-    const pruned = pruneUi(ui, buildList({ folder: S.folder, home: home(), profiles: S.profiles, local: S.local, running: [], bridges: S.bridges, ui }));
+    const pruned = pruneUi(ui, buildList({ folder: S.folder, home: home(), ...listSources(), running: [], bridges: S.bridges, ui, real }));
     if (pruned !== ui) setUi(cx, pruned);
   }
-  syncStats(cx);
+  syncRows(cx);
   changed(cx);
   return { ok: true };
+}
+
+/** Resolves the list's paths not resolved yet (a path that did not resolve is asked again next time). */
+async function resolveCwds() {
+  const wanted = pathsToResolve({ folder: S.folder, home: home(), profiles: S.profiles, local: S.local }).filter((p) => !real[p]);
+  if (!wanted.length) return;
+  Object.assign(real, await disk.resolvePaths(run, wanted));
 }
 
 /** Reads the list again: every profile, or one. */
@@ -688,6 +920,7 @@ async function switchFolder(cx, folder) {
     );
     for (const id of promptKeys.keys()) promptKeys.delete(id);
     loads.clear();
+    for (const m of [turns, loadingKeys, endedInLoad, seen, resume, agentTitles, filledTitles]) m.clear();
     Object.assign(S, fresh(folder), { hermes: S.hermes, notices: S.notices });
     filesAt = 0;
     log(`folder ${folder ?? "(none)"}`);
@@ -702,24 +935,26 @@ async function switchFolder(cx, folder) {
 }
 
 /** A folder for the Assistant (D3, D22): with a turn running it is refused with `busy` unless `confirmed`; then the
- *  bridges stop, the folder is saved and the screen opens there. */
+ *  bridges stop, the folder is saved and the screen opens there. `path` in the result is the folder as kept: a path
+ *  the system picker gave under macOS's `/private` is kept in its short form when that is the same folder. */
 export async function setFolder(cx, path, { confirmed = false } = {}) {
   if (checking()) return { error: "disconnected" };
   const p = typeof path === "string" ? path.trim() : "";
   if (!p.startsWith("/")) return { error: "not-found" };
-  const folder = normalize(p);
+  // The system picker gives `/private/tmp/x` for `/tmp/x`: the short form is kept when it is the same folder.
+  const folder = await disk.shortFolder(run, normalize(p));
   if (folder === S.folder && settingsFolder() === folder) {
     await recheck(cx);
-    return { ok: true };
+    return { ok: true, path: folder };
   }
-  if (!confirmed && Object.values(S.sessions).some((c) => isRunning(c))) return { error: "busy" };
+  if (!confirmed && Object.values(S.sessions).some((c) => isRunning(c))) return { error: "busy", path: folder };
   return owned(cx, async (tcx) => {
     await store.updateSettings((s) => ({ ...s, assistant: { ...(isObj(s.assistant) ? s.assistant : {}), folder } }));
     await switchFolder(tcx, folder);
     setUi(tcx, normalizeUi(null, folder));
     setGate(tcx, "checking");
     await open(tcx);
-    return { ok: true };
+    return { ok: true, path: folder };
   });
 }
 
@@ -735,31 +970,65 @@ export async function pickFolder(cx) {
   }
   if (typeof path !== "string" || !path) return { error: "cancelled" };
   const r = await setFolder(cx, path, { confirmed: false });
-  return { ...r, path };
+  return { path, ...r };
 }
 
 // ---- sessions ---------------------------------------------------------------------------------------------------
 
-/** `session/load` of a chat: its history replays into it (K5 rule 7). A load result without `models` is Hermes's
- *  answer for an unknown id (S9): `not-found`. */
+/** `session/load` of a chat: its history replays into it (K5 rule 7), then the turn still running there, which the
+ *  history does not hold yet (Hermes saves a turn when it ends): its user items and what it streamed so far, from the
+ *  turn log, so it shows once and whole. A turn that ended during the load may be missing from that history: the chat
+ *  then loads once more. A load without an answer within LOAD_MS reopens the stream, and one that ended `disconnected`
+ *  (its stream reopened or dropped) tries once more on the bridge still running (no launch). A load result without
+ *  `models` is Hermes's answer for an unknown id (S9): `not-found`. */
 function reload(cx, key) {
   if (loads.has(key)) return loads.get(key);
   const p = owned(cx, async (tcx) => {
     const k = parseKey(key);
-    const b = await ensureBridge(tcx, k.profile);
-    if (b.error) return b;
-    if (!S.sessions[key]) ensureChat(key);
-    apply(tcx, key, { type: "load-start" });
-    const r = await b.client.request(tcx, wire.METHOD.sessionLoad, { sessionId: k.sessionId, cwd: S.folder, mcpServers: [] }, { timeoutMs: LOAD_MS });
-    if (r.error) {
-      apply(tcx, key, { type: "loaded" }, { type: "disconnected" });
-      return r;
+    let pass = 0;
+    let retried = false;
+    for (;;) {
+      const b = await ensureBridge(tcx, k.profile, retried ? { launch: false } : undefined);
+      if (b.error) {
+        if (retried) apply(tcx, key, { type: "loaded" }, { type: "disconnected" });
+        return b;
+      }
+      // A reopened stream first replays what the stopped one missed (an earlier load's history among it): the load
+      // starts after that, so the two never mix.
+      if (retried) await b.client.caughtUp(tcx, LOAD_MS);
+      if (!S.sessions[key]) ensureChat(key);
+      endedInLoad.delete(key);
+      loadingKeys.add(key);
+      apply(tcx, key, { type: "load-start" });
+      let r;
+      try {
+        r = await b.client.request(tcx, wire.METHOD.sessionLoad, { sessionId: k.sessionId, cwd: S.folder, mcpServers: [] }, { timeoutMs: LOAD_MS });
+      } finally {
+        loadingKeys.delete(key);
+      }
+      if (r.error) {
+        const lost = r.error === "bridge-timeout" || r.error === "disconnected";
+        if (lost && !retried && S.bridges[k.profile]?.state !== "error") {
+          retried = true;
+          log(`${key}: session/load ended ${r.error}; loading it again`);
+          if (r.error === "bridge-timeout") await reopenStream(tcx, k.profile, b.client, "session/load unanswered");
+          continue;
+        }
+        apply(tcx, key, { type: "loaded" }, { type: "disconnected" });
+        return r;
+      }
+      if (!isObj(r.result) || !Object.prototype.hasOwnProperty.call(r.result, "models")) {
+        apply(tcx, key, { type: "loaded" });
+        return { error: "not-found" };
+      }
+      apply(tcx, key, { type: "loaded", models: r.result.models, modes: r.result.modes });
+      resumeTurn(tcx, key);
+      if (pass > 0 || !endedInLoad.has(key)) break;
+      pass++;
+      log(`${key}: the turn ended while its history loaded; loading it again`);
     }
-    if (!isObj(r.result) || !Object.prototype.hasOwnProperty.call(r.result, "models")) {
-      apply(tcx, key, { type: "loaded" });
-      return { error: "not-found" };
-    }
-    apply(tcx, key, { type: "loaded", models: r.result.models, modes: r.result.modes });
+    endedInLoad.delete(key);
+    fillTitle(tcx, key);
     const stats = rowOf(key)?.stats;
     if (isObj(stats)) apply(tcx, key, { type: "stats", stats });
     return { ok: true };
@@ -790,7 +1059,9 @@ async function doSelect(cx, key) {
   if (!S.sessions[key] && !rowOf(key)) return { error: "not-found" };
   const ui = uiNow();
   if (ui.selected?.profile !== k.profile || ui.selected?.session !== k.sessionId) setUi(cx, { ...ui, selected: { agent: "hermes", profile: k.profile, session: k.sessionId } });
-  const chat = ensureChat(key, { title: rowOf(key)?.title ?? null, updatedAt: rowOf(key)?.updatedAt ?? null });
+  // Its title comes through fillTitle, so the agent's can replace a stand-in later.
+  const chat = ensureChat(key, { updatedAt: rowOf(key)?.updatedAt ?? null });
+  fillTitle(cx, key);
   refreshFiles(cx);
   if (chat.loaded && !chat.stale) {
     const stats = rowOf(key)?.stats;
@@ -837,7 +1108,7 @@ async function doNewSession(cx, profile = "default") {
   const now = Date.now();
   ensureChat(key, { loaded: true, updatedAt: now });
   apply(cx, key, { type: "loaded", models: r.result.models ?? null, modes: r.result.modes ?? null });
-  S.local = [...S.local, { profile, sessionId, title: null, updatedAt: now, cwd: S.folder }];
+  S.local = [...S.local, { profile, sessionId, title: null, prompt: null, updatedAt: now, cwd: S.folder }];
   const ui = uiNow();
   if (ui.collapsed.includes(profile)) setUi(cx, { ...ui, collapsed: ui.collapsed.filter((p) => p !== profile) });
   const sel = await doSelect(cx, key);
@@ -888,6 +1159,8 @@ function flushQueue(cx, key) {
   const client = clients.get(chat.profile);
   if (!client?.open) return;
   const id = client.nextId();
+  // The turn log holds the chip as the prompt it becomes (a load mid-turn shows it again).
+  logTurn(key, { type: "prompt-sent", requestId: id, kind: "prompt", text: head.text, via: "queue" });
   apply(cx, key, { type: "queue-flush", requestId: id, chipId: head.id });
   prompt(cx, key, client, id, wire.promptBlocks(head.text), { key, kind: "prompt" }).then(undefined, () => {});
 }
@@ -925,9 +1198,15 @@ async function doSend(cx, key, { text, attachments = [] } = {}) {
     blocks = wire.promptBlocks(raw, files.map(absolute));
   }
   const id = b.client.nextId();
-  apply(cx, key, ...(kind === "prompt" ? [{ type: "queue-resumed" }] : []), { type: "prompt-sent", requestId: id, kind, text: raw, attachments: files.map((path) => ({ path })) });
-  const local = S.local.find((l) => `${l.profile}/${l.sessionId}` === key);
-  if (local && !local.title && kind === "prompt" && raw.trim()) local.title = raw.trim().split("\n")[0].slice(0, 60);
+  const sentEvent = { type: "prompt-sent", requestId: id, kind, text: raw, attachments: files.map((path) => ({ path })) };
+  logTurn(key, sentEvent);
+  apply(cx, key, ...(kind === "prompt" ? [{ type: "queue-resumed" }] : []), sentEvent);
+  // A new session's first prompt line stands in for its title until the agent's is known (listTitle).
+  const local = localOf(key);
+  if (local && !local.prompt && kind === "prompt" && raw.trim()) {
+    local.prompt = raw.trim().split("\n")[0].slice(0, 60);
+    fillTitle(cx, key);
+  }
   const r = await prompt(cx, key, b.client, id, blocks, { key, kind, resync: route.route === "command" && route.resync });
   return r.error ? r : { ok: true };
 }
@@ -1038,13 +1317,27 @@ async function doRetry(cx, profile) {
 
 // ---- start and stop ---------------------------------------------------------------------------------------------
 
-/** The service's second: approval deadlines (K5 rule 4), finished bridge terminals (every minute), the folder's files
- *  and the list while the screen shows, and a folder changed in settings.json by hand. */
+/** The profiles whose finished bridge terminals the reaper looks for: Hermes's profile folders, the profiles listed,
+ *  connected or shown with a bridge state, and those with a discovery file (hc lists a label value at a time). */
+async function reapBridges() {
+  const names = new Set(["default", ...S.profiles.map((p) => p.profile), ...clients.keys(), ...Object.keys(S.bridges)]);
+  for (const p of await disk.listProfiles(run, home())) names.add(p);
+  for (const p of await bridge.discoveredProfiles()) names.add(p);
+  return bridge.reap([...names].filter(isProfileName));
+}
+
+/** The service's second: approval deadlines (K5 rule 4), streams that stopped (no line, not even a ping, for
+ *  STALL_MS: reopened), finished bridge terminals (every minute), the folder's files and the list while the screen
+ *  shows, and a folder changed in settings.json by hand. */
 function tick(cx, n) {
   for (const chat of Object.values(S.sessions)) {
     if (Object.values(chat.permissions).some((p) => p.state === "pending")) apply(cx, chat.key, { type: "tick" });
   }
-  if (n % REAP_EVERY === 0) bridge.reap().then(undefined, (e) => log(`reap failed: ${errText(e)}`));
+  const now = Date.now();
+  for (const [profile, client] of [...clients]) {
+    if (client.open && client.lastLine > 0 && now - client.lastLine > STALL_MS) reopenStream(cx, profile, client, `no line for ${Math.round((now - client.lastLine) / 1000)} s`);
+  }
+  if (n % REAP_EVERY === 0) reapBridges().then(undefined, (e) => log(`reap failed: ${errText(e)}`));
   const shown = blockShown(SCREEN);
   if (shown && n % FILES_EVERY === 0) refreshFiles(cx);
   if (shown && n % LIST_EVERY === 0 && S.gate === "ok") refreshList(cx);
@@ -1063,6 +1356,7 @@ export function start(cx) {
   const me = { stopped: false };
   service = me;
   checked = null;
+  hermesBin = null;
   changed(cx);
   cx.spawn(
     async (tcx) => {
@@ -1091,12 +1385,16 @@ export function start(cx) {
   );
 }
 
-/** The status copy's close: the sockets close; the bridges keep running (they idle out, or exit with Herdr). */
+/** The status copy's close: the sockets close (where each stream stopped is kept for the next start of this build);
+ *  the bridges keep running (they idle out, or exit with Herdr). */
 export function stop() {
   if (!service) return;
   service.stopped = true;
   service = null;
-  for (const client of clients.values()) client.close();
+  for (const client of clients.values()) {
+    if (Number.isInteger(client.seq)) resume.set(client.profile, { pid: client.pid, seq: client.seq });
+    client.close();
+  }
   clients.clear();
   const off = {};
   for (const profile of Object.keys(S.bridges)) off[profile] = { state: "off" };

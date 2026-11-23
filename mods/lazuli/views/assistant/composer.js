@@ -1,8 +1,17 @@
 // The chat's composer (D19, D20, D28, K7, A7, A8): the queued chips (removable; paused after Stop, with Resume), the
 // attached files, the text, and a toolbar with @ and /, the key hint, Stop while a turn runs, and Send (Steer while
-// running). Enter sends, or steers while a turn runs; ⇧Enter is a new line; ⌥Enter queues. Typing @ lists the
-// folder's files (images excluded) and the pick becomes an attachment; / at the start lists the commands Hermes
-// advertised, without /steer and /queue. The lists hang above the box in the window's top layer.
+// running). Enter sends, or steers while a turn runs; ⇧Enter is a new line; ⌥Enter or ⌘Enter queues (⌘Enter because
+// the Korean input source swallows ⌥Enter). Typing @ lists the folder's files (images excluded) and the pick becomes
+// an attachment; / at the start lists the commands Hermes advertised, without /steer and /queue. The lists hang above
+// the box in the window's top layer.
+//
+// Its keys are key bindings, not key-down handlers. GPUI runs the focused textarea's own bindings (Enter: a new line;
+// Up, Down, Tab, Escape) before any key-down listener, and they keep the key, so a listener on the frame never hears
+// Enter. A binding whose context names the frame's key context above the textarea's, bound after base's own, wins at
+// the textarea: Enter, ⌥Enter and ⌘Enter in `lz_assistant_composer`, the open list's keys in `lz_assistant_list`
+// (the way H/mods/chat/main.js binds its composer's keys). ⇧Enter has no binding of ours and stays the textarea's new
+// line. With an input method composing (Korean), Enter first commits the syllable and then sends the whole text, so
+// nothing half-composed is sent or left behind.
 
 import { div } from "gpui-kit";
 import { h_flex, v_flex, TextareaState, Textarea, Popup, Button as BaseButton } from "gpui-base";
@@ -14,10 +23,53 @@ import { menuCommands } from "../../core/assistant-agents.js";
 
 const MENU_ROWS = 8;
 const stop = (_e, cx) => cx.stop_propagation();
+const log = (msg) => console.log(`[lazuli/assistant] ${msg}`);
+
+/** The composer's actions, and the key contexts its frame declares. */
+const ACT = Object.freeze({
+  send: "lz_assistant_send",
+  queue: "lz_assistant_queue",
+  up: "lz_assistant_list_up",
+  down: "lz_assistant_list_down",
+  take: "lz_assistant_list_take",
+  close: "lz_assistant_list_close",
+});
+const CTX = Object.freeze({ composer: "lz_assistant_composer", list: "lz_assistant_list" });
+
+// The keymap is the application's: bound once per runtime. The textarea's context is spelled three ways across base
+// versions, as the chat mod binds it.
+let bound = false;
+function bindKeys(cx) {
+  if (bound) return;
+  const keys = [];
+  for (const area of ["Input", "TextArea", "Textarea"]) {
+    const composer = `${CTX.composer} > ${area}`;
+    const list = `${CTX.list} > ${area}`;
+    keys.push(
+      { keystroke: "enter", action: ACT.send, context: composer },
+      { keystroke: "alt-enter", action: ACT.queue, context: composer },
+      { keystroke: "cmd-enter", action: ACT.queue, context: composer },
+      { keystroke: "up", action: ACT.up, context: list },
+      { keystroke: "down", action: ACT.down, context: list },
+      { keystroke: "tab", action: ACT.take, context: list },
+      { keystroke: "enter", action: ACT.take, context: list },
+      { keystroke: "alt-enter", action: ACT.queue, context: list },
+      { keystroke: "cmd-enter", action: ACT.queue, context: list },
+      { keystroke: "escape", action: ACT.close, context: list },
+    );
+  }
+  try {
+    cx.bind_keys(keys);
+    bound = true;
+  } catch (e) {
+    log(`composer keys not bound: ${e?.message ?? e}`);
+  }
+}
 
 export class Composer {
-  /** `view` is the chat view: submit(cx, how), stop(cx), unqueue(cx, id), resumeQueue(cx). Made in `init`. */
-  constructor(view) {
+  /** `view` is the chat view: submit(cx, how), stop(cx), unqueue(cx, id), resumeQueue(cx). Made in `init`, whose `cx`
+   *  binds the composer's keys. */
+  constructor(view, cx) {
     this.view = view;
     this.box = TextareaState.new({});
     this.box.set_auto_grow(1, 8);
@@ -32,6 +84,7 @@ export class Composer {
       this.read();
       cx.notify();
     });
+    bindKeys(cx);
   }
 
   value() {
@@ -113,34 +166,46 @@ export class Composer {
     this.read();
   }
 
-  /** The composer's keys, ahead of the textarea. True when one was taken. */
-  key(e, cx, chat, files) {
-    const k = e.keystroke;
-    if (this.menu) {
-      const rows = this.rows(chat, files);
-      if ((k === "down" || k === "up") && rows.length) {
-        this.sel = (this.sel + (k === "down" ? 1 : rows.length - 1)) % rows.length;
-        return true;
-      }
-      if ((k === "enter" || k === "tab") && rows.length) {
+  /** Runs one of the composer's actions (ACT) for `chat`; true when it did something. */
+  perform(action, cx, chat, files) {
+    const rows = this.menu ? this.rows(chat, files) : [];
+    if (action === ACT.up || action === ACT.down) {
+      if (!rows.length) return false;
+      this.sel = (this.sel + (action === ACT.down ? 1 : rows.length - 1)) % rows.length;
+      return true;
+    }
+    if (action === ACT.take) {
+      if (rows.length) {
         this.pick(rows[Math.min(this.sel, rows.length - 1)]);
         return true;
       }
-      if (k === "escape") {
-        this.closedFor = this.value();
-        this.menu = null;
-        return true;
-      }
+      action = ACT.send;
     }
-    if (k === "enter") {
-      this.view.submit(cx, "send");
+    if (action === ACT.close) {
+      if (!this.menu) return false;
+      this.closedFor = this.value();
+      this.menu = null;
       return true;
     }
-    if (k === "alt-enter") {
-      this.view.submit(cx, "queue");
+    if (action === ACT.send || action === ACT.queue) {
+      this.view.submit(cx, action === ACT.queue ? "queue" : "send");
       return true;
     }
     return false;
+  }
+
+  /** The `lazuli.key:<keystroke>` test hook's way in: the keystroke as the bindings read it. True when one was taken. */
+  key(e, cx, chat, files) {
+    const list = this.listOpen();
+    const action = list
+      ? { up: ACT.up, down: ACT.down, tab: ACT.take, enter: ACT.take, escape: ACT.close, "alt-enter": ACT.queue, "cmd-enter": ACT.queue }[e.keystroke]
+      : { enter: ACT.send, "alt-enter": ACT.queue, "cmd-enter": ACT.queue }[e.keystroke];
+    return action ? this.perform(action, cx, chat, files) : false;
+  }
+
+  /** Whether the @ or / list is open (its keys then go to the list; Enter with no rows sends). */
+  listOpen() {
+    return Boolean(this.menu);
   }
 
   /** The composer for `chat`. `running`: a turn runs; `offline`: the bridge is down (sending is off). */
@@ -289,21 +354,29 @@ export class Composer {
       .when(offline, (e) => e.opacity(0.6))
       .role("group")
       .accessibility_label(t("assistant.composer.label"))
-      .on_key_down((e, cx) => {
-        if (preview || !this.key(e, cx, chat, files)) return;
-        cx.stop_propagation();
-        cx.notify();
-      })
       .on_mouse_down("left", (_e, cx) => {
         this.box.focus();
         cx.stop_propagation();
       })
       .children(rows);
     const list = this.menu && !preview ? this.listElement(chat, files) : null;
+    // The key context sits outside the Popup (an ancestor of the textarea either way), with the actions it binds.
+    const act = (action) => (_e, cx) => {
+      if (preview || !this.perform(action, cx, chat, files)) return;
+      cx.stop_propagation();
+      cx.notify();
+    };
     return div()
       .flex_none()
       .px(12)
       .pb(12)
+      .key_context(this.listOpen() ? CTX.list : CTX.composer)
+      .on_action(ACT.send, act(ACT.send))
+      .on_action(ACT.queue, act(ACT.queue))
+      .on_action(ACT.up, act(ACT.up))
+      .on_action(ACT.down, act(ACT.down))
+      .on_action(ACT.take, act(ACT.take))
+      .on_action(ACT.close, act(ACT.close))
       .child(Popup.new("ac-composer-menu", frame).w_full().anchor("bottom_left").when(Boolean(list), (e) => e.content(list)));
   }
 

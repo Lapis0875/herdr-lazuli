@@ -87,6 +87,9 @@ export default {
   "assistant.event.busy": "Try again once the response ends",
   "assistant.event.gap": "Some updates were missed; the chat reloads when the response ends",
   "assistant.event.other": "Note from Hermes",
+  "assistant.event.noReply": "Hermes ended the turn without a reply; see the bridge log",
+  "assistant.event.showAll": "Show all",
+  "assistant.event.showLess": "Show less",
 
   // Approval card (D16, D29).
   "assistant.approval.title": "Needs your permission",
@@ -108,14 +111,14 @@ export default {
   // Composer (D19, D20, D28).
   "assistant.composer.label": "Message",
   "assistant.composer.placeholder": "Message Hermes… @ for files · / for commands",
-  "assistant.composer.placeholderRunning": "Steer the response, or ⌥Enter to queue a message…",
+  "assistant.composer.placeholderRunning": "Steer the response, or ⌥Enter / ⌘Enter to queue a message…",
   "assistant.composer.send": "Send",
   "assistant.composer.steer": "Send steer",
   "assistant.composer.stop": "Stop",
   "assistant.composer.attach": "Attach a file",
   "assistant.composer.commands": "Hermes commands",
   "assistant.composer.hintIdle": "Enter to send · ⇧Enter for a new line",
-  "assistant.composer.hintRunning": "Enter to steer · ⌥Enter to queue",
+  "assistant.composer.hintRunning": "Enter to steer · ⌥Enter / ⌘Enter to queue",
   "assistant.composer.offline": "You can send once Hermes reconnects",
   "assistant.composer.removeAttachment": "Remove {name}",
   "assistant.queue.label": "Queued {count}",

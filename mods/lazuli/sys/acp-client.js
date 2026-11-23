@@ -9,6 +9,13 @@
 // LOST_AFTER_TIMEOUTS such failures in a row or at its end. No timer runs per line or per read (Herdr allows 1,024
 // outstanding host tasks per runtime, S8).
 //
+// Herdr's QuickJS scheduler drains promise jobs with a cap per entry point ("stopped draining promise jobs after …: a
+// continuation is queueing work faster than it completes"); lines read in one go (a 1 MiB read holds thousands: a
+// `session/load` of 2,100 tool calls is 4,200 records) handled one after another without a host call would exceed it,
+// and the stream then stopped for good. The read loop therefore gives the host a turn (`cx.sleep(1)`) every YIELD_LINES
+// lines or YIELD_MS of work. `lastLine` is when the loop last handled a line (pings included): the service reopens a
+// stream that stops (sys/assistant.js).
+//
 // Callers check `checking()` before using it: `net` throws under `herdr-app check` (S4).
 
 import net from "net";
@@ -23,6 +30,9 @@ const MAX_RECORD = wire.MAX_LINE_BYTES + 65536;
 const SEND_REPLY_MS = 10000;
 /** A shutdown request's reply. */
 const SHUTDOWN_REPLY_MS = 5000;
+/** The read loop gives the host a turn after this many lines, or after this much work, whichever comes first. */
+const YIELD_LINES = 64;
+const YIELD_MS = 20;
 
 const TIMEOUT = Object.freeze({ timeout: true });
 const READ_TIMEOUT = /os error 35|temporarily unavailable|timed out/i;
@@ -138,7 +148,7 @@ function sendError(code) {
  * The client of one bridge.
  * - `onRecord(rec)`: every agent message the stream delivers that is not an answer awaited through `request()`:
  *   `{seq, at, msg, c}` with `c` = core/acp-wire.js classify(msg).
- * - `onEvent(ev)`: the bridge's events past `hello` and `ping` (`gap`, `dropped`, `agent-exit`, `bye`).
+ * - `onEvent(ev)`: the bridge's events past `hello` and `ping` (`gap`, `dropped`, `agent-error`, `agent-exit`, `bye`).
  * - `onEnd({reason, bye, agentExit, detail})`: the stream ended once: `reason` is `replaced` (a newer client took it),
  *   `bye` (the bridge said why in `bye`), `eof` or `lost` (read failures). Pending requests resolve `{error}` first.
  */
@@ -156,6 +166,8 @@ export class AcpClient {
     this.sock = null;
     this.hello = null;
     this.seq = null; // the last record seq seen
+    this.replayTo = null; // the seq a reopened stream's replay ends at, until handled (caughtUp)
+    this.lastLine = 0; // when the read loop last handled a line (Date.now())
     this.open = false;
     this.ended = false;
     this.bye = null;
@@ -166,13 +178,14 @@ export class AcpClient {
     return this.d.pid;
   }
 
-  /** Opens the stream (`since`: the last seq held, or null for live records only). Resolves `{ok, hello}` or
-   *  `{error}` (`auth`, `disconnected`, `bridge-timeout` when no hello comes within HELLO_MS). The read loop then runs
-   *  in a task no view owns. */
-  async connect(cx, since = null) {
+  /** Opens the stream (`since`: the last seq held, or null for live records only; with null, `turns` asks also for the
+   *  records of the turns still running, K3). Resolves `{ok, hello}` or `{error}` (`auth`, `disconnected`,
+   *  `bridge-timeout` when no hello comes within HELLO_MS). `ready(hello)` runs before the first record is handled (a
+   *  running turn's records follow its hello at once); the read loop then runs in a task no view owns. */
+  async connect(cx, since = null, { turns = false, ready = null } = {}) {
     let sock;
     try {
-      sock = await openLine(this.d.port, wire.streamLine(this.d.token, since, "lazuli"));
+      sock = await openLine(this.d.port, wire.streamLine(this.d.token, since, "lazuli", turns));
     } catch (e) {
       return { error: "disconnected", detail: errText(e) };
     }
@@ -194,14 +207,46 @@ export class AcpClient {
     this.sock = sock;
     this.hello = first;
     this.seq = Number.isInteger(first.seq) ? first.seq : this.seq;
+    // A stream opened `since` an older seq replays up to hello's seq first (caughtUp()).
+    this.replayTo = since !== null && Number.isInteger(first.seq) && first.seq > since ? first.seq : null;
     this.open = true;
+    if (ready) {
+      try {
+        ready(first);
+      } catch (e) {
+        log(`${this.profile}: hello failed: ${errText(e)}`);
+      }
+    }
     cx.spawn((tcx) => this.loop(tcx, reader), { owner: null });
     return { ok: true, hello: first };
   }
 
+  /** Resolves once the records the bridge replays to a stream opened `since` a seq are handled (or at once when there
+   *  are none), or after `ms`: a load sent then is not mixed with the replay of an earlier one. */
+  async caughtUp(cx, ms) {
+    const end = Date.now() + ms;
+    while (this.open && this.replayTo !== null && Date.now() < end) await cx.sleep(50);
+  }
+
+  /** Reads and handles the stream's lines until it ends. Between host calls it handles at most YIELD_LINES lines or
+   *  YIELD_MS of work, then sleeps 1 ms: a long run of buffered lines in one go exceeds the scheduler's promise-job
+   *  drain and stops the loop for good (see the top of this file). */
   async loop(cx, reader) {
     let timeouts = 0;
+    let lines = 0;
+    let since = Date.now();
+    this.lastLine = since;
     for (;;) {
+      if (lines >= YIELD_LINES || Date.now() - since >= YIELD_MS) {
+        try {
+          await cx.sleep(1);
+        } catch {
+          return; // the build that started this loop was replaced
+        }
+        if (this.ended) return;
+        lines = 0;
+        since = Date.now();
+      }
       let v;
       try {
         v = await reader.next();
@@ -218,6 +263,8 @@ export class AcpClient {
         await this.end({ reason: this.bye ? "bye" : "eof" }, cx);
         return;
       }
+      lines++;
+      this.lastLine = Date.now();
       let replaced = false;
       try {
         replaced = this.handle(v, cx) === "replaced";
@@ -234,7 +281,8 @@ export class AcpClient {
   handle(v, cx) {
     const r = wire.parseRecord(v);
     if (r.kind === "agent") {
-      this.seq = r.seq;
+      if (this.seq === null || r.seq > this.seq) this.seq = r.seq; // a running turn's records replay below hello's seq
+      if (this.replayTo !== null && r.seq >= this.replayTo) this.replayTo = null;
       const c = wire.classify(r.msg);
       if ((c.kind === "result" || c.kind === "error") && this.pending.has(String(c.id))) {
         const resolve = this.pending.get(String(c.id));
@@ -246,7 +294,8 @@ export class AcpClient {
       return;
     }
     if (r.kind !== "event" || r.ev === "ping" || r.ev === "hello") return;
-    if (Number.isInteger(r.seq)) this.seq = r.seq;
+    if (Number.isInteger(r.seq) && (this.seq === null || r.seq > this.seq)) this.seq = r.seq;
+    if (Number.isInteger(r.seq) && this.replayTo !== null && r.seq >= this.replayTo) this.replayTo = null;
     if (r.ev === "replaced") return "replaced";
     if (r.ev === "bye") this.bye = typeof r.reason === "string" ? r.reason : "?";
     if (r.ev === "agent-exit") this.agentExit = { code: r.code ?? null, signal: r.signal ?? null };

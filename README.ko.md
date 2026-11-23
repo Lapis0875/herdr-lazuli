@@ -37,7 +37,7 @@ lazuli는 [cockpit](https://github.com/quaresc/cockpit)에서 생성한 포크�
   수정, 삭제를 할 수 있습니다.
 - **비서** (Assistant). 폴더 하나에서 Hermes Agent와 대화합니다. 왼쪽에는 Hermes 프로필별로 묶은 대화 목록, 가운데에는
   Markdown으로 흘러나오는 답, 카드로 보이는 도구 호출(파일 수정은 diff), 허가 카드, 중지, Enter로 진행 중인 답의 방향
-  바꾸기, ⌥Enter로 다음 메시지 대기열에 넣기가 있고, 오른쪽에는 폴더의 파일과 대화의 모델·컨텍스트·토큰·비용이
+  바꾸기, ⌥Enter나 ⌘Enter로 다음 메시지 대기열에 넣기가 있고, 오른쪽에는 폴더의 파일과 대화의 모델·컨텍스트·토큰·비용이
   나옵니다([비서](#비서)).
 
 **사이드 패널** (⌘1~⌘4). 오른쪽 끝의 액티비티 레일은 가운데에 어떤 화면이 있든 늘 보입니다.
@@ -275,7 +275,7 @@ lazuli 설정 화면(사이드바 아래 → 설정, 또는 팔레트)은 Herdr 
 | `pins` | `["inbox", "todo", "routines", "assistant"]` | 사이드바에 고정한 앱과 그 순서. 비서가 생기기 전의 설정에는 `"assistant"`가 한 번 붙습니다 |
 | `pdf.zoom` | `"fit"` | PDF를 열 때의 확대: `"fit"`, `50`, `75`, `100`, `125`, `150`, `200` |
 | `editor` | `"code"` | "편집기에서 열기"에 쓰는 외부 편집기 명령(`code`, `cursor`, `zed` 등). 원격 폴더는 `--folder-uri vscode-remote://ssh-remote+<host><path>`로 엽니다 |
-| `assistant.folder` | `null` | 비서가 일하는 이 Mac의 폴더. 정하지 않았으면 화면이 폴더를 고르라고 합니다 |
+| `assistant.folder` | `null` | 비서가 일하는 이 Mac의 폴더. 정하지 않았으면 화면이 폴더를 고르라고 합니다. 폴더 선택 창이 `/private` 아래로 알려 주는 폴더(`/tmp/x`를 `/private/tmp/x`로)는 짧은 형태로 저장합니다 |
 
 ## 비서
 
@@ -294,21 +294,27 @@ lazuli 설정 화면(사이드바 아래 → 설정, 또는 팔레트)은 Herdr 
   "Nod · Planned"는 맨 아래에 비활성으로 나옵니다. "+"는 그 프로필로 새 대화를 시작하고, 대화 행은 기록과 함께 열거나
   포크합니다. 고른 대화와 접은 묶음은 기억합니다.
 - **입력창.** Enter는 보내기, ⇧Enter는 줄바꿈, `@`는 폴더의 파일 첨부(그림 제외), `/`는 Hermes 명령 목록입니다. Hermes가
-  답하는 동안 Enter는 진행 중인 답의 방향을 바꾸고(Hermes의 `/steer`), ⌥Enter는 답이 끝나면 보낼 칩으로 메시지를
-  남깁니다. 중지는 답을 끝내고 칩을 멈춰 둡니다.
+  답하는 동안 Enter는 진행 중인 답의 방향을 바꾸고(Hermes의 `/steer`), ⌥Enter나 ⌘Enter는 답이 끝나면 보낼 칩으로 메시지를
+  남깁니다. ⌘Enter가 있는 것은 한국어 입력기가 ⌥Enter를 가져가기 때문입니다. 한국어로 입력할 때 Enter는 조합 중인 글자까지
+  포함해 전체를 보냅니다. 중지는 답을 끝내고 칩을 멈춰 둡니다.
 - **허가.** Hermes가 무언가를 실행해도 되는지 물으면 카드에 한 번 허용, 항상 허용, 거부가 나오고, Hermes의 다른 선택지는
-  더 보기에 있으며, Hermes가 기다리는 60초를 셉니다.
+  더 보기에 있으며, Hermes가 기다리는 60초를 셉니다. 그 뒤의 답은 늦었다며 거부됩니다.
 - **모델.** 대화 머리에 그 대화의 모델이 나오고, 그 대화에서만 바꿉니다. Hermes 자체의 기본 모델은 그대로입니다.
 - **오른쪽 열.** 대화의 모델, 모드, 사용한 컨텍스트, 마지막 답의 토큰, Hermes가 기록한 합계와 비용이 나오고, 그 아래에
   폴더의 파일이 있습니다. 파일을 누르면 작업 화면에서 열리고, 첨부를 누르면 메시지에 붙습니다.
 - **알림.** 비서가 앞에 없을 때 허가 요청, 끝난 답, 실패한 답을 알리고, 알림을 누르면 그 대화가 열립니다.
+- **Hermes가 실패할 때.** Hermes는 답하지 못한 응답(제공자가 거부하는 모델, 만료된 로그인)을 메시지 없이 끝내고 이유를
+  오류 출력에 씁니다. 그러면 대화에 Hermes의 오류 줄을 담은 실패 안내가 나오고(긴 내용은 모두 보기로 펼침), 그런 줄이
+  없으면 Hermes가 답 없이 응답을 끝냈다고 알립니다. 자세한 내용은 브리지 로그
+  `~/.cache/lazuli/assistant/<home8>/<profile>.log`에 있습니다.
 
 동작 방식: 쓰는 Hermes 프로필마다 lazuli가 작은 브리지 `mods/lazuli/bin/acp-bridge.mjs`를 `hc run --bg`로 폴더에서
 시작합니다. 브리지는 `hermes -p <profile> acp`를 실행하고, 127.0.0.1로 lazuli와 통신하며, discovery 파일의 토큰을 가진
 클라이언트에만 답합니다. 파일은 `~/.cache/lazuli/assistant/<home8>/`에 있습니다(폴더 0700, `<profile>.json`과
 `<profile>.log` 0600, `<home8>`은 Herdr 앱 홈을 가리킴). 로그에는 메서드 이름과 크기만 남고, 토큰이나 내가 쓴 내용은
-남지 않습니다. 브리지는 다른 화면을 보거나 모드를 다시 불러와도 계속 돌고, 실행 중이거나 나를 기다리는 것 없이 30분이
-지나거나 Herdr가 끝나면 종료합니다.
+남지 않습니다(프롬프트를 옮겨 적은 Hermes의 줄은 잘라 냅니다). 브리지는 다른 화면을 보거나 모드를 다시 불러와도 계속
+돌고, 실행 중이거나 나를 기다리는 것 없이 30분이 지나거나 Herdr가 끝나면 종료합니다. 다시 불러올 때는 같은 `hermes`를
+실행하는 브리지만 다시 쓰고, 진행 중이던 응답은 한 번, 온전히 보입니다. 끝난 브리지의 터미널은 lazuli가 1분마다 지웁니다.
 
 ## 실행하고 읽고 쓰는 것
 
@@ -366,11 +372,12 @@ Review의 `gh`, 세션 찾기)이 그 머신에서 실행됩니다.
   --no-default-browser-check`)와 `ps -o command= -p <pid>`를 실행합니다.
 - 비서: `hermes`와 `node`를 찾는 `/bin/sh -c`의 `command -v`와 로그인 셸의 `command -v`, `tail`, `hermes acp --check`(시작할
   때마다 한 번), `/bin/sh -c 'echo "$PPID"'`(Herdr의 pid), `/usr/bin/sqlite3 -readonly -json`(Hermes `state.db`에서 읽는
-  대화 목록), `/usr/bin/find`(Hermes 프로필과 @에 쓰는 폴더 파일), `/bin/test`, `/bin/ls`, `/bin/kill -0`,
+  대화 목록), `/usr/bin/find`(Hermes 프로필과 @에 쓰는 폴더 파일), `/bin/sh -c`의 `cd -P`와 `pwd -P`(폴더의 실제 위치:
+  `/tmp/x`에서 만든 대화는 `/private/tmp/x`의 것), `/bin/test`, `/bin/ls`, `/bin/kill -0`,
   `/bin/rm -f`(낡은 discovery 파일), `/bin/ps -o command=`와 `kill -s KILL`(죽은 브리지가 남긴 에이전트에만, 그 프로필의
-  `hermes … acp`임을 `ps`로 확인한 뒤), 그리고 `hc run --bg`, `hc kill`, `hc rm`(브리지). node로 도는 브리지
-  `bin/acp-bridge.mjs`는 `hermes -p <profile> acp`를 자기 프로세스 그룹에서, 폴더 안에서, `run-agent.mjs`와 같은 `PATH`
-  추가로 실행합니다.
+  `hermes … acp`임을 `ps`로 확인한 뒤), 그리고 `hc run --bg`, `hc kill`, `hc rm`, `hc ls --all --json`(브리지와 끝난 브리지
+  터미널). node로 도는 브리지 `bin/acp-bridge.mjs`는 `hermes -p <profile> acp`를 자기 프로세스 그룹에서, 폴더 안에서,
+  `run-agent.mjs`와 같은 `PATH` 추가로 실행합니다.
 
 **읽는 것** (자기 폴더 밖)
 
@@ -482,7 +489,8 @@ macOS와 Tailscale만 지원하며, [Deno](https://deno.com) 2.9 이상이 필�
   있습니다. 그러면 목록은 Hermes ACP의 `session/list`로 가져오고, 토큰과 비용은 없습니다. Hermes가 압축한 대화의 합계는
   일부만 셀 수 있습니다. 파일 수정은 대화가 진행 중일 때만 diff로 보입니다(Hermes의 기록 재생에는 diff가 없습니다).
   그림은 첨부할 수 없고, 대화 보관·삭제·이름 바꾸기와 Hermes의 자동 허용 모드도 없습니다. 폴더는 한 번에 하나, 이
-  Mac에 있는 것만 됩니다.
+  Mac에 있는 것만 됩니다. 실패한 답의 이유는 Hermes가 그것을 `❌` 줄이나 `[ERROR]` 기록으로 남길 때만 보이고, 그렇지 않으면
+  대화에는 답 없이 응답이 끝났다고만 나옵니다.
 - **Files 패널:** 폴더마다 500개, 모두 합쳐 5,000개까지 보여 줍니다. `/usr/bin/trash`가 없으면 삭제는 되돌릴 수 없고,
   확인 창에도 그렇게 나옵니다. **빠르게 열기**는 파일을 20,000개까지(git 밖에서는 `find`로 깊이 6까지) 모아 가장 잘 맞는
   50개를 보여 줍니다.

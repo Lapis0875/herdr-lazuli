@@ -150,6 +150,22 @@ export function promptText(blocks) {
   return blocks.filter((b) => isObj(b) && b.type === "text" && typeof b.text === "string").map((b) => b.text).join("\n");
 }
 
+/** The local paths a prompt's `resource_link` blocks name (`file://` URIs, as promptBlocks makes them). */
+export function promptPaths(blocks) {
+  if (!Array.isArray(blocks)) return [];
+  const out = [];
+  for (const b of blocks) {
+    if (!isObj(b) || b.type !== "resource_link" || typeof b.uri !== "string" || !b.uri.startsWith("file:///")) continue;
+    try {
+      const path = decodeURIComponent(b.uri.slice("file://".length));
+      if (!path.includes("\0")) out.push(path);
+    } catch {
+      // Not a URI promptBlocks made.
+    }
+  }
+  return out;
+}
+
 // Classification.
 
 /**
@@ -187,8 +203,14 @@ export function classify(msg) {
 
 // The bridge's line protocol.
 
-/** First line of a stream connection. `since`: the last record seq the client holds, or null for live only. */
-export const streamLine = (token, since = null, client = null) => ({ op: "stream", token, since: Number.isInteger(since) && since >= 0 ? since : null, client });
+/** First line of a stream connection. `since`: the last record seq the client holds, or null for live only. With
+ *  `since` null, `turns` asks also for the records of the turns still running (each running session's updates since its
+ *  oldest running prompt, outside its session loads), so a client that starts over sees those turns whole. */
+export const streamLine = (token, since = null, client = null, turns = false) => {
+  const line = { op: "stream", token, since: Number.isInteger(since) && since >= 0 ? since : null, client };
+  if (turns === true && line.since === null) line.turns = true;
+  return line;
+};
 /** First line of a send connection. */
 export const sendLine = (token, msg) => ({ op: "send", token, msg });
 /** First line of a shutdown connection. */
@@ -215,7 +237,8 @@ export function writeChunks(line, max = MAX_WRITE_BYTES) {
 /**
  * What one line the bridge wrote is, parsed:
  * - `{kind:"agent", seq, at, msg}`: an agent message, in the order the agent wrote it;
- * - `{kind:"event", ev, seq?, at?, …}`: `hello`, `ping`, `gap`, `replaced`, `dropped`, `agent-exit`, `bye`;
+ * - `{kind:"event", ev, seq?, at?, …}`: `hello`, `ping`, `gap`, `replaced`, `dropped`, `agent-exit`, `bye`,
+ *   `agent-error {text}` (an error line the agent wrote to stderr; it has a seq and is replayed like a record);
  * - `{kind:"reply", ok, error}`: the answer to a send, shutdown or refused first line;
  * - `{kind:"invalid"}`.
  */
@@ -233,9 +256,12 @@ export function parseRecord(value) {
 const TOKEN_RE = /^[0-9a-f]{64}$/;
 const posInt = (v) => Number.isInteger(v) && v > 0;
 
+const isArgv = (v) => Array.isArray(v) && v.length > 0 && v.every((s) => typeof s === "string");
+
 /** A discovery file's text, checked:
- *  `{state:"ready", pid, agentPid, port, token, profile, cwd, herdrPid, startedAt}`,
- *  `{state:"failed", pid, code, detail}` (a start that failed), or `{state:"invalid"}`. */
+ *  `{state:"ready", pid, agentPid, port, token, profile, cwd, herdrPid, startedAt, argv}` (`argv`: the agent's argv the
+ *  bridge runs, null in a file that has none), `{state:"failed", pid, code, detail}` (a start that failed), or
+ *  `{state:"invalid"}`. */
 export function parseDiscovery(text) {
   let d;
   try {
@@ -263,40 +289,49 @@ export function parseDiscovery(text) {
     Number.isFinite(d.startedAt);
   if (!ok) return { state: "invalid" };
   const { pid, agentPid, port, token, profile, cwd, herdrPid, startedAt } = d;
-  return { state: "ready", pid, agentPid, port, token, profile, cwd, herdrPid, startedAt };
+  return { state: "ready", pid, agentPid, port, token, profile, cwd, herdrPid, startedAt, argv: isArgv(d.argv) ? [...d.argv] : null };
 }
 
-/** Whether a ready discovery belongs to this profile, folder and Herdr (K3 reuse rule; the caller also
- *  checks that its pid is alive and that `hello` arrives within HELLO_MS). */
-export function discoveryMatches(d, { profile, cwd, herdrPid }) {
-  return isObj(d) && d.state === "ready" && d.profile === profile && d.cwd === cwd && d.herdrPid === herdrPid;
+/** Whether a ready discovery belongs to this profile, folder and Herdr and runs this agent argv (K3 reuse rule: a bridge
+ *  started with debugAgent is not reused for Hermes, nor one of another hermes path; the caller also checks that its
+ *  pid is alive and that `hello` arrives within HELLO_MS). */
+export function discoveryMatches(d, { profile, cwd, herdrPid, argv }) {
+  if (!isObj(d) || d.state !== "ready" || d.profile !== profile || d.cwd !== cwd || d.herdrPid !== herdrPid) return false;
+  return isArgv(argv) && isArgv(d.argv) && d.argv.length === argv.length && d.argv.every((s, i) => s === argv[i]);
 }
 
 // The tracker.
 
 /**
  * In-flight prompts, pending agent requests and the idle rule, fed with every message each way:
- * - `fromClient(msg, now)`: a message the client sent the agent. A `session/prompt` request is in flight
- *   until its answer; an answer to an agent request ends that request.
- * - `fromAgent(msg, now, seq)`: a message from the agent. An answer ends its prompt; when the last prompt of
+ * - `fromClient(msg, now, seq)`: a message the client sent the agent; `seq` is the last record seq when it went. A
+ *   `session/prompt` request is in flight until its answer (kept with that seq and its prompt blocks, for a client that
+ *   starts over mid-turn); a `session/load` is open until its answer; an answer to an agent request ends that request.
+ * - `fromAgent(msg, now, seq)`: a message from the agent. An answer ends its prompt or load; when the last prompt of
  *   a session ends, that session's agent requests end too (Hermes stops waiting for a permission after
  *   60 s without saying so). An agent request is pending until answered or cancelled (`$/cancel_request`).
+ * - `turnRecord(c)`: whether an agent message (classified) belongs to a running turn: a session update of a session
+ *   with a prompt in flight and no load open (a load's updates replay its history).
  * - `idleExpired(now, idleMs)`: no message either way for idleMs, nothing in flight, nothing pending
  *   (D12; pings and stream connects are not messages).
  */
 export function createTracker(now = 0) {
-  const running = new Map(); // idKey → {id, sessionId, at}
+  const running = new Map(); // idKey → {id, sessionId, at, seq, prompt}
   const pending = new Map(); // idKey → {id, method, sessionId, at, seq, msg}
+  const loads = new Map(); // idKey → sessionId
   let last = Number.isFinite(now) ? now : 0;
   const touch = (t) => {
     if (Number.isFinite(t) && t > last) last = t;
   };
   const sessionRunning = (sessionId) => [...running.values()].some((r) => r.sessionId === sessionId);
   return {
-    fromClient(msg, t) {
+    fromClient(msg, t, seq = null) {
       touch(t);
       const c = classify(msg);
-      if (c.kind === "request" && c.method === METHOD.sessionPrompt) running.set(idKey(c.id), { id: c.id, sessionId: c.sessionId, at: t });
+      if (c.kind === "request" && c.method === METHOD.sessionPrompt) {
+        const prompt = Array.isArray(c.params?.prompt) ? c.params.prompt : [];
+        running.set(idKey(c.id), { id: c.id, sessionId: c.sessionId, at: t, seq: Number.isInteger(seq) ? seq : null, prompt });
+      } else if (c.kind === "request" && c.method === METHOD.sessionLoad && c.sessionId !== null) loads.set(idKey(c.id), c.sessionId);
       else if (c.kind === "result" || c.kind === "error") pending.delete(idKey(c.id));
       return c;
     },
@@ -305,6 +340,7 @@ export function createTracker(now = 0) {
       const c = classify(msg);
       if (c.kind === "result" || c.kind === "error") {
         const k = idKey(c.id);
+        loads.delete(k);
         const r = running.get(k);
         if (r) {
           running.delete(k);
@@ -318,12 +354,23 @@ export function createTracker(now = 0) {
       }
       return c;
     },
+    turnRecord(c) {
+      if (c?.kind !== "update" || c.sessionId === null || !sessionRunning(c.sessionId)) return false;
+      for (const s of loads.values()) if (s === c.sessionId) return false;
+      return true;
+    },
     /** Something happened that counts as activity without being a message. */
     touch,
-    /** In-flight prompts `[{id, sessionId, at}]`, oldest first. */
+    /** In-flight prompts `[{id, sessionId, at, seq, prompt}]`, oldest first. */
     running: () => [...running.values()],
     /** Sessions with a prompt in flight, each once. */
     runningSessions: () => [...new Set([...running.values()].map((r) => r.sessionId).filter((s) => s !== null))],
+    /** Each running session's turn start: the seq its oldest running prompt went at (null when unknown). */
+    turnStarts() {
+      const out = new Map();
+      for (const r of running.values()) if (r.sessionId !== null && !out.has(r.sessionId)) out.set(r.sessionId, r.seq);
+      return out;
+    },
     /** Pending agent requests `[{id, method, sessionId, at, seq, msg}]`, oldest first. */
     pending: () => [...pending.values()],
     busy: () => running.size > 0 || pending.size > 0,
@@ -335,6 +382,7 @@ export function createTracker(now = 0) {
     clear() {
       running.clear();
       pending.clear();
+      loads.clear();
     },
   };
 }
@@ -343,6 +391,8 @@ export function createTracker(now = 0) {
 
 const RECORD_START = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/;
 const PROMPT_LINE = /^(.*?\bPrompt on session (\S+): )(.*)$/;
+// agent/turn_context.py:213-217: `conversation turn: session=… msg=%r`, the first 80 characters of the prompt.
+const TURN_LINE = /^(.*?\bconversation turn: .*?\bmsg=)(.*)$/;
 const PREVIEW_CHARS = 100;
 const codePoints = (s) => Array.from(s).length;
 
@@ -351,7 +401,8 @@ const codePoints = (s) => Array.from(s).length;
  * (`acp_adapter/server.py:1383`, `Prompt on session %s: %s`; S9). Such a line keeps its prefix and session id,
  * and its text becomes `[<n> chars]`, n from `promptLength(sessionId)` (the prompt the bridge forwarded) or
  * `[redacted]` when unknown. The preview's own newlines continue it on the next lines: those are dropped while
- * they fit in the 100 characters and do not start a new log record.
+ * they fit in the 100 characters and do not start a new log record. The turn line that follows it
+ * (`conversation turn: … msg='<first 80 characters>'`, one line) keeps everything before `msg=` and `[redacted]`.
  * `push(text)` takes stderr text in any pieces and returns the complete lines, filtered; `end()` the rest.
  */
 export function createStderrFilter({ promptLength = () => null } = {}) {
@@ -364,7 +415,10 @@ export function createStderrFilter({ promptLength = () => null } = {}) {
     }
     budget = 0;
     const m = PROMPT_LINE.exec(line);
-    if (!m) return line;
+    if (!m) {
+      const turn = TURN_LINE.exec(line);
+      return turn ? `${turn[1]}[redacted]` : line;
+    }
     budget = Math.max(0, PREVIEW_CHARS - codePoints(m[3]));
     const n = promptLength(m[2]);
     return `${m[1]}${Number.isInteger(n) ? `[${n} chars]` : "[redacted]"}`;
@@ -383,4 +437,27 @@ export function createStderrFilter({ promptLength = () => null } = {}) {
       return last === "" ? [] : run([last]);
     },
   };
+}
+
+/** The longest `agent-error` text, in characters. */
+export const AGENT_ERROR_MAX = 1000;
+// A log record at ERROR or CRITICAL (`2026-11-23 18:09:33 [ERROR] agent.conversation_loop: <message>`).
+const ERROR_RECORD = /^(?:\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?\s+)?\[(?:ERROR|CRITICAL)\]\s+(?:[A-Za-z_][\w.]*:\s+)?(.*)$/;
+// Hermes's own error lines (agent/conversation_loop.py: `{log_prefix}❌ …`, log_prefix like `[B1:P2] `).
+const ERROR_MARK = /^(?:\[[^\]\n]{0,40}\]\s*)?\u274C\uFE0F?\s*(.*)$/;
+
+/**
+ * The text of an error line the agent wrote to stderr, or null: Hermes's `❌ …` lines and its `[ERROR]` (or
+ * `[CRITICAL]`) log records, which are all a failed turn leaves (it ends with `end_turn` and no message,
+ * `acp_adapter/server.py:1557-1562`, 1593-1672). Takes a line the stderr filter returned; a prompt-preview line is
+ * never one. The text is cut to AGENT_ERROR_MAX characters.
+ */
+export function agentErrorText(line) {
+  if (typeof line !== "string") return null;
+  const s = line.trim();
+  if (s === "" || PROMPT_LINE.test(s) || TURN_LINE.test(s)) return null;
+  const m = ERROR_RECORD.exec(s) ?? ERROR_MARK.exec(s);
+  const text = m ? m[1].trim() : "";
+  if (text === "") return null;
+  return text.length > AGENT_ERROR_MAX ? `${text.slice(0, AGENT_ERROR_MAX)}…` : text;
 }

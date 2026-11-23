@@ -5,10 +5,13 @@
 //     --log <abs>.log --herdr-pid <pid> --idle-min 30 --agent -- <agent argv…>
 // It runs the agent (`<abs hermes> -p <profile> acp`) in a process group of its own, sends `initialize`
 // once and keeps the answer, then serves line JSON on 127.0.0.1 to clients holding the token from the
-// discovery file (0600, in a 0700 folder; written only after `initialize` succeeded):
-// - `{op:"stream", token, since, client}`: `hello`, the records after `since` (or `gap`), then every agent
-//   line as `{seq, at, msg}`; events `ping` (after 10 s of silence), `replaced`, `dropped`, `agent-exit`,
-//   `bye`. One subscriber: the newest wins.
+// discovery file (0600, in a 0700 folder; written only after `initialize` succeeded, with the agent argv so the mod
+// reuses only a bridge that runs the agent it would start):
+// - `{op:"stream", token, since, client, turns?}`: `hello` (with each running prompt's start seq and blocks), the
+//   records after `since` (or `gap`; with `since` null and `turns`, the records of the turns still running instead),
+//   then every agent line as `{seq, at, msg}`; events `ping` (after 10 s of silence), `replaced`, `dropped`,
+//   `agent-error {text}` (a `❌`/`[ERROR]` line on the agent's stderr: Hermes ends a failed turn with `end_turn` and
+//   no message), `agent-exit`, `bye`. One subscriber: the newest wins.
 // - `{op:"send", token, msg}`: msg to the agent's stdin, `{ok:true}` or `{ok:false, error:{code}}`, close.
 // - `{op:"shutdown", token}`: cancel running prompts and wait up to 3 s, SIGTERM the agent group, SIGKILL it
 //   2 s later (5 s after a cancel), exit 0.
@@ -406,6 +409,12 @@ if (agent) {
       if (l.trim() === "") continue;
       lastStderr = cut(l, DETAIL_MAX);
       log(`agent stderr: ${cut(l, LOG_LINE_MAX)}`);
+      // An error line becomes an `agent-error` record (the filtered line: never a prompt preview).
+      const text = initDone ? wire.agentErrorText(l) : null;
+      if (text) {
+        const seq = ++lastSeq;
+        pushRecord(seq, Buffer.from(`${JSON.stringify({ seq, at: Date.now(), ev: "agent-error", text })}\n`));
+      }
     }
   };
   agent.stderr.setEncoding("utf8");
@@ -481,7 +490,7 @@ function onAgentLine(buf) {
   const seq = ++lastSeq;
   const c = tracker.fromAgent(msg, now, seq);
   logMessage("agent →", c, buf.length);
-  pushRecord(seq, Buffer.concat([Buffer.from(`{"seq":${seq},"at":${now},"msg":`), buf, Buffer.from("}\n")]));
+  pushRecord(seq, Buffer.concat([Buffer.from(`{"seq":${seq},"at":${now},"msg":`), buf, Buffer.from("}\n")]), tracker.turnRecord(c) ? c.sessionId : null);
 }
 
 function logMessage(dir, c, bytes) {
@@ -501,8 +510,9 @@ function logMessage(dir, c, bytes) {
   log(`${dir} ${what}${session} (${bytes} B)`);
 }
 
-function pushRecord(seq, buf) {
-  ring.push({ seq, buf });
+/** A record into the ring and to the subscriber. `turn`: the session whose running turn it belongs to, or null. */
+function pushRecord(seq, buf, turn = null) {
+  ring.push({ seq, buf, turn });
   ringBytes += buf.length;
   while ((ring.length - ringHead > wire.RING_RECORDS || ringBytes > wire.RING_BYTES) && ring.length - ringHead > 1) {
     ringBytes -= ring[ringHead].buf.length;
@@ -543,6 +553,7 @@ function onInit(msg, now) {
         cwd: CWD,
         herdrPid: HERDR_PID,
         startedAt: STARTED,
+        argv: args.agent,
       });
     } catch (e) {
       failStart("init-failed", `discovery: ${reason(e)}`);
@@ -678,21 +689,33 @@ function onStream(sock, id, req) {
     seq: lastSeq,
     bridge: { pid: process.pid, agentPid, version: BRIDGE_VERSION, profile: PROFILE, cwd: CWD, startedAt: STARTED },
     agent: initResult,
-    running: tracker.running().map((r) => ({ id: r.id, sessionId: r.sessionId, at: r.at })),
+    running: tracker.running().map((r) => ({ id: r.id, sessionId: r.sessionId, at: r.at, seq: r.seq, prompt: r.prompt })),
     pending: tracker.pending().map((p) => ({ id: p.id, method: p.method, sessionId: p.sessionId, at: p.at, seq: p.seq, msg: p.msg })),
   };
   toSub(Buffer.from(`${JSON.stringify(hello)}\n`));
   let replayed = 0;
+  const firstSeq = ringHead < ring.length ? ring[ringHead].seq : lastSeq + 1;
   if (since !== null) {
-    const firstSeq = ringHead < ring.length ? ring[ringHead].seq : lastSeq + 1;
     if (since > lastSeq || since + 1 < firstSeq) toSub(eventLine("gap", { since, first: firstSeq, last: lastSeq }));
     for (let i = ringHead; i < ring.length; i++) {
       if (ring[i].seq <= since) continue;
       toSub(ring[i].buf);
       replayed++;
     }
+  } else if (req.turns === true) {
+    // The turns still running, as far as the ring holds them: each session's updates since its oldest running prompt.
+    const starts = tracker.turnStarts();
+    const oldest = Math.min(...[...starts.values()].filter((s) => Number.isInteger(s)));
+    if (Number.isFinite(oldest) && oldest + 1 < firstSeq) toSub(eventLine("gap", { since: oldest, first: firstSeq, last: lastSeq }));
+    for (let i = ringHead; i < ring.length; i++) {
+      const r = ring[i];
+      const start = r.turn === null ? undefined : starts.get(r.turn);
+      if (!Number.isInteger(start) || r.seq <= start) continue;
+      toSub(r.buf);
+      replayed++;
+    }
   }
-  log(`stream ${id} (${client}) since ${since ?? "-"}: ${replayed} records replayed`);
+  log(`stream ${id} (${client}) since ${since ?? (req.turns === true ? "turns" : "-")}: ${replayed} records replayed`);
 }
 
 function onSend(sock, id, msg) {
@@ -712,7 +735,7 @@ function onSend(sock, id, msg) {
     refuse(sock, "too-large");
     return;
   }
-  const c = tracker.fromClient(msg, Date.now());
+  const c = tracker.fromClient(msg, Date.now(), lastSeq);
   if (c.kind === "request" && c.method === wire.METHOD.sessionPrompt && c.sessionId)
     promptLengths.set(c.sessionId, Array.from(wire.promptText(c.params?.prompt)).length);
   logMessage(`conn ${id}: client →`, c, bytes);

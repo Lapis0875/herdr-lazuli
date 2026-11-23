@@ -44,8 +44,35 @@ readline.createInterface({input:process.stdin}).on('line',async l=>{const m=JSON
  if(m.id!==undefined&&m.method)return out({jsonrpc:'2.0',id:m.id,result:{echo:m.method}});});
 `;
 
-let shared; let RAW;
-before(async()=>{shared=await mkdtemp(join(tmpdir(),'lazuli-bridge-shared-')); RAW=join(shared,'raw-agent.mjs'); await writeFile(RAW,RAW_AGENT);});
+// An agent for the turn replay and its error lines (written by the test, not the shared fake): `session/prompt`
+// logs the prompt preview the way Hermes does; `fail …` then writes Hermes's error lines to stderr and, 300 ms later,
+// ends the turn with end_turn and no message; `stream` sends two chunks and holds the turn until `test/finish`, which
+// sends a third and ends it. `test/other` sends an update of another session; `session/load` replays one history
+// chunk before its answer.
+const TURN_AGENT=String.raw`
+import readline from 'node:readline';
+const out=o=>process.stdout.write(JSON.stringify(o)+'\n'); const err=l=>process.stderr.write(l+'\n'); const held=new Map();
+const chunk=(sessionId,text)=>out({jsonrpc:'2.0',method:'session/update',params:{sessionId,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text}}}});
+readline.createInterface({input:process.stdin}).on('line',l=>{const m=JSON.parse(l);
+ if(m.method==='initialize')return out({jsonrpc:'2.0',id:m.id,result:{protocolVersion:1,agentInfo:{name:'turns',version:'0'},agentCapabilities:{loadSession:true}}});
+ if(m.method==='session/load'){chunk(m.params.sessionId,'history');return out({jsonrpc:'2.0',id:m.id,result:{models:{}}});}
+ if(m.method==='test/other')return chunk('other','elsewhere');
+ if(m.method==='test/finish'){for(const [id,s] of held){chunk(s,'three');out({jsonrpc:'2.0',id,result:{stopReason:'end_turn'}});}held.clear();return;}
+ if(m.method!=='session/prompt')return;
+ const s=m.params.sessionId; const text=m.params.prompt.filter(b=>b.type==='text').map(b=>b.text).join('\n');
+ err('2026-11-23 18:09:32 [INFO] acp_adapter.server: Prompt on session '+s+': '+text.slice(0,100));
+ err("2026-11-23 18:09:32 [INFO] agent.turn_context: conversation turn: session="+s+" model=m provider=p platform=acp history=0 msg="+JSON.stringify(text.slice(0,80)));
+ if(text.startsWith('fail')){
+  err('2026-11-23 18:09:33 [WARNING] agent.conversation_loop: API call failed (attempt 1/3) error_type=BadRequestError');
+  err("\u274C Non-retryable error (HTTP 400): HTTP 400: The 'm' model is not supported.");
+  err('   \u{1F4A1} This type of error will not be fixed by retrying.');
+  err("2026-11-23 18:09:33 [ERROR] agent.conversation_loop: Non-retryable client error: Error code: 400");
+  return setTimeout(()=>out({jsonrpc:'2.0',id:m.id,result:{stopReason:'end_turn'}}),300);}
+ chunk(s,'one'); chunk(s,'two'); held.set(m.id,s);});
+`;
+
+let shared; let RAW; let TURNS;
+before(async()=>{shared=await mkdtemp(join(tmpdir(),'lazuli-bridge-shared-')); RAW=join(shared,'raw-agent.mjs'); TURNS=join(shared,'turn-agent.mjs'); await writeFile(RAW,RAW_AGENT); await writeFile(TURNS,TURN_AGENT);});
 after(async()=>{await rm(shared,{recursive:true,force:true});});
 
 const fakeArgv=profile=>[NODE,FAKE,'-p',profile,'acp'];
@@ -109,7 +136,8 @@ describe('acp-bridge',{concurrency:8},()=>{
   try{
    const d=b.d; assert.equal(d.state,'ready'); assert.equal(d.pid,b.proc.pid); assert.match(d.token,/^[0-9a-f]{64}$/); assert.equal(d.profile,'default'); assert.equal(d.cwd,b.folder); assert.equal(d.herdrPid,process.pid);
    assert.ok(d.agentPid!==d.pid&&alive(d.agentPid)); assert.ok(groupAlive(d.agentPid),'the agent leads its own process group'); assert.ok(Number.isFinite(d.startedAt));
-   const raw=JSON.parse(await readFile(b.discovery,'utf8')); assert.deepEqual(Object.keys(raw).sort(),['agentPid','cwd','herdrPid','pid','port','profile','startedAt','token','version']);
+   const raw=JSON.parse(await readFile(b.discovery,'utf8')); assert.deepEqual(Object.keys(raw).sort(),['agentPid','argv','cwd','herdrPid','pid','port','profile','startedAt','token','version']);
+   assert.deepEqual(raw.argv,fakeArgv('default'),'the agent argv, for the reuse rule'); assert.deepEqual(d.argv,fakeArgv('default'));
    assert.equal((await stat(b.run)).mode&0o777,0o700,'an existing 0755 folder is made 0700'); assert.equal((await stat(b.discovery)).mode&0o777,0o600); assert.equal((await stat(b.log)).mode&0o777,0o600);
    // Listening on loopback only.
    const lsof=await new Promise(r=>execFile('lsof',['-nP','-iTCP','-sTCP:LISTEN','-a','-p',String(d.pid)],(e,out)=>r(e?.code==='ENOENT'?null:String(out))));
@@ -318,6 +346,42 @@ describe('acp-bridge',{concurrency:8},()=>{
    assert.deepEqual((await send(b,{jsonrpc:'2.0',method:'x/pad',params:{pad:'y'.repeat(w.MAX_LINE_BYTES)}})).reply,{ok:false,error:{code:'too-large'}});
    const log=await readLog(b); assert.ok(!log.includes(b.d.token)); assert.ok(!log.includes('secret words')); assert.ok(!log.includes('Echo:'));
    assert.match(log,/client → request session\/prompt id "t:e"/); assert.match(log,/agent → update \S+ session /); assert.match(log,/agent → result id "t:e"/); assert.match(log,/too-large/);
+  }finally{await b.cleanup();}
+ });
+
+ it('sends agent-error for Hermes error lines on stderr, never for a prompt preview, and keeps no prompt text in its log',async()=>{
+  const b=await startBridge({agent:[NODE,TURNS]});
+  try{
+   const [s]=await hello(b); await sendOk(b,w.sessionPrompt('t:f','s1',text('fail \u274C secret plan')));
+   const got=[]; for(;;){const v=await s.next(5000); got.push(v); if(isResult('t:f')(v)) break;}
+   const errors=got.filter(v=>v.ev==='agent-error');
+   assert.deepEqual(errors.map(v=>v.text),["Non-retryable error (HTTP 400): HTTP 400: The 'm' model is not supported.",'Non-retryable client error: Error code: 400']);
+   assert.ok(errors.every(v=>Number.isInteger(v.seq)&&Number.isFinite(v.at))); assert.ok(errors[0].seq<errors[1].seq);
+   assert.equal(got.at(-1).msg.result.stopReason,'end_turn'); assert.ok(got.at(-1).seq>errors[1].seq,'the errors come before the reply-less end');
+   // They are records: a stream from before them gets them again.
+   const [s2]=await hello(b,errors[0].seq-1); const again=[await s2.next(),await s2.next(),await s2.next()]; assert.deepEqual(again.map(v=>v.ev??v.msg.id),['agent-error','agent-error','t:f']); s2.close();
+   const log=await readLog(b); assert.ok(!log.includes('secret plan'),'no prompt text'); assert.match(log,/Prompt on session s1: \[18 chars\]/); assert.match(log,/conversation turn: .*msg=\[redacted\]/); assert.match(log,/\[ERROR\] agent\.conversation_loop: Non-retryable/);
+  }finally{await b.cleanup();}
+ });
+
+ it('gives a stream that starts over (since null, turns) the running turns: hello with their start, then their records',async()=>{
+  const b=await startBridge({agent:[NODE,TURNS]});
+  try{
+   const [s]=await hello(b); await sendOk(b,w.sessionPrompt('t:s','s1',w.promptBlocks('stream',['/tmp/a b.md'])));
+   const one=await s.until(v=>v.msg?.params?.update?.content?.text==='one'); await s.until(v=>v.msg?.params?.update?.content?.text==='two');
+   await sendOk(b,w.notification('test/other',{})); await s.until(v=>v.msg?.params?.sessionId==='other');
+   await sendOk(b,w.sessionLoad('t:l','s1',b.folder)); await s.until(isResult('t:l'));
+   // A plain stream from now on gets live records only.
+   const [plain]=await hello(b); await assert.rejects(plain.next(400),/no line/); plain.close();
+   const t=open(b.d.port,w.streamLine(b.d.token,null,'test',true)); const h=await t.next();
+   assert.equal(h.ev,'hello'); assert.equal(h.running.length,1);
+   assert.deepEqual([h.running[0].id,h.running[0].sessionId,h.running[0].seq],['t:s','s1',one.seq-1]); assert.deepEqual(h.running[0].prompt,w.promptBlocks('stream',['/tmp/a b.md']));
+   // The turn's two chunks only: not the other session's update, not the history its load replayed.
+   const replay=[await t.next(),await t.next()]; assert.deepEqual(replay.map(v=>v.msg.params.update.content.text),['one','two']); assert.ok(replay.every(v=>v.seq<=h.seq));
+   await sendOk(b,w.notification('test/finish',{})); const next=await t.next(); assert.equal(next.msg.params.update.content.text,'three','then live');
+   assert.equal((await t.next()).msg.id,'t:s'); t.close();
+   // Once the turn ended there is nothing to replay.
+   const u=open(b.d.port,w.streamLine(b.d.token,null,'test',true)); const h2=await u.next(); assert.deepEqual(h2.running,[]); await assert.rejects(u.next(400),/no line/); u.close();
   }finally{await b.cleanup();}
  });
 

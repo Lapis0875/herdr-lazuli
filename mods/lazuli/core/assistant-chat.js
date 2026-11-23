@@ -6,16 +6,23 @@
 //   update {update}                       a `session/update` body (`params.update`)
 //   permission {requestId, toolCall, options, at}   `session/request_permission`; `at` = bridge receive time
 //   permission-answered {requestId, optionId}       optionId null/absent = cancelled by lazuli
-//   prompt-sent {requestId, kind: prompt|steer|command, text?, attachments?, via?}
-//                                         no text and no attachments = restore an in-flight entry only
+//   prompt-sent {requestId, kind: prompt|steer|command, text?, attachments?, via?, again?}
+//                                         no text and no attachments = restore an in-flight entry only;
+//                                         `again` = the user item only (a running turn applied again after a load)
 //   prompt-done {requestId, stopReason, usage}      prompt-failed {requestId, error}
 //   queued {text, chipId?}  unqueued {chipId}  queue-paused  queue-resumed  queue-flush {requestId, chipId?}
 //   load-start  loaded {models, modes}  model-set {modelId}  stats {stats}  gap  disconnected  tick
+//   agent-error {text}                    an error line the agent wrote to stderr (the bridge's `agent-error`)
 //   notice {code, vars?}                  a notice of the service's own (e.g. `busy`)
 //
 // Notice codes (`notice{code, vars}`, catalog `assistant.event.<code>`): steer-ack {preview},
 // steer-queued {depth}, steer-failed {detail}, cancelled, stopped {detail: stop reason}, failed {detail},
 // too-late, dropped {count}, model-set {model}, gap.
+//
+// Rule 11: a prompt's turn that ends (`end_turn`) with no assistant text, no tool item and no permission since the
+// prompt was sent adds `failed {detail}` with the newest `agent-error` text of that turn, or NO_REPLY when there was
+// none (Hermes ends a failed turn with `end_turn` and no message; its error goes to stderr). An error line that comes
+// just after such a notice fills in its NO_REPLY detail (stderr and stdout are separate pipes).
 
 import { PERMISSION_TIMEOUT_MS, agentOf, steerReply } from "./assistant-agents.js";
 import { normalize } from "./paths.js";
@@ -26,6 +33,10 @@ export const MAX_ITEMS = 2000;
 export const MAX_MESSAGE = 400000;
 /** Characters kept per tool text (content text, raw output); diffs are kept whole. */
 export const MAX_TOOL_TEXT = 20000;
+/** Rule 11's detail when a reply-less turn left no error text. */
+export const NO_REPLY = "no-reply";
+/** Characters kept of an `agent-error` text. */
+const MAX_ERROR = 2000;
 
 const KINDS = new Set(["prompt", "steer", "command"]);
 const VIAS = new Set(["prompt", "steer", "queue", "replay"]);
@@ -71,6 +82,8 @@ export function emptyChat(key, meta = {}) {
     modes: isPlain(m.modes) ? m.modes : null,
     usage: { context: null, lastTurn: null, stats: null },
     lastError: null,
+    turn: null, // rule 11: the prompt turn running, {reply, error}; null between turns
+    loading: false, // between load-start and loaded: the updates replay the history
     seq: 0, // next item sequence number (row keys, permission anchors, chip ids)
     dropped: 0, // items dropped by the MAX_ITEMS cap since the last load
     unknown: 0, // session/update kinds this reducer does not know (rule 10)
@@ -204,6 +217,12 @@ function inputOf(u, content) {
   return text ? clip(text, MAX_TOOL_TEXT) : null;
 }
 
+/** Rule 11: the running turn got an answer (assistant text, a tool item, a permission); the history a load replays
+ *  does not count. */
+function replied(state) {
+  return state.turn && !state.turn.reply && !state.loading ? { ...state, turn: { ...state.turn, reply: true } } : state;
+}
+
 function toolStart(state, u, now) {
   const id = str(u.toolCallId);
   if (!id) return state;
@@ -211,7 +230,7 @@ function toolStart(state, u, now) {
   const replayed = !state.loaded;
   const status = STATUSES.has(u.status) ? u.status : "pending";
   const content = toolContent(u.content);
-  return push(state, {
+  return push(replied(state), {
     type: "tool",
     id,
     title: str(u.title),
@@ -270,17 +289,18 @@ function chunk(state, type, content) {
       return notice({ ...state, inflight }, reply.code, reply.vars);
     }
   }
-  const items = state.items;
+  const base = type === "assistant" ? replied(state) : state;
+  const items = base.items;
   const last = items[items.length - 1];
-  if (state.loaded && last && last.type === type && last.streaming === true) {
-    if (last.truncated) return state;
+  if (base.loaded && last && last.type === type && last.streaming === true) {
+    if (last.truncated) return base;
     const joined = last.text + text;
     const next = joined.length > MAX_MESSAGE ? { ...last, text: clip(joined, MAX_MESSAGE), truncated: true } : { ...last, text: joined };
-    return replaceAt(state, items.length - 1, next);
+    return replaceAt(base, items.length - 1, next);
   }
-  const item = { type, text: clip(text, MAX_MESSAGE), streaming: state.loaded };
+  const item = { type, text: clip(text, MAX_MESSAGE), streaming: base.loaded };
   if (text.length > MAX_MESSAGE) item.truncated = true;
-  return push(state, item);
+  return push(base, item);
 }
 
 function userChunk(state, content) {
@@ -372,7 +392,7 @@ function permission(state, e, now) {
     optionId: null, // the answer, once answered
     after: last ? last.seq : null, // drawn after this item
   };
-  const next = { ...state, permissions: { ...state.permissions, [key]: p } };
+  const next = { ...replied(state), permissions: { ...state.permissions, [key]: p } };
   return p.toolCallId.startsWith(EDIT_APPROVAL) ? attachDiff(next, p) : next;
 }
 
@@ -402,12 +422,18 @@ function expire(state, now) {
 
 // ---- prompts and the queue --------------------------------------------------------------------------
 
+/** A request sent. One already in flight, or sent `again`, only gets its user item (a running turn applied again after
+ *  its history loaded). A prompt sent while nothing runs starts a turn (rule 11); a steer or command does not. */
 function sent(state, e, now) {
   if (e.requestId === undefined || e.requestId === null) return state;
   const id = String(e.requestId);
   const kind = KINDS.has(e.kind) ? e.kind : "prompt";
-  let next = { ...state, inflight: { ...state.inflight, [id]: { kind, at: now, acked: false } } };
-  if (kind !== "steer") next.lastError = null;
+  let next = state;
+  if (!has(state.inflight, id) && e.again !== true) {
+    const turn = isRunning(state) ? state.turn : kind === "prompt" ? { reply: false, error: null } : null;
+    next = { ...state, inflight: { ...state.inflight, [id]: { kind, at: now, acked: false } }, turn };
+    if (kind !== "steer") next.lastError = null;
+  }
   const text = str(e.text);
   const attachments = Array.isArray(e.attachments) ? e.attachments : [];
   if (text || attachments.length) {
@@ -417,17 +443,25 @@ function sent(state, e, now) {
   return next;
 }
 
-/** After a request ends: once nothing runs, streaming ends and open approval cards are cancelled. */
-function settleTurn(state) {
+/** An approval still open when its turn ends this close to its deadline (or after it) was given up by the agent at its
+ *  own 60 s timeout (Hermes, permissions.py:111; the fake agent cancels it): it reads as expired, not cancelled, so a
+ *  late answer is refused as too late (rule 4). The agent's clock starts a moment before the bridge's receive time. */
+export const EXPIRY_GRACE_MS = 2000;
+
+/** After a request ends: once nothing runs, the turn ends (rule 11), streaming ends and open approval cards close:
+ *  expired when their deadline is (nearly) reached, else cancelled. */
+function settleTurn(state, now) {
   if (isRunning(state)) return state;
   let permissions = state.permissions;
   for (const [k, p] of Object.entries(permissions)) {
-    if (p.state === "pending") permissions = { ...permissions, [k]: { ...p, state: "cancelled" } };
+    if (p.state !== "pending") continue;
+    const gone = typeof now === "number" && now >= p.deadline - EXPIRY_GRACE_MS ? "expired" : "cancelled";
+    permissions = { ...permissions, [k]: { ...p, state: gone } };
   }
-  return { ...state, items: settle(state.items), permissions };
+  return { ...state, items: settle(state.items), permissions, turn: null };
 }
 
-function done(state, e) {
+function done(state, e, now) {
   const id = String(e.requestId);
   if (!has(state.inflight, id)) return state;
   const inflight = { ...state.inflight };
@@ -436,10 +470,34 @@ function done(state, e) {
   if (isPlain(e.usage)) next.usage = { ...next.usage, lastTurn: e.usage };
   if (e.stopReason === "cancelled") next = notice(next, "cancelled");
   else if (typeof e.stopReason === "string" && e.stopReason !== "end_turn") next = notice(next, "stopped", { detail: e.stopReason });
-  return settleTurn(next);
+  else if (next.turn && !next.turn.reply && !isRunning(next)) {
+    // Rule 11: the turn ended without a word from the agent.
+    const detail = next.turn.error ?? NO_REPLY;
+    const item = { type: "notice", code: "failed", vars: { detail } };
+    if (!next.turn.error) item.noReply = now; // when, for an error line that comes just after
+    next = push({ ...next, lastError: { code: null, message: detail } }, item);
+  }
+  return settleTurn(next, now);
 }
 
-function failed(state, e) {
+/** An error line that comes this long after a reply-less turn ended still fills in its notice's detail. */
+const LATE_ERROR_MS = 5000;
+
+/** An agent error line: kept as the running turn's newest (rule 11); between turns, just after a reply-less turn, it
+ *  fills in the NO_REPLY detail of that turn's notice when it is the last item. */
+function agentError(state, e, now) {
+  const text = clip(str(e.text).trim(), MAX_ERROR);
+  if (!text) return state;
+  if (state.turn) return state.turn.error === text ? state : { ...state, turn: { ...state.turn, error: text } };
+  const at = state.items.length - 1;
+  const last = state.items[at];
+  if (!last || last.type !== "notice" || typeof last.noReply !== "number" || now - last.noReply > LATE_ERROR_MS) return state;
+  const filled = { ...last, vars: { detail: text } };
+  delete filled.noReply;
+  return { ...replaceAt(state, at, filled), lastError: { code: null, message: text } };
+}
+
+function failed(state, e, now) {
   const id = String(e.requestId);
   const err = e.error;
   const message = typeof err === "string" ? err : isPlain(err) ? str(err.message) : "";
@@ -447,7 +505,7 @@ function failed(state, e) {
   const inflight = { ...state.inflight };
   delete inflight[id];
   const next = { ...state, inflight, lastError: { code, message } };
-  return settleTurn(notice(next, "failed", { detail: code === null ? message : `${message} (${code})` }));
+  return settleTurn(notice(next, "failed", { detail: code === null ? message : `${message} (${code})` }), now);
 }
 
 function queued(state, e, now) {
@@ -481,9 +539,9 @@ export function reduce(state, event, now) {
     case "prompt-sent":
       return sent(state, event, t);
     case "prompt-done":
-      return done(state, event);
+      return done(state, event, t);
     case "prompt-failed":
-      return failed(state, event);
+      return failed(state, event, t);
     case "queued":
       return queued(state, event, t);
     case "unqueued":
@@ -498,17 +556,20 @@ export function reduce(state, event, now) {
       // Rule 7. Finished cards belonged to the transcript being replaced; open ones stay, unanchored.
       const permissions = {};
       for (const [k, p] of Object.entries(state.permissions)) if (p.state === "pending") permissions[k] = { ...p, after: null };
-      return { ...state, items: [], plan: null, loaded: false, dropped: 0, permissions };
+      return { ...state, items: [], plan: null, loaded: false, loading: true, dropped: 0, permissions };
     }
     case "loaded":
       return {
         ...state,
         loaded: true,
+        loading: false,
         stale: false,
         items: settle(state.items),
         models: has(event, "models") ? (isPlain(event.models) ? event.models : null) : state.models,
         modes: has(event, "modes") ? (isPlain(event.modes) ? event.modes : null) : state.modes,
       };
+    case "agent-error":
+      return agentError(state, event, t);
     case "model-set": {
       if (typeof event.modelId !== "string" || !event.modelId) return state;
       const models = isPlain(state.models) ? { ...state.models, currentModelId: event.modelId } : { availableModels: [], currentModelId: event.modelId };

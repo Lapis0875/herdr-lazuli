@@ -87,6 +87,9 @@ export default {
   "assistant.event.busy": "응답이 끝난 뒤 다시 시도하세요",
   "assistant.event.gap": "기록 일부를 받지 못해 응답이 끝나면 대화를 다시 불러옵니다",
   "assistant.event.other": "Hermes 알림",
+  "assistant.event.noReply": "Hermes가 답 없이 응답을 끝냈습니다. 브리지 로그를 확인하세요",
+  "assistant.event.showAll": "모두 보기",
+  "assistant.event.showLess": "접기",
 
   // Approval card (D16, D29).
   "assistant.approval.title": "허가가 필요합니다",
@@ -108,14 +111,14 @@ export default {
   // Composer (D19, D20, D28).
   "assistant.composer.label": "메시지",
   "assistant.composer.placeholder": "Hermes에게 메시지… @ 파일 · / 명령",
-  "assistant.composer.placeholderRunning": "방향을 바꿀 지시, 또는 ⌥Enter로 대기열에 넣을 메시지…",
+  "assistant.composer.placeholderRunning": "방향을 바꿀 지시, 또는 ⌥Enter / ⌘Enter로 대기열에 넣을 메시지…",
   "assistant.composer.send": "보내기",
   "assistant.composer.steer": "방향 전환 보내기",
   "assistant.composer.stop": "중지",
   "assistant.composer.attach": "파일 첨부",
   "assistant.composer.commands": "Hermes 명령",
   "assistant.composer.hintIdle": "Enter 보내기 · ⇧Enter 줄바꿈",
-  "assistant.composer.hintRunning": "Enter 방향 전환 · ⌥Enter 대기열",
+  "assistant.composer.hintRunning": "Enter 방향 전환 · ⌥Enter / ⌘Enter 대기열",
   "assistant.composer.offline": "Hermes가 다시 연결되면 보낼 수 있습니다",
   "assistant.composer.removeAttachment": "{name} 첨부 빼기",
   "assistant.queue.label": "대기 {count}",

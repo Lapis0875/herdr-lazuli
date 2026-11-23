@@ -11,7 +11,7 @@
 // `file:<db>?immutable=1`. A database without a column or table the query reads (another Hermes version) is
 // `{error: "schema"}`; a profile without a `state.db` has no sessions yet.
 
-import { SESSIONS_SQL, mapRows, isProfileName } from "../core/assistant-list.js";
+import { SESSIONS_SQL, mapRows, isProfileName, firmlinkShort } from "../core/assistant-list.js";
 import { stateDbPath, profilesDir } from "../core/assistant-agents.js";
 import { kindOf } from "../core/paths.js";
 
@@ -138,4 +138,39 @@ export async function listFolderFiles(run, folder) {
   } catch {
     return [];
   }
+}
+
+// Each argument → its physical path (`cd -P` then `pwd -P`: symlinks and macOS firmlinks resolved), or "" when it is
+// not a folder that can be entered, each followed by a NUL.
+const RESOLVE = 'CDPATH=; for p do r=$(cd -P -- "$p" 2>/dev/null && pwd -P) || r=""; printf "%s\\0" "$r"; done';
+const RESOLVE_BATCH = 200;
+
+/** Folders → `{[path]: resolved path}` ("" for one that does not resolve: missing, not a folder, unreadable). Only
+ *  absolute paths without NUL or newline are asked; anything else is left out. */
+export async function resolvePaths(run, paths) {
+  const list = [...new Set((Array.isArray(paths) ? paths : []).filter((p) => typeof p === "string" && p.startsWith("/") && !/[\0\n]/.test(p)))];
+  const out = {};
+  for (let i = 0; i < list.length; i += RESOLVE_BATCH) {
+    const part = list.slice(i, i + RESOLVE_BATCH);
+    let got = [];
+    try {
+      const r = await run("/bin/sh", ["-c", RESOLVE, "lazuli-resolve", ...part], { timeout: LIST_MS });
+      if (r.code === 0) got = String(r.stdout ?? "").split("\0");
+    } catch {
+      got = [];
+    }
+    part.forEach((p, j) => {
+      out[p] = typeof got[j] === "string" ? got[j] : "";
+    });
+  }
+  return out;
+}
+
+/** The form of a folder to keep: a path under macOS's `/private` (the system folder picker gives `/private/tmp/x`
+ *  for `/tmp/x`) becomes its short form when both resolve to the same folder; any other path stays as it is. */
+export async function shortFolder(run, path) {
+  const short = firmlinkShort(path);
+  if (!short) return path;
+  const r = await resolvePaths(run, [path, short]);
+  return r[path] && r[path] === r[short] ? short : path;
 }

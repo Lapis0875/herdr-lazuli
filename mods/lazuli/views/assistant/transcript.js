@@ -12,7 +12,7 @@ import { tokens, withAlpha } from "../../ui/tokens.js";
 import { Button } from "../../ui/kit.js";
 import { rows as chatRows } from "../../core/assistant-chat.js";
 import { VScroll } from "../../file/ui/md-rows.js";
-import { UserItem, AgentText, ThoughtItem, ToolCard, ApprovalCard, NoticeItem } from "./cards.js";
+import { UserItem, AgentText, ThoughtItem, ToolCard, ApprovalCard, NoticeItem, noticeBody } from "./cards.js";
 
 const PAD_X = 16;
 const GAP = 12;
@@ -47,6 +47,12 @@ function estimate(r, width) {
       return 34 + (r.open ? 220 : 0) + GAP;
     case "permission":
       return (it.state === "answered" ? 26 : 150 + (it.content?.some((c) => c?.type === "diff") ? 160 : 0)) + GAP;
+    case "notice": {
+      // A long detail (an agent's error) wraps under the notice, with Show all when it is clamped.
+      const body = noticeBody(it, r.open);
+      if (!body || body.inline) return 22 + GAP;
+      return 22 + 2 + lines(body.text, w - 24, body.words ? 7.5 : 7) * (body.words ? BODY_LH : 16) + (body.more ? 26 : 0) + GAP;
+    }
     default:
       return 22 + GAP;
   }
@@ -113,7 +119,7 @@ function rowElement(view, chat, r, now) {
     case "tool":
       return ToolCard(view, chat, `tool:${r.id}`, r, now);
     case "notice":
-      return NoticeItem(id, r);
+      return NoticeItem(view, id, r);
     default:
       return null;
   }
@@ -126,7 +132,14 @@ export function Transcript(view, chat, now) {
   const vs = s.vs;
   const rows = chatRows(chat).map((row) => {
     const id = rowId(row);
-    const open = row.type === "tool" ? view.expanded.has(`tool:${row.id}`) : row.type === "thought" ? view.expanded.has(`thought:${row.seq}`) : false;
+    const open =
+      row.type === "tool"
+        ? view.expanded.has(`tool:${row.id}`)
+        : row.type === "thought"
+          ? view.expanded.has(`thought:${row.seq}`)
+          : row.type === "notice"
+            ? view.expanded.has(`notice:${row.seq}`)
+            : false;
     return { id, row, open };
   });
   vs.setRows(rows);
