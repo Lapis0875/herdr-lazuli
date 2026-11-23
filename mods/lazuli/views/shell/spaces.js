@@ -260,6 +260,9 @@ export class SpaceTree {
 
     const current = s.active && tab.active && center === "work";
     const select = () => {
+      // The work view's agent child shows the agent chosen with agent.focus, and Herdr keeps that agent's pane (and
+      // so its tab) focused: a tab without an agent selected under it snaps back. Show the tab's panes first.
+      if (!tabAgents.length && activeChild(NODE.view) === "agent") run("layout.select", { stack: NODE.view, child: "main" });
       if (!s.active) run("space.select", { id: s.id });
       if (!tab.active || !s.active) run("tab.select", { id: tab.id });
       if (center !== "work") showCenter("work");
