@@ -412,6 +412,9 @@ To install it:
 - **macOS only.** The PDF renderer is PDFKit, and notifications, picture sizes and the system language use macOS
   programs. Built on Herdr 0.1.16; other versions are untested.
 - **One copy per Herdr app home**, in `mods/lazuli`: the scripts' paths and the commands use that name.
+- **Tabs while the work view shows one agent (⌥⌘A).** Herdr keeps the pane of the agent shown there focused, so a tab
+  without an agent picked in Herdr's tab strip snaps back to that agent's tab. The sidebar switches the work view back
+  to the tab first, so pick such a tab there, or press ⌥⌘A before using the strip.
 - **GitHub only.** Inbox, pull requests and CI come from `gh`; there is no Linear or Jira inbox. ⌘L finds a ticket in
   the PR body or the branch name only.
 - **Routines run only while Herdr runs.** After a restart, a routine that missed runs runs once if its latest missed
