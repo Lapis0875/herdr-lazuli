@@ -1,0 +1,2 @@
+{"i":25,"t":14364.5,"dir":"send","msg":{"jsonrpc":"2.0","id":8,"method":"session/load","params":{"sessionId":"33a5e474-7707-4013-ac20-5c26daed80a0","cwd":"/tmp/lz-s9","mcpServers":[]}}}
+{"i":26,"t":14365.2,"dir":"recv","msg":{"jsonrpc":"2.0","id":8,"result":{}}}

@@ -12,6 +12,9 @@ import { props, run, setAgentOrder, spaces, updates, window as appWindow } from 
 import * as store from "../sys/store.js";
 import * as todo from "../sys/todo.js";
 import { NODE, STORE } from "../sys/state.js";
+import * as assistant from "../sys/assistant.js";
+import { isRunning } from "../core/assistant-chat.js";
+import { pendingPermissions } from "./assistant/model.js";
 import { activeChild, showCenter } from "../sys/bus.js";
 import { t } from "../core/i18n.js";
 import { tokens } from "../ui/tokens.js";
@@ -31,8 +34,9 @@ const PLACES = Object.freeze({
   inbox: { icon: "inbox", key: "⌥⌘1" },
   todo: { icon: "list-todo", key: "⌥⌘2" },
   routines: { icon: "calendar-clock", key: "⌥⌘3" },
+  assistant: { icon: "bot", key: "⌥⌘4" },
 });
-const APPS = Object.freeze(["inbox", "todo", "routines"]);
+const APPS = Object.freeze(["inbox", "todo", "routines", "assistant"]);
 
 /** What waits in an app: `{count, tone}` (a pill), `{dot}` (running or failed) or null. */
 function badgeOf(app) {
@@ -52,6 +56,16 @@ function badgeOf(app) {
     if (isObj(v?.running) && Object.keys(v.running).length) return { dot: "working", label: t("shell.nav.routinesRunning") };
     const failed = list(v?.routines).filter((r) => r?.last && r.last.ok === false && !r.last.missed && !r.running).length;
     return failed ? { dot: "error", label: t("shell.nav.routinesFailed", { count: failed }) } : null;
+  }
+  if (app === "assistant") {
+    // Approvals waiting first (a pyrite count, A6), else a turn running (the working dot); from the service's state.
+    const sessions = Object.values(assistant.snapshot()?.sessions ?? {});
+    const now = Date.now();
+    const waiting = sessions.filter((c) => pendingPermissions(c, now).length > 0).length;
+    const running = sessions.filter((c) => isRunning(c)).length;
+    const label = t("shell.nav.assistant", { running, waiting });
+    if (waiting) return { count: waiting, tone: "wait", label };
+    return running ? { dot: "working", label } : null;
   }
   return null;
 }

@@ -1,0 +1,141 @@
+// The Assistant's sessions on disk (CONTRACTS K6, K8; spike S9): Hermes's profiles, each profile's ACP sessions read
+// read-only from its `state.db` with Hermes's own listing query (core/assistant-list.js SESSIONS_SQL), and the folder's
+// files for the composer's @ menu. Nothing here writes under ~/.hermes.
+//
+// Every function takes `run(command, args, options)`, resolving `{code, stdout, stderr}` (Herdr's `exec`, or Node's
+// child_process in tests), so this module imports no host module and tests run it against real sqlite3 databases.
+//
+// The query: `/usr/bin/sqlite3 -readonly -json <db> SESSIONS_SQL`. A WAL database that Hermes closed cleanly has no
+// `-wal`/`-shm`, and a read-only connection cannot create `-shm`: sqlite3 fails with "unable to open database file
+// (14)" (S9). With no `-wal` file the main file holds every committed page, so the query runs once more on
+// `file:<db>?immutable=1`. A database without a column or table the query reads (another Hermes version) is
+// `{error: "schema"}`; a profile without a `state.db` has no sessions yet.
+
+import { SESSIONS_SQL, mapRows, isProfileName } from "../core/assistant-list.js";
+import { stateDbPath, profilesDir } from "../core/assistant-agents.js";
+import { kindOf } from "../core/paths.js";
+
+export const SQLITE = "/usr/bin/sqlite3";
+/** Query and listing deadlines (ms). */
+const QUERY_MS = 15000;
+const LIST_MS = 15000;
+/** The @ menu lists at most this many files, at most this deep. */
+export const MAX_FILES = 2000;
+const MAX_DEPTH = 8;
+/** Folders the @ menu never lists. */
+const SKIPPED = Object.freeze([".git", "node_modules", ".venv", "venv", "__pycache__", ".DS_Store"]);
+
+const DETAIL_MAX = 400;
+const said = (r) => String(r?.stderr || r?.stdout || "").trim().slice(0, DETAIL_MAX);
+const errText = (e) => e?.message ?? String(e);
+
+/** A path in a SQLite URI filename: `%`, `?` and `#` escaped (the rest is taken as it is). */
+const uriPath = (p) => String(p).replace(/%/g, "%25").replace(/\?/g, "%3F").replace(/#/g, "%23");
+
+/** Whether `path` exists (as `test -e`). */
+async function exists(run, path) {
+  try {
+    return (await run("/bin/test", ["-e", path], { timeout: 5000 })).code === 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The result of one sqlite3 run of SESSIONS_SQL: `{rows}` (rows of core/assistant-list.js mapRows), or `{error, detail}`
+ * with `error` one of `schema` (a column or table the query reads is missing), `locked`, `open` (the file cannot be
+ * opened), `parse` (output that is not a JSON array) or `failed`.
+ */
+export function queryResult(r) {
+  if (r && r.code === 0) {
+    const rows = mapRows(r.stdout ?? "");
+    return rows ? { rows } : { error: "parse", detail: String(r.stdout ?? "").slice(0, DETAIL_MAX) };
+  }
+  const text = said(r);
+  if (/no such (column|table)/i.test(text)) return { error: "schema", detail: text };
+  if (/database is locked|database table is locked/i.test(text)) return { error: "locked", detail: text };
+  if (/unable to open database file|\(14\)/i.test(text)) return { error: "open", detail: text };
+  return { error: "failed", detail: text };
+}
+
+/**
+ * One state.db's ACP sessions: `{rows, via}` (`via` "readonly" or "immutable") or `{error, detail}`. A missing file is
+ * `{rows: [], via: "absent"}`: that profile has no sessions yet.
+ */
+export async function querySessions(run, db) {
+  if (typeof db !== "string" || !db.startsWith("/")) return { error: "failed", detail: "no database path" };
+  if (!(await exists(run, db))) return { rows: [], via: "absent" };
+  const once = async (target) => {
+    try {
+      return await run(SQLITE, ["-readonly", "-json", target, SESSIONS_SQL], { timeout: QUERY_MS });
+    } catch (e) {
+      return { code: -1, stdout: "", stderr: errText(e) };
+    }
+  };
+  const first = await once(db);
+  const r = queryResult(first);
+  if (!r.error) return { ...r, via: "readonly" };
+  if (r.error !== "open" || !/\(14\)/.test(said(first)) || (await exists(run, `${db}-wal`))) return r;
+  const again = queryResult(await once(`file:${uriPath(db)}?immutable=1`));
+  return again.error ? again : { ...again, via: "immutable" };
+}
+
+/** One profile's sessions: `querySessions` on its state.db (`~/.hermes/state.db` for `default`). */
+export function profileSessions(run, home, profile) {
+  const db = stateDbPath(home, profile);
+  return db ? querySessions(run, db) : Promise.resolve({ error: "failed", detail: `bad profile ${profile}` });
+}
+
+/** Folder names → the profiles that may run: `default`, then every valid profile name, each once, by name. */
+export function profileNames(text) {
+  const names = String(text ?? "")
+    .split("\n")
+    .map((l) => l.trim().replace(/\/+$/, ""))
+    .map((l) => l.slice(l.lastIndexOf("/") + 1))
+    .filter((n) => n !== "default" && isProfileName(n));
+  return ["default", ...[...new Set(names)].sort()];
+}
+
+/** Hermes's profiles: `default` (~/.hermes itself) and each folder under ~/.hermes/profiles with a valid name. */
+export async function listProfiles(run, home) {
+  const dir = profilesDir(home);
+  if (!dir || !(await exists(run, dir))) return ["default"];
+  try {
+    const r = await run("/usr/bin/find", [dir, "-mindepth", "1", "-maxdepth", "1", "-type", "d"], { timeout: LIST_MS });
+    return profileNames(r.code === 0 ? r.stdout : "");
+  } catch {
+    return ["default"];
+  }
+}
+
+/** `find` output (NUL-separated absolute paths under `folder`) → folder-relative paths for the @ menu, images left
+ *  out (core/paths.js kindOf "image"), sorted shallow first then by name, at most MAX_FILES. */
+export function folderFileList(output, folder) {
+  const root = String(folder ?? "").replace(/\/+$/, "");
+  const prefix = `${root}/`;
+  const out = [];
+  for (const p of String(output ?? "").split("\0")) {
+    if (!p.startsWith(prefix)) continue;
+    const rel = p.slice(prefix.length);
+    if (!rel || kindOf(rel) === "image") continue;
+    out.push(rel);
+  }
+  const depth = (s) => s.split("/").length;
+  out.sort((a, b) => depth(a) - depth(b) || (a < b ? -1 : a > b ? 1 : 0));
+  return out.slice(0, MAX_FILES);
+}
+
+/** The folder's files for the @ menu: hidden entries and SKIPPED folders are not walked. Resolves `[]` on any
+ *  failure (a missing folder too). */
+export async function listFolderFiles(run, folder) {
+  if (typeof folder !== "string" || !folder.startsWith("/")) return [];
+  const prune = ["(", "-name", ".*", ...SKIPPED.flatMap((n) => ["-o", "-name", n]), ")", "-prune"];
+  const args = [folder, "-mindepth", "1", "-maxdepth", String(MAX_DEPTH), ...prune, "-o", "-type", "f", "-print0"];
+  try {
+    const r = await run("/usr/bin/find", args, { timeout: LIST_MS });
+    // find exits non-zero on an unreadable subfolder and still prints the rest.
+    return folderFileList(r.stdout, folder);
+  } catch {
+    return [];
+  }
+}

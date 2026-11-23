@@ -1,0 +1,2 @@
+{"i":8,"t":7534.6,"dir":"send","msg":{"jsonrpc":"2.0","id":3,"method":"session/set_model","params":{"sessionId":"4733fa10-9a37-48dc-b388-7db72fdbd59b","modelId":"openai-codex:gpt-5.5"}}}
+{"i":9,"t":7561.8,"dir":"recv","msg":{"jsonrpc":"2.0","id":3,"result":{}}}

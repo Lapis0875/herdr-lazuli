@@ -1,0 +1,2 @@
+{"i":6,"t":6249.9,"dir":"send","msg":{"jsonrpc":"2.0","id":2,"method":"session/list","params":{"cwd":"/tmp/lz-s9"}}}
+{"i":7,"t":6250.9,"dir":"recv","msg":{"jsonrpc":"2.0","id":2,"result":{"sessions":[]}}}

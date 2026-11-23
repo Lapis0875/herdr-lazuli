@@ -55,6 +55,7 @@ export default {
   "shell.app.inbox": "수신함",
   "shell.app.todo": "할 일",
   "shell.app.routines": "루틴",
+  "shell.app.assistant": "비서",
 
   "shell.brand.name": "lazuli",
   "shell.brand.search": "검색 또는 명령",
@@ -66,6 +67,7 @@ export default {
   "shell.nav.todoCount": "남은 할 일 {count}개",
   "shell.nav.routinesRunning": "실행 중인 루틴이 있습니다",
   "shell.nav.routinesFailed": "마지막 실행이 실패한 루틴 {count}개",
+  "shell.nav.assistant": "비서: 실행 중 {running}, 응답 필요 {waiting}",
 
   "shell.sidebar.search": "검색 또는 명령…",
   "shell.sidebar.searchHint": "모든 항목을 검색하고 명령을 실행합니다  ⇧⌘P",

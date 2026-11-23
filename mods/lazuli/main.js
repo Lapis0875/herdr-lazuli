@@ -31,6 +31,9 @@ import Run from "./views/run.js";
 import Transcript from "./views/transcript.js";
 import FileTab from "./file/file-tab.js";
 import Gallery from "./views/gallery.js";
+import Assistant from "./views/assistant.js";
+import AssistantList from "./views/assistant-list.js";
+import AssistantInfo from "./views/assistant-info.js";
 import Placeholder from "./views/placeholder.js";
 
 /** Every view by its `view` prop. */
@@ -59,6 +62,9 @@ export const VIEWS = Object.freeze({
   transcript: Transcript,
   file: FileTab,
   gallery: Gallery,
+  assistant: Assistant,
+  "assistant-list": AssistantList,
+  "assistant-info": AssistantInfo,
   placeholder: Placeholder,
 });
 

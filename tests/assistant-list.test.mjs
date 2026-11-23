@@ -1,0 +1,190 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import {
+  SESSIONS_SQL, mapRows, mapSessionList, normalizeCwd, buildList, normalizeUi, pruneUi, isProfileName, isSessionId, sessionKey, parseKey,
+} from '../mods/lazuli/core/assistant-list.js';
+
+const HOME = '/Users/u';
+const FOLDER = '/Users/u/work/notes';
+const sid = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+// A SESSIONS_SQL row as `sqlite3 -json` prints it (docs/spikes/S9.md).
+const ROW = (o = {}) => ({
+  id: sid(1), title: null, preview: '', cwd: FOLDER, model: 'gpt-5.5', message_count: 2, started_at: 1795386035.692066, last_active: 1795386044.5,
+  input_tokens: 100, output_tokens: 50, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0,
+  estimated_cost_usd: 0.01, actual_cost_usd: null, cost_status: 'estimated', api_call_count: 1, ...o,
+});
+// Mapped rows, as buildList takes them.
+const rowsIn = (n, cwd = FOLDER, start = 1) => Array.from({ length: n }, (_, i) => ({
+  id: sid(start + i), title: `s${start + i}`, cwd, model: 'gpt-5.5', messageCount: 2, startedAt: 1000 * (start + i), updatedAt: 1000 * (start + i), stats: null,
+}));
+const list = (o) => buildList({ folder: FOLDER, home: HOME, ...o });
+
+test('SESSIONS_SQL is the query validated in S9', () => {
+  const file = readFileSync(new URL('../docs/spikes/S9/sessions.sql', import.meta.url), 'utf8');
+  assert.equal(SESSIONS_SQL.trim(), file.trim());
+  for (const part of ["s.source = 'acp'", 's.message_count > 0', 's.archived = 0', "json_extract(s.model_config, '$.cwd')", 's.api_call_count', 's.estimated_cost_usd']) {
+    assert.ok(SESSIONS_SQL.includes(part), part);
+  }
+});
+
+test('mapRows reads sqlite3 -json output', () => {
+  assert.deepEqual(mapRows(''), []); // sqlite3 -json prints nothing for zero rows
+  assert.deepEqual(mapRows('\n'), []);
+  assert.equal(mapRows('[{'), null);
+  assert.equal(mapRows('{}'), null);
+  assert.equal(mapRows(null), null);
+  assert.deepEqual(mapRows(JSON.stringify([ROW()])), [{
+    id: sid(1), title: 'notes', cwd: FOLDER, model: 'gpt-5.5', messageCount: 2, startedAt: 1795386035692, updatedAt: 1795386044500,
+    stats: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, estimatedCostUsd: 0.01, actualCostUsd: null, costStatus: 'estimated', apiCallCount: 1 },
+  }]);
+  // Hermes's title fallback: title, then the first user message (60 characters + "..."), then the folder name
+  const titles = mapRows(JSON.stringify([
+    ROW({ title: '  Named  ' }),
+    ROW({ preview: 'first line second line' }),
+    ROW({ preview: 'x'.repeat(61) }),
+    ROW({ preview: '\uAC00'.repeat(60) }),
+    ROW({ preview: '\u{1F600}'.repeat(61) }),
+    ROW({ cwd: '/Users/u/work/notes/' }),
+    ROW({ cwd: null }),
+    ROW({ title: '   ', preview: '  hi  ' }),
+  ])).map((r) => r.title);
+  assert.deepEqual(titles, ['Named', 'first line second line', `${'x'.repeat(60)}...`, '\uAC00'.repeat(60), `${'\u{1F600}'.repeat(60)}...`, 'notes', 'New thread', 'hi']);
+  // missing numbers are null; rows without an id are skipped
+  const odd = mapRows(JSON.stringify([ROW({ last_active: null, api_call_count: null, cost_status: null }), { id: '' }, 'x', { title: 'no id' }]));
+  assert.equal(odd.length, 1);
+  assert.equal(odd[0].updatedAt, odd[0].startedAt);
+  assert.equal(odd[0].stats.apiCallCount, null);
+  assert.equal(odd[0].stats.costStatus, null);
+});
+
+test('mapSessionList maps the session/list fallback', () => {
+  assert.deepEqual(mapSessionList({ sessions: [{ sessionId: sid(2), cwd: FOLDER, title: 'T', updatedAt: '2026-11-18T11:22:50+00:00' }, { cwd: FOLDER }] }), [
+    { id: sid(2), title: 'T', cwd: FOLDER, model: null, messageCount: null, startedAt: null, updatedAt: Date.parse('2026-11-18T11:22:50+00:00'), stats: null },
+  ]);
+  assert.deepEqual(mapSessionList({ sessions: [] }), []);
+  assert.deepEqual(mapSessionList(null), []);
+});
+
+test('cwd equality: trailing slash, ~, . and ..', () => {
+  for (const p of [FOLDER, `${FOLDER}/`, `${FOLDER}//`, '~/work/notes', '~/work/notes/', ' /Users/u/work/./notes ', '/Users/u/work/x/../notes', '/Users/u//work/notes']) {
+    assert.equal(normalizeCwd(p, HOME), FOLDER, p);
+  }
+  assert.equal(normalizeCwd('~', HOME), HOME);
+  assert.equal(normalizeCwd('~', '/Users/u/'), HOME);
+  assert.notEqual(normalizeCwd('/Users/u/work/notes2', HOME), FOLDER);
+  assert.notEqual(normalizeCwd('~other/work/notes', HOME), FOLDER);
+  assert.equal(normalizeCwd(null, HOME), '.');
+  assert.equal(normalizeCwd('', HOME), '.');
+  assert.equal(normalizeCwd('~/work/notes', null), '~/work/notes');
+  // rows match the folder through the same rule
+  const g = list({ profiles: [{ profile: 'default', rows: [...rowsIn(1, '~/work/notes/'), ...rowsIn(1, `${FOLDER}/`, 2), ...rowsIn(1, '/Users/u/work', 3), ...rowsIn(1, null, 4)] }] }).groups[0];
+  assert.deepEqual(g.rows.map((r) => r.sessionId), [sid(2), sid(1)]);
+});
+
+test('default is first and always visible; another profile only with rows in the folder; Nod is planned', () => {
+  const l = list({ profiles: [
+    { profile: 'zeta', rows: rowsIn(1, '/elsewhere') },
+    { profile: 'coder', rows: rowsIn(2, '~/work/notes/', 10) },
+    { profile: 'default', rows: [] },
+    { profile: 'empty', rows: [] },
+  ] });
+  assert.deepEqual(l.groups.map((g) => [g.profile, g.visible]), [['default', true], ['coder', true], ['empty', false], ['zeta', false]]);
+  const def = l.groups[0];
+  assert.deepEqual(def.rows, []);
+  assert.deepEqual([def.agent, def.loading, def.bridge, def.running, def.collapsed], ['hermes', false, 'off', 0, false]);
+  assert.deepEqual(l.groups[1].rows.map((r) => r.key), [`coder/${sid(11)}`, `coder/${sid(10)}`]); // newest first
+  assert.deepEqual(l.groups[3].rows, []); // another folder's sessions are not shown
+  assert.deepEqual(l.pickable, ['default', 'coder', 'empty', 'zeta']);
+  assert.deepEqual(l.planned, [{ agent: 'nod', name: 'Nod', planned: true, disabled: true }]);
+  assert.ok(!l.pickable.includes('nod'));
+  // default shows with nothing known yet
+  assert.deepEqual(list({ profiles: [] }).groups.map((g) => [g.profile, g.visible, g.loading]), [['default', true, true]]);
+  assert.deepEqual(list({}).groups.map((g) => g.profile), ['default']);
+});
+
+test('bad profile names are refused', () => {
+  const l = list({ profiles: ['default', 'Bad', '../x', 'a b', '-x', 'ok-1', { profile: 'UP', rows: rowsIn(1) }, null, 7, 'ok-1'] });
+  assert.deepEqual(l.pickable, ['default', 'ok-1']);
+  for (const bad of ['Bad', '../x', 'a b', '-x', '', 'a'.repeat(65), null]) assert.equal(isProfileName(bad), false, String(bad));
+  assert.equal(isProfileName('default'), true);
+  assert.equal(sessionKey('Bad', sid(1)), null);
+  assert.equal(sessionKey('default', 'nope'), null);
+  assert.equal(sessionKey('default', sid(1)), `default/${sid(1)}`);
+  assert.deepEqual(parseKey(`coder/${sid(3)}`), { profile: 'coder', sessionId: sid(3) });
+  assert.equal(parseKey(`Coder/${sid(3)}`), null);
+  assert.equal(parseKey('coder'), null);
+  assert.equal(isSessionId('4733fa10-9a37-48dc-b388-7db72fdbd59b'), true);
+  assert.equal(isSessionId('4733FA10-9a37-48dc-b388-7db72fdbd59b'), false);
+});
+
+test('local new sessions, running and bridge state, selection and collapse', () => {
+  const ui = { v: 1, folder: FOLDER, selected: { agent: 'hermes', profile: 'default', session: sid(2) }, collapsed: ['coder', 'Bad'] };
+  const l = list({
+    ui,
+    profiles: [{ profile: 'default', rows: rowsIn(2) }, { profile: 'coder', rows: [] }, { profile: 'ops', rows: [], error: 'schema' }],
+    local: [
+      { profile: 'default', sessionId: sid(50), updatedAt: 99000 },
+      { profile: 'default', sessionId: sid(1), title: 'dup' },
+      { profile: 'coder', sessionId: sid(60), cwd: `${FOLDER}/`, updatedAt: 5 },
+      { profile: 'coder', sessionId: sid(61), cwd: '/other' },
+      { profile: 'default', sessionId: 'bad' },
+    ],
+    running: [`default/${sid(1)}`, `coder/${sid(60)}`],
+    bridges: { default: { state: 'ready' }, coder: 'starting', ops: 'weird' },
+  });
+  const [def, coder, ops] = l.groups;
+  assert.deepEqual(def.rows.map((r) => [r.sessionId, r.local, r.running, r.selected]), [
+    [sid(50), true, false, false], [sid(2), false, false, true], [sid(1), false, true, false],
+  ]);
+  assert.equal(def.rows[0].title, null);
+  assert.equal(def.rows[0].messageCount, 0);
+  assert.equal(def.rows[2].title, 's1'); // the database row wins over the local one
+  assert.deepEqual([def.running, def.bridge], [1, 'ready']);
+  assert.deepEqual(coder.rows.map((r) => r.sessionId), [sid(60)]);
+  assert.deepEqual([coder.visible, coder.collapsed, coder.running, coder.bridge], [true, true, 1, 'starting']);
+  assert.equal(coder.rows.length, 1); // collapsed keeps its rows for the count and the dot
+  assert.deepEqual([ops.visible, ops.error, ops.bridge], [false, 'schema', 'off']);
+  // running as a Set or an object works the same
+  assert.equal(list({ profiles: [{ profile: 'default', rows: rowsIn(1) }], running: new Set([`default/${sid(1)}`]) }).groups[0].running, 1);
+  assert.equal(list({ profiles: [{ profile: 'default', rows: rowsIn(1) }], running: { [`default/${sid(1)}`]: true } }).groups[0].running, 1);
+});
+
+test('the shared key is reset for another folder and cleaned', () => {
+  const sel = { agent: 'hermes', profile: 'default', session: sid(2) };
+  const fresh = { v: 1, folder: FOLDER, selected: null, collapsed: [] };
+  assert.deepEqual(normalizeUi({ v: 1, folder: '/elsewhere', selected: sel, collapsed: ['coder'] }, FOLDER), fresh);
+  assert.deepEqual(normalizeUi({ v: 1, folder: `${FOLDER}/`, selected: sel, collapsed: ['coder', 'coder', 'X'] }, FOLDER), { v: 1, folder: FOLDER, selected: sel, collapsed: ['coder'] });
+  assert.deepEqual(normalizeUi({ v: 2, folder: FOLDER, selected: sel }, FOLDER), fresh);
+  assert.deepEqual(normalizeUi(null, FOLDER), fresh);
+  assert.equal(normalizeUi({ v: 1, folder: FOLDER, selected: { ...sel, agent: 'nod' } }, FOLDER).selected, null);
+  assert.equal(normalizeUi({ v: 1, folder: FOLDER, selected: { ...sel, session: 'x' } }, FOLDER).selected, null);
+  assert.equal(normalizeUi({ v: 1, folder: FOLDER, selected: { ...sel, profile: 'Bad' } }, FOLDER).selected, null);
+  assert.deepEqual(normalizeUi({ v: 1, folder: FOLDER, selected: sel }, null), { v: 1, folder: null, selected: null, collapsed: [] });
+  // buildList applies the same reset
+  const other = list({
+    profiles: [{ profile: 'default', rows: rowsIn(2) }, { profile: 'coder', rows: rowsIn(1, FOLDER, 9) }],
+    ui: { v: 1, folder: '/elsewhere', selected: sel, collapsed: ['coder'] },
+  });
+  assert.equal(other.groups.flatMap((g) => g.rows).some((r) => r.selected), false);
+  assert.equal(other.groups[1].collapsed, false);
+  // a selected row that no longer exists is cleared once its group has loaded
+  const ui = normalizeUi({ v: 1, folder: FOLDER, selected: { ...sel, session: sid(7) } }, FOLDER);
+  assert.equal(pruneUi(ui, list({ profiles: [{ profile: 'default', rows: rowsIn(2) }], ui })).selected, null);
+  assert.equal(pruneUi(ui, list({ profiles: [{ profile: 'default', rows: rowsIn(7) }], ui })), ui);
+  assert.equal(pruneUi(ui, list({ profiles: ['default'], ui })), ui); // still loading
+  assert.equal(pruneUi(ui, list({ profiles: [{ profile: 'default', rows: [], error: 'query' }], ui })), ui); // failed
+  const gone = normalizeUi({ v: 1, folder: FOLDER, selected: { ...sel, profile: 'old' } }, FOLDER);
+  assert.equal(pruneUi(gone, list({ profiles: [{ profile: 'default', rows: [] }], ui: gone })).selected, null);
+  assert.equal(pruneUi(fresh, list({})), fresh);
+});
+
+test('150 rows in one group, newest first', () => {
+  const rows = rowsIn(150);
+  const shuffled = [...rows.filter((_, i) => i % 2), ...rows.filter((_, i) => !(i % 2))];
+  const got = list({ profiles: [{ profile: 'default', rows: shuffled }] }).groups[0].rows;
+  assert.equal(got.length, 150);
+  assert.deepEqual(got.map((r) => r.sessionId), rows.map((r) => r.id).reverse());
+  assert.equal(new Set(got.map((r) => r.key)).size, 150);
+  assert.ok(got.every((r) => r.local === false && r.running === false && r.selected === false));
+});

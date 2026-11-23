@@ -33,18 +33,19 @@ Every file targets under 600 lines. `core/` is pure (see §9).
 | `mods/lazuli/core/` (data) | `gh-map.js`: GraphQL answer → PR/CI rows · `ticket.js`: ticket link from PR body or branch · `stage.js`: agent stage · `todo-doc.js`: to-do parser/writer · `queue-doc.js`: queue edits and prompt joining · `spend.js` + `pricing.js`: usage → USD · `ledger.js`: working-time stretches |
 | `mods/lazuli/core/` (routines, agents) | `routine-file.js`: front matter, `when`, cron · `routine-sched.js`: schedule/catch-up/finish reducer · `agent-cmd.js`: run/resume/fork argv and output parsing per tool · `resume-tools.js`: port of `lh-resume-tools.js` · `migrate-plan.js`: pure migration plan |
 | `mods/lazuli/core/` (files) | `paths.js`: kind/mode table (B3), tilde, dedupe key, name rules · `tabs-reg.js`: tab registry reducer · `drafts.js`: draft naming and banner decision · `fuzzy.js`: quick-open scoring · `md-tree.js`: marked tokens → render tree · `lru.js`: cache eviction order · `proto.js`: line-JSON framing and message validators |
-| `mods/lazuli/core/` (i18n) | `i18n.js`: `t(key, vars)`, language resolution · `catalog/index.js`: merges fragments · `catalog/<area>.en.js`, `<area>.ko.js` for areas `common shell home inbox todo routines review files tree filetab palette settings` |
-| `mods/lazuli/sys/` | `store.js`: in-memory store, snapshots, settings file · `state.js`: shared-key names · `bus.js`: command table · `gh.js` · `fleet.js` · `scan.js` · `runner.js` · `routines.js` · `queue.js` · `resume.js` · `notify.js` · `migrate.js` · `sidecars.js` (pdfd build/launch) · `filetabs.js` (open, dedupe, own-tab resolution) · `search.js` (palette index) |
+| `mods/lazuli/core/` (i18n) | `i18n.js`: `t(key, vars)`, language resolution · `catalog/index.js`: merges fragments · `catalog/<area>.en.js`, `<area>.ko.js` for areas `common shell home inbox todo routines review files tree filetab palette settings gallery viewer assistant` |
+| `mods/lazuli/core/` (Assistant, §13) | `acp-wire.js`: ACP messages, the bridge's line protocol, discovery, in-flight tracker, stderr filter · `assistant-agents.js`: agent adapters (Hermes; Nod planned) · `assistant-chat.js`: chat reducer · `assistant-list.js`: list model and Hermes's session query |
+| `mods/lazuli/sys/` | `store.js`: in-memory store, snapshots, settings file · `state.js`: shared-key names · `bus.js`: command table · `gh.js` · `fleet.js` · `scan.js` · `runner.js` · `routines.js` · `queue.js` · `resume.js` · `notify.js` · `migrate.js` · `sidecars.js` (pdfd build/launch) · `filetabs.js` (open, dedupe, own-tab resolution) · `search.js` (palette index) · Assistant (§13): `assistant.js` (service), `assistant-bridge.js` (bridge launch, reuse, reaping), `assistant-sessions.js` (profiles, `state.db` rows, folder files), `acp-client.js` (one bridge connection) |
 | `mods/lazuli/ui/` | `tokens.js`: token contract (§11) · `kit.js`: Button, Icon, Row, Badge, Field, Tabs, Menu, Empty, Spinner, Kbd, Banner · `icons/*.svg`: Lucide subset · `logo.svg` |
 | `mods/lazuli/views/` (shell) | `brand.js` · `sidebar.js` · `bell.js` · `status.js` (also hosts services) · `activity.js` · `pane-head.js` · `agent-head.js` · `palette.js` · `quickopen.js` · `settings.js` · `menu.js` · `placeholder.js` |
-| `mods/lazuli/views/` (apps, panels) | `home.js` · `inbox.js` · `inbox-detail.js` · `todo.js` · `routines.js` · `routine-form.js` · `queue.js` · `recap.js` · `review.js` · `diff.js` · `files-tree.js` · `files-ops.js` · `tree.js` · `run.js` · `transcript.js` |
+| `mods/lazuli/views/` (apps, panels) | `home.js` · `inbox.js` · `inbox-detail.js` · `todo.js` · `routines.js` · `routine-form.js` · `queue.js` · `recap.js` · `review.js` · `diff.js` · `files-tree.js` · `files-ops.js` · `tree.js` · `run.js` · `transcript.js` · Assistant (§13): `assistant.js` (chat), `assistant-list.js`, `assistant-info.js`, `assistant/` (`transcript`, `cards`, `composer`, `gate`, `list-parts`, `model`, `diff`, `folder`, `common`, `sample`) |
 | `mods/lazuli/file/` | `model.js`: load/save/conflict/draft state machine (no elements) · `file-tab.js`: tab view, toolbar, mode switch · `md-view.js` · `pdf-view.js` · `pdf-client.js`: TCP client · `image-view.js` · `html-fallback.js` · `info-card.js` |
-| `mods/lazuli/bin/` | `scan.mjs`: transcript reader (tree, detail, run, call, transcript, usage, sessions) · `run-agent.mjs`: headless run wrapper · `html-view.mjs`: terminal HTML viewer · `chrome-broker.mjs` · `pdfd.swift` · `lib/cdp.mjs`, `lib/kitty.mjs`, `lib/static-server.mjs`, `lib/md-page.mjs` |
+| `mods/lazuli/bin/` | `scan.mjs`: transcript reader (tree, detail, run, call, transcript, usage, sessions) · `run-agent.mjs`: headless run wrapper · `html-view.mjs`: terminal HTML viewer · `chrome-broker.mjs` · `pdfd.swift` · `acp-bridge.mjs`: the Assistant's ACP bridge (§13) · `lib/cdp.mjs`, `lib/kitty.mjs`, `lib/static-server.mjs`, `lib/md-page.mjs` |
 | `mods/lazuli/vendor/`, `omp/` | `vendor/marked.esm.js` + `vendor/marked.LICENSE` · `omp/lazuli-tree.ts` (renamed extension, D1) |
 | `layouts/`, `themes/` | `layouts/lazuli.json` · `layouts/lazuli.svg` · `themes/lazuli-light.json` · `themes/lazuli-dark.json` |
 | `relay/` | `lazuli.profile.json` (§8) |
 | `docs/` | `DESIGN.md` · `ARCHITECTURE.md` (this document) · `TESTING.md` (live scenarios) · `spikes/S*.md` (results) · `mockups/` |
-| `tests/` | `*.test.mjs` (§9) · `fixtures/` |
+| `tests/` | `*.test.mjs` (§9) · `fixtures/` (among them `fake-acp-agent.mjs` and `acp/hermes-0.17.0.json`, §13) |
 | root | `keys.json` · `package.json` (`"test": "node --test tests/"`) · `README.md` · `README.ko.md` · `RECIPE.md` · `THIRD_PARTY_NOTICES.md` · `LICENSE` · `LICENSES/` · `preview.png` |
 
 **Deleted:**
@@ -60,9 +61,9 @@ Every file targets under 600 lines. `core/` is pure (see §9).
 | View registry | `main.js` picks `VIEWS[props().view] ?? Placeholder`, calls `view.init(props, cx)`, and forwards `render` and `close`. Same shape as `REF lstack-herdr-cockpit/main.js:36-58`, but hand-written. |
 | Command pump | Each copy loops on `nextCommand()` and calls `bus.dispatch(command, view, cx)`. `key:<keystroke>` goes to `view.key()` (test hook). |
 | Command ownership | Window-wide commands are handled only by the `status` copy, which is always shown and exists once per layout (F2). `file-mode` is handled by the `file` copy whose `tab === focused().tab`. ⌘S is an `on_key_down` inside the editor, not a `keys.json` entry. |
-| Services | The `status` copy starts every service in `init`, guarded by `checking()`: gh poll, fleet, routines tick, resume, queue, notify, migration, pdfd build, ledger. |
+| Services | The `status` copy starts every service in `init`, guarded by `checking()`: gh poll, fleet, routines tick, resume, queue, the Assistant (reconnects only, §13), notify, migration, pdfd build, ledger. |
 | Store | `sys/store.js` holds a module-level map (F3). After a change the owner writes `H/data/lazuli/snap/<name>.json` and bumps `shared("lazuli.rev")[name]`, which re-renders every copy. Snapshots also give a warm start and feed relay devices (§8). |
-| Settings | `H/data/lazuli/settings.json`: `{version:1, language:"system"|"ko"|"en", agent:{command:["omp"], model?}, notifications:{system:true}, gh:{org?:[], pollSec:120}, routines:{maxParallel:3}, pins:[…], pdf:{zoom:"fit"}}`. The live copy is `shared("lazuli.settings")`, so a change applies at once (C3). |
+| Settings | `H/data/lazuli/settings.json`: `{version:2, language:"system"|"ko"|"en", agent:{command:["omp"], model?}, notifications:{system:true}, gh:{org?:[], pollSec:120}, routines:{maxParallel:3}, pins:[…], pdf:{zoom:"fit"}, editor:"code", assistant:{folder:null, debugAgent:null}}`. A version 1 file gains `"assistant"` in its own `pins` once and is written back as version 2. The live copy is `shared("lazuli.settings")`, so a change applies at once (C3). |
 | i18n | Flat keys per fragment, `{name}` placeholders, fallback ko → en → key. `"system"` resolves once with `exec("defaults", ["read","-g","AppleLanguages"])`: first entry starting `ko` → Korean. AI prompts append "Answer in Korean/English" from the setting. |
 | Theme | Views never call `theme()` directly; they call `tokens()` from `ui/tokens.js` (§11). |
 
@@ -72,7 +73,7 @@ Commands (`keys.json` section `layout:lazuli`, D2):
 |---|---|---|---|
 | ⇧⌘P | `lazuli.palette` | status | `openOverlay({mod:"lazuli", props:{view:"palette"}, kind:"dialog"})` |
 | ⌥⌘0 | `lazuli.home` | status | `layout.select {stack:"center"}` home ↔ work |
-| ⌥⌘1/2/3 | `lazuli.go:inbox` / `go:todo` / `go:routines` | status | `layout.select {stack:"center", child}` |
+| ⌥⌘1/2/3/4 | `lazuli.go:inbox` / `go:todo` / `go:routines` / `go:assistant` | status | `layout.select {stack:"center", child}` |
 | ⌥⌘A | `lazuli.agent-view` | status | `layout.select {stack:"view"}` main ↔ agent |
 | ⌥⌘B | `lazuli.panel` | status | `layout.toggle {id:"panel"}` |
 | ⌘1/2/3/4 | `lazuli.panel:review` / `files` / `changes` / `tree` | status | select in `panel-body` and show; hide if already shown |
@@ -93,6 +94,7 @@ Shared keys (all under `lazuli.`):
 | `snooze` | `{address: untilMs}` |
 | `seen` | attention already looked at |
 | `pdfd` | `{state:"absent"|"building"|"ready"|"failed", bin, reason}` |
+| `assistant.ui` | `{v:1, folder, selected:{agent, profile, session}|null, collapsed:[profile]}` (§13) |
 
 ## 3. `layouts/lazuli.json`
 
@@ -133,7 +135,13 @@ root
     │   │   │           └─ tree     → lazuli {view:"tree"}
     │   │   ├─ inbox     block card → lazuli {view:"inbox"}
     │   │   ├─ todo      block card → lazuli {view:"todo"}
-    │   │   └─ routines  block card → lazuli {view:"routines"}
+    │   │   ├─ routines  block card → lazuli {view:"routines"}
+    │   │   └─ assistant  row gap8                                   (§13)
+    │   │       ├─ assistant-list  block px260 min220 max420 card → lazuli {view:"assistant-list"}
+    │   │       ├─ assistant-chat  block weight1 min360 card       → lazuli {view:"assistant"}
+    │   │       └─ assistant-side  column px300 min260 max560 gap8
+    │   │           ├─ assistant-info   block px188 card  → lazuli {view:"assistant-info"}
+    │   │           └─ assistant-files  block weight1 card → lazuli {view:"files", scope:"assistant", block:"assistant-files"}
     │   └─ activity  block px44 → lazuli {view:"activity", stack:"panel-body"}   (visible on every center view)
     └─ status  block px34 → lazuli {view:"status"}
 ```
@@ -274,6 +282,7 @@ Scheduler, a reducer over `H/data/lazuli/routines-state.json`:
 | Chrome broker `bin/chrome-broker.mjs` | the first viewer that finds none | `spawn(process.execPath, [broker], {detached:true, stdio:"ignore"}).unref()`; the broker holds an exclusive flock on `~/.cache/lazuli/broker.lock` for its whole life (review fix) | `~/.cache/lazuli/chrome.json` (0600) | 300 s after the last lease closes |
 | PDF daemon `~/.cache/lazuli/bin/pdfd-<sha8>` | `sys/sidecars.js`, on the first PDF | `hc run --bg --json --cwd ~ --label lazuli.sidecar=pdfd -- <bin> --cache <H>/data/lazuli/cache/pdf --discovery ~/.cache/lazuli/pdfd-<home8>.json --idle 300` | `~/.cache/lazuli/pdfd-<home8>.json` (0600; `<home8>` = first 8 hex of sha256(app home); reused only when the build and the recorded `cache` both match this home) | 300 s with no connection |
 | Headless run `bin/run-agent.mjs` | `sys/runner.js` | §4.8 | label `lazuli.run=<id>` + run files | command exit |
+| ACP bridge `bin/acp-bridge.mjs`, one per Hermes profile | `sys/assistant-bridge.js`, when the Assistant screen opens | `hc run --bg --json --no-parent --no-notify --cwd <folder> --label lazuli.assistant=<profile> -- <abs node> <bridge> …` (§13.2) | `~/.cache/lazuli/assistant/<home8>/<profile>.json` (0600, folder 0700; reused only when its pid lives, profile, folder and Herdr pid match and `hello` comes within 5 s) | 30 min idle with nothing running or pending, Herdr gone, `{op:"shutdown"}`, a signal, or the agent's exit |
 
 **HTML viewer (B7, B8)**
 - Chrome is driven over CDP: `Page.startScreencast {format:"png"}` (F6), each frame drawn as one Kitty image replaced in place.
@@ -386,7 +395,7 @@ Notifications (A8; `sys/notify.js`):
 | not active, `terminal-notifier` found | `exec(tn, ["-title","lazuli","-subtitle",title,"-message",body,"-group","lazuli:"+key,"-activate","dev.herdr.app","-execute","env HERDR_APP_HOME=<H> <home>/.local/bin/herdr-app do agent.focus --terminal <addr>"])`. `<addr>` must match `^[A-Za-z0-9._/-]+$`, else no `-execute`. |
 | not active, not found or exit ≠ 0 | `notify()` plus `setBadge(String(count))` |
 
-- Sources: agent turned blocked or done (once per address + status + seq), routine end (per its `notify`), gh events.
+- Sources: agent turned blocked or done (once per address + status + seq), routine end (per its `notify`), gh events, and the Assistant's notices (an approval request, a finished or failed turn, §13.4), whose click runs `lazuli.target:assistant:<profile>:<session>` (in the window, or through `-execute "… herdr-app do lazuli.target:assistant:<profile>:<session>"`).
 - `-sender` is not used; terminal-notifier's docs say it cannot be combined with `-execute`. [INFERENCE] not re-checked here; S2 covers it.
 
 ## 8. herdr-relay profile (`relay/lazuli.profile.json`)
@@ -401,7 +410,8 @@ Notifications (A8; `sys/notify.js`):
       "allow": { "read": ["~/**"], "write": ["~/.cache/lazuli/**"], "run": ["ps"] } },
     "mods/lazuli/bin/run-agent.mjs":     { "refuse": "Agent runs start only in the Herdr window" },
     "mods/lazuli/bin/html-view.mjs":     { "refuse": "The HTML viewer runs only in the Herdr window" },
-    "mods/lazuli/bin/chrome-broker.mjs": { "refuse": "The HTML viewer runs only in the Herdr window" } },
+    "mods/lazuli/bin/chrome-broker.mjs": { "refuse": "The HTML viewer runs only in the Herdr window" },
+    "mods/lazuli/bin/acp-bridge.mjs":    { "refuse": "The Assistant bridge runs only in the Herdr window" } },
   "overlay": "device" }
 ```
 
@@ -414,6 +424,7 @@ Notifications (A8; `sys/notify.js`):
 | `gh`, `omp`, `sh`, `hc send/label/run/kill` | refused | E16; E7 allows reads only |
 | Saving a file, editing To-do | refused | `writeTextFile` is off for every folder |
 | Opening a file as a tab | refused | `tab.new` is structural |
+| Assistant | a desktop-only notice; no folder, chat or token reaches the device | the views gate on the host probe (`views/apps/snapshot.js` `hostLocal()`) and never call `open`; the store `assistant` has no snapshot; the bridge script is refused |
 | Markdown local images, PDF pages | not drawn | the static route does not serve `data/lazuli/**` (`RELAY POLICY.md` §2.1) |
 
 Install (README): copy to `~/.herdr/herdr-relay/profiles/lazuli.json`, `chmod 600`, restart the bridge (`RELAY PROFILES.md` §3). Three rows conflict with D4 as written: see P1.
@@ -431,7 +442,8 @@ Install (README): copy to `~/.herdr/herdr-relay/profiles/lazuli.json`, `chmod 60
 | migration | `migrate-plan.test.mjs` | missing folders; existing targets not overwritten; `app:t3` → `t3`; pins filtered; a second run plans nothing; tokens never appear in the plan |
 | i18n | `i18n.test.mjs` | key sets equal in both languages; placeholders equal; no empty text; fallback order |
 | other pure logic | `todo-doc.test.mjs`, `queue-doc.test.mjs`, `spend.test.mjs`, `agent-cmd.test.mjs`, `resume-tools.test.mjs`, `md-tree.test.mjs`, `lru.test.mjs`, `proto.test.mjs` | upstream to-do and queue cases; Claude duplicate usage lines counted once; unknown model unpriced; argv per tool; a partial JSON line held until complete; oversized line refused |
-| structure | `purity.test.mjs`, `layout.test.mjs`, `theme.test.mjs`, `relay-profile.test.mjs`, `static-server.test.mjs` | forbidden imports in `core/`; unique layout ids; every `view` exists in `VIEWS`; every `keys.json` action is in the bus table; `panel-body.active === "files"`; contrast ≥ 4.5 for each text/background token pair; 16 ANSI colors; profile scripts exist; `..` and a wrong `Host` are refused |
+| structure | `purity.test.mjs`, `layout.test.mjs`, `theme.test.mjs`, `relay-profile.test.mjs`, `static-server.test.mjs` | forbidden imports in `core/`; unique layout ids; every `view` exists in `VIEWS`; every `keys.json` action is in the bus table; `panel-body.active === "files"`; the Assistant's center child, columns, views and ⌥⌘4; the settings 1→2 pins migration; contrast ≥ 4.5 for each text/background token pair; 16 ANSI colors; profile scripts exist; `..` and a wrong `Host` are refused |
+| Assistant (§13) | `acp-wire.test.mjs`, `assistant-agents.test.mjs`, `assistant-chat.test.mjs`, `assistant-list.test.mjs`, `assistant-sessions-sql.test.mjs`, `acp-bridge.test.mjs`, `fake-acp-agent.test.mjs` | the chat reducer's ten rules with deadlines at 59,999/60,000/60,001 ms and approval buttons by option id; cwd equality, hidden profiles, `default` first, Nod last, UI state of another folder reset; argv always with `-p`; the bridge's auth, file modes, token kept out of the log, loopback, hello, replay and `gap`, `replaced`, ping, idle exit and none with a prompt or approval open, Herdr gone within 5 s (12 s with a running prompt), SIGHUP, agent crash, a 5 MiB burst in order, a 16 MiB line dropped; the session query on a WAL database built from Hermes's schema and a missing column read as `schema`; every fake-agent row against the recorded Hermes shapes |
 
 **Live window** (`docs/TESTING.md`, owner: testcode-writer):
 1. Start a second Herdr with a scratch home: `HERDR_APP_HOME=/tmp/lazuli-home`, with `mods/lazuli`, the layout, themes and keys copied in. [INFERENCE] a second instance per home works; S6 confirms it.
@@ -521,3 +533,168 @@ Evidence collected by Main (2026-11-19):
 | `codex --version` / `codex fork --help` | codex-cli 0.167.0; `codex fork [SESSION_ID] [PROMPT]`; `codex exec --skip-git-repo-check --json` present |
 | `zstd --version` | v1.5.7 |
 | decision-log | recording `off` for this repository; no records |
+
+## 13. Assistant screen (DESIGN E; lazuli-assistant plan, 2026-11-23)
+
+Tested with Hermes Agent 0.17.0 (ACP protocol 1, `agent-client-protocol` 0.9.0). The spikes behind it are
+`docs/spikes/S8.md` (the bridge transport in a live window) and `docs/spikes/S9.md` (the Hermes handshake without
+tokens; the recorded messages are `docs/spikes/S9/*.jsonl`). Module contracts: CONTRACTS "Assistant".
+
+### 13.1 Processes and files
+
+```
+Assistant views (local window only) ──K4 calls──► sys/assistant.js  (module state; the status copy runs it)
+                                                    │  sys/acp-client.js per profile: one stream socket, short send sockets
+                                                    ▼  127.0.0.1:<port>, token from the discovery file
+hc run --bg … node bin/acp-bridge.mjs --profile <p> …    (terminal label lazuli.assistant=<p>; one per profile)
+                                                    │  stdio, one JSON-RPC object per line
+                                                    ▼
+<abs hermes> -p <p> acp                           (its own process group; cwd = the assistant folder)
+```
+
+| Path | Mode | Writer | Content |
+|---|---|---|---|
+| `~/.cache/lazuli/assistant/<home8>/` | 0700 | the bridge | `<home8>` = first 8 hex of sha256(app home), as for pdfd (§5) |
+| `<profile>.json` | 0600 | the bridge, via a 0600 temp file and a rename, only after `initialize` succeeded | `{version:1, pid, agentPid, port, token, profile, cwd, herdrPid, startedAt}`; a failed start `{version:1, pid, error:{code: agent-exit\|init-failed\|init-timeout, detail}}` |
+| `<profile>.log`, `<profile>.log.1` | 0600 | the bridge | method names, ids, sizes, the agent's stderr; 5 MiB with one rotation |
+
+The token is 32 random bytes in hex. It lives in the discovery file and in the mod's memory only: never in a log, a
+snapshot or `shared.json`.
+
+### 13.2 Bridge lifetime (`sys/assistant-bridge.js`, `bin/acp-bridge.mjs`)
+
+- **Programs.** `node` and `hermes` are looked up on `PATH`, then in `~/.local/bin`, `/opt/homebrew/bin` and
+  `/usr/local/bin`, then through the login shell's `command -v`, and run by absolute path (Herdr's own `PATH` may lack
+  them, S5). Herdr's pid is `$PPID` of `/bin/sh -c 'echo "$PPID"'`.
+- **Launch.** `hc run --bg --json --no-parent --no-notify --cwd <folder> --label lazuli.assistant=<profile> -- <node>
+  <H>/mods/lazuli/bin/acp-bridge.mjs --profile <p> --cwd <folder> --discovery <dir>/<p>.json --log <dir>/<p>.log
+  --herdr-pid <pid> --idle-min 30 --agent -- <argv>`. The Herdr process carries `HC_TERMINAL_ID`: without
+  `--no-parent --no-notify` the bridge's terminal would get a parent and `hc` would type notes into it (S8). The agent
+  argv is `<abs hermes> -p <profile> acp`, `-p` also for `default` so `hermes profile use` never changes which profile a
+  bridge serves; with `assistant.debugAgent` set it is `debugAgent ++ ["-p", <profile>, "acp"]`.
+- **Start.** The bridge spawns the agent in its own process group (cwd = folder, `PATH` extended as for
+  `run-agent.mjs`), sends `initialize` once (protocol 1, client `fs` and `terminal` capabilities off, `clientInfo`
+  lazuli) and keeps the answer for every `hello`. No answer in 40 s is `init-timeout`. The mod polls the discovery file
+  every 100 ms for up to 45 s (S9: cold start 0.6–1.6 s; `initialize` may refresh the provider login over the network).
+- **Reuse.** A discovery is reused when its pid lives, its `profile`, `cwd` and `herdrPid` match, and `hello` arrives
+  within 5 s. Otherwise its labelled terminal gets `hc kill` and `hc rm`, the file is removed, and an agent group a dead
+  bridge left is killed once `ps -o command=` shows it is that profile's `acp`. So a mod reload or a layout switch keeps
+  the same bridge; a new folder or a new Herdr gets a new one.
+- **Ends.** Idle: 30 minutes with no `send` and no agent line, no prompt in flight and no agent request open (pings and
+  stream connects do not count). Herdr: `process.kill(herdrPid, 0)` every second. SIGHUP (`hc kill`), SIGTERM, SIGINT
+  or Herdr gone take the fast path: `session/cancel` for running sessions without waiting, SIGTERM to the agent group,
+  SIGKILL 300 ms later, discovery removed, exit within 400 ms. `{op:"shutdown"}` (a folder change) cancels running
+  sessions and waits up to 3 s, then SIGTERM and SIGKILL 2 s later (5 s after a cancel): out within 3 s with nothing
+  running, 11 s with a turn. The agent's exit sends `agent-exit` and `bye`, then exit 1; nothing respawns it. The
+  service removes finished `lazuli.assistant=*` terminals (`hc rm`) every 60 s.
+- **Log.** Hermes logs the first 100 characters of every prompt to stderr (`acp_adapter/server.py:1383`); the bridge
+  rewrites that line to its session id and `[<n> chars]`.
+
+### 13.3 Connection (`sys/acp-client.js`)
+
+- **Two channels.** One stream connection per profile (first line `{op:"stream", token, since, client}`, then `hello`
+  and every agent line as a numbered record) and one short connection per message (`{op:"send", token, msg}` →
+  `{ok}`). The client never writes on the stream after its first line.
+- **Host limits (S8).** A Herdr `net` read that waits 30 s fails with "os error 35": the bridge pings after 10 s of
+  silence, the client reads again after such a failure and counts the stream lost after 3 in a row or at its end. One
+  `net` write carries at most 1 MiB, so a longer line goes in pieces. At most 8 sends per profile at once and no timer
+  per line or read (1,024 host tasks per runtime).
+- **Recovery.** A dropped stream whose bridge still runs reconnects with `since` = the last record held and gets what
+  it missed (the ring keeps 4,000 records or 8 MiB; older is `gap`, and the chats reload). `hello` lists the prompts
+  still running and the agent requests still open, so a reload restores running turns and approval cards. A bridge that
+  is gone fails the chats' open requests and shows a banner with Retry.
+
+### 13.4 Service (`sys/assistant.js`)
+
+- **Where it runs.** Module state shared by every copy, run by the always-shown `status` copy
+  (`views/shell/services.js`). Views call it inside `cx.spawn` and read `snapshot()` in render. Every `net`, `exec` and
+  `hc` call is behind `checking()`. Changes redraw the copies through the store `assistant` (`snapshot: false`), at most
+  one `store.set` per 80 ms.
+- **`start(cx)`** launches nothing and runs no `hermes`: it reconnects to running bridges of the current folder and
+  Herdr (the reuse rule), so notices keep coming after a reload while another screen shows. Its one-second tick expires
+  approval cards, removes finished bridge terminals every 60 s, rereads the folder's files every 10 s and the list
+  every 30 s while the screen shows, and follows a folder changed in `settings.json` by hand.
+- **`open(cx)`**, called by a local Assistant view on every show (idempotent): the folder (unset → `no-folder`; not a
+  folder on disk → `folder-missing`); once per start `hermes acp --check` (with `debugAgent`, `debugAgent ++ ["acp",
+  "--check"]`; not found or not executable → `hermes-missing` with where it looked; a non-zero exit →
+  `hermes-check-failed` with its output and code); the profiles and the list; the `default` bridge; the remembered
+  selection. A new bridge starts only after these gates passed. `recheck(cx)` (the gates' Retry) runs them again.
+- **List.** Profiles: `default` (`~/.hermes`) and each folder of `~/.hermes/profiles` with a valid name
+  (`^[a-z0-9][a-z0-9_-]{0,63}$`). Rows: `/usr/bin/sqlite3 -readonly -json <state.db> SESSIONS_SQL` per profile that has
+  a database: Hermes's own listing (`source='acp'`, at least one message, not archived, compression children folded into
+  their first row), with the cwd compared in JS as Hermes normalizes it. Empty output is no rows. Error `(14)` with no
+  `-wal` file (Hermes removed it on a clean exit) is retried once on `file:<db>?immutable=1`; a missing column or table
+  is `schema`. A profile whose query fails lists through its connected bridge with `session/list {cwd, cursor}` (no
+  stats), as every profile does with `debugAgent` set. Chats made in this run show until the database has them. The
+  list is read again about a second after each turn. The shared key `lazuli.assistant.ui` keeps the selection and the
+  collapsed groups (DESIGN E5): reset for another folder, the selection cleared once its row is gone.
+- **Chats.** `+` makes `session/new` (an unused empty chat of that profile made in this run is reused); selecting runs
+  `session/load`, whose history replays into the chat; Fork runs `session/fork`. Text goes as described in 13.6. Stop
+  sends `session/cancel` and pauses the chips. An approval answer is `{outcome:{outcome:"selected", optionId}}`, refused
+  with `too-late` after the card's 60 s. The model changes with `session/set_model`, refused with `busy` while a turn
+  runs. A folder change with a turn running returns `busy` until confirmed; then each bridge gets `shutdown`, the
+  folder is saved, and the screen opens there.
+- **Notices** `{id, kind: permission|done|failed, key, title, body, at}`: an approval request, a prompt that ended (not
+  cancelled), and a failed prompt or a lost bridge with a prompt in flight. None while the screen shows that chat in
+  the active window. `sys/notify.js` delivers them (§7) with the target `assistant:<profile>:<session>`.
+
+### 13.5 Views, commands, settings
+
+- **Views** (§3): `assistant-list` (groups, rows with running spinner or "Needs you", Fork on hover, the new-chat
+  profile picker with Nod Planned), `assistant` (header with title, profile, running time, model menu and Fork; bridge
+  banner; virtualized transcript; plan strip; composer; or a gate), `assistant-info` (model, mode, context, last turn,
+  totals with API calls, cost and cost status), and `files` with `scope:"assistant"`: rooted at the folder whatever has
+  focus, refreshed while `assistant-files` shows, a click opens the file with `filetabs.open` in the active space and
+  shows the work view (no active space: a notice), and a file row's Attach runs `lazuli.assistant:attach:<rel>`.
+- **Relay gate.** The views probe the host as Home does (`views/apps/snapshot.js`); on a herdr-relay device they draw
+  the desktop-only notice and never call `open`. Copies with `props.preview` or `props.sample` draw the canned states of
+  `views/assistant/sample.js` (the approved prototype's).
+- **Commands.** `lazuli.go:assistant` (⌥⌘4, owner `status`) runs `showCenter("assistant")`.
+  `lazuli.target:assistant:<profile>:<session>` (a notification or palette row) shows the screen with that chat
+  selected; the profile must be a Hermes profile name and the session `^[0-9a-f-]{36}$`. `lazuli.assistant:<verb>`
+  reaches every copy's `command()`: `new[:<profile>]`, `select:<profile>/<session>`, `focus`, `stop`,
+  `attach:<rel path>`, `allow`, `deny`, `send:<text>` (test hook) and `sample:<name>` (preview copies).
+- **Composer keys** in the chat view's `on_key_down`, ahead of the text box: Enter sends (steers while a turn runs),
+  ⇧Enter is a new line, ⌥Enter queues a chip.
+- **Elsewhere.** Sidebar item `assistant` (pinned by default; a count of chats waiting on an approval, else a working
+  dot while a turn runs); palette rows "Assistant" and the folder's chats; the settings view's Assistant section (the
+  folder, with the confirm of a folder change while a turn runs). Settings: `assistant.folder` (absolute path or null)
+  and `assistant.debugAgent` (an argv or null; left out of the README).
+
+### 13.6 Hermes ACP mapping and limits
+
+| lazuli | ACP (Hermes 0.17.0) | Notes |
+|---|---|---|
+| bridge start | `initialize` | once per bridge, answer cached |
+| "+" | `session/new {cwd, mcpServers: []}` | |
+| open a chat | `session/load {sessionId, cwd, mcpServers: []}` | the history replays as `session/update`s; an unknown id answers `{}` (no `models`): `not-found`. `session/resume` is never used |
+| Fork | `session/fork` | an unknown source answers `sessionId: ""`: `not-found` |
+| model menu, `/model x` | `session/set_model` | not while a turn runs |
+| send while idle | `session/prompt` with a `text` block and one `resource_link` (`file://…`) per attachment | |
+| Enter while a turn runs | `session/prompt` with `/steer <text>` | attachments become `@path` text: Hermes drops a running prompt's attachments, and they turn slash handling off |
+| ⌥Enter, typed `/queue x` | none until the turn ends, then `session/prompt` | chips are lazuli's: Hermes's own `/queue` cannot remove or pause |
+| other advertised `/command` | `session/prompt` with the text | Hermes answers `help`, `model`, `tools`, `context`, `reset`, `compact`, `version` itself; after `/reset` or `/compact` the chat reloads |
+| Stop | `session/cancel` | the turn ends `cancelled`; chips pause |
+| approval card | answer to `session/request_permission` | buttons by option id: `allow_once`, `allow_always`, `deny`; the rest (`allow_session`, `deny_always`) under More |
+| list fallback | `session/list {cwd, cursor}` | |
+
+- **Steer answers.** Hermes answers `/steer` with one chunk; the adapter's anchored patterns (`⏩ Steer queued for the
+  active turn: …`, `No active turn — queued for the next turn. (n queued)`, `⚠️ Steer failed: …`, `Usage: /steer
+  <guidance>`) turn it into a notice; a reply that merely starts with "Queued" is not one.
+- **Diffs** show only while a conversation is live: Hermes's history replay has no diff and no tool timing.
+- **Approvals.** Hermes waits 60 s and sends no deadline, so the card counts down from the bridge's receive time.
+  Edit approvals (`toolCallId` `edit-approval-…`) carry the diff and two options, `allow_once` and `deny`.
+- **Database.** `state.db` is Hermes's private schema, read with Hermes 0.17.0's own query; another version may fail it
+  (`schema`), and the list then falls back to `session/list` without token and cost columns. Totals of a session Hermes
+  compressed may count only part of its history. lazuli never writes under `~/.hermes`; Hermes itself writes its
+  sessions there and may refresh its provider login during `initialize` (S9).
+- **Caps** (CONTRACTS `assistant-chat.js`): 2,000 transcript items, 400,000 characters per message, 20,000 per tool
+  text; a longer message to send is refused `too-long`. The @ list holds at most 2,000 files to depth 8, without
+  pictures, hidden entries, `node_modules`, virtual environments or `__pycache__`.
+
+### 13.7 Fake agent and tests
+
+`tests/fixtures/fake-acp-agent.mjs` speaks ACP over stdio like Hermes 0.17.0, from the shapes recorded in S9
+(`tests/fixtures/acp/hermes-0.17.0.json`), so the bridge, the service and the views run without a model; the first
+word of a prompt picks its behavior (CONTRACTS "Fake ACP agent"). Live checks point `assistant.debugAgent` at it
+(`docs/TESTING.md`, Assistant). The unit tests are in §9.

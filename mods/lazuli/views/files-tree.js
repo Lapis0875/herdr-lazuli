@@ -13,26 +13,39 @@
 // A focus on a file tab keeps the folder in view when the file is inside it. A preview copy lists once and opens
 // nothing.
 //
+// `scope: "assistant"` (the Assistant's side column, K8; `block` names its layout block): the folder is the Assistant's
+// from the settings, whatever has focus, and shows once this window is known to be the Mac (on a relay device, with
+// no folder set, or with the folder gone, a note says so). A click opens the file in the active space and shows the
+// work view (no active space: a notice, nothing opens); a file row (not an image) has Attach, which runs
+// `lazuli.assistant:attach:<path from the folder>`.
+//
 // Commands (palette, keys, `herdr-app do`, while the panel shows): `files:new[:<folder>]`, `files:mkdir[:<folder>]`,
 // `files:rename:<path>`, `files:delete:<path>`, `files:input:type:<name>`, `files:input:submit`,
 // `files:input:cancel`, `files:confirm:delete`, `files:confirm:cancel`, `files:collapse`; paths from the folder.
 
 import { div } from "gpui-kit";
 import { h_flex, v_flex, InputState } from "gpui-base";
-import { props, home, checking, watchFolder, focused, panes, terminals } from "herdr";
+import { props, home, checking, watchFolder, focused, panes, terminals, spaces, run } from "herdr";
 import { t } from "../core/i18n.js";
 import { tokens } from "../ui/tokens.js";
 import { ViewRoot, Text, Icon, IconButton, Spacer, trackFocus } from "../ui/kit.js";
 import { context, open as openFile, registry } from "../sys/filetabs.js";
-import { invalidName, tilde, dirname } from "../core/paths.js";
+import { settings } from "../sys/store.js";
+import { showCenter } from "../sys/bus.js";
+import { invalidName, tilde, dirname, kindOf } from "../core/paths.js";
 import {
   PER_FOLDER, TOTAL, directory, gitMarks, createFile, createFolder, renameEntry, identify, deleteEntry, folderContents, trashes, canOperate,
 } from "./files-ops.js";
 import { DeleteConfirm, FailedNotice } from "./panels/files-parts.js";
 import { treeRows } from "./panels/files-rows.js";
 import { blockShown } from "./panels/common.js";
+import { probeHost, hostLocal, snapshotMode } from "./apps/snapshot.js";
 
 const REFRESH_MS = 10000;
+const HOST_MS = 2000;
+
+/** The space a click in the Assistant's tree opens in: the active one, or null. */
+const activeSpace = () => (spaces() ?? []).find((s) => s.active)?.id ?? null;
 
 /** `p` after `from` became `to`: unchanged when neither `from` nor under it; null when `to` is null (deleted). */
 const moved = (p, from, to) => (p === from ? to : p.startsWith(`${from}/`) ? (to === null ? null : `${to}${p.slice(from.length)}`) : p);
@@ -45,6 +58,9 @@ export default class FilesTree {
   init(_props, cx) {
     this.p = props() ?? {};
     this.preview = this.p.preview === true;
+    this.scoped = this.p.scope === "assistant";
+    this.block = typeof this.p.block === "string" ? this.p.block : "files";
+    this.gate = null; // the scoped tree's note instead of a folder: "relay" | "checking" | "none", else null
     this.saved = new Map(); // folder key → open folders, for when the focus comes back
     this.context = null; // {key, cwd, on, space}
     this.entries = new Map();
@@ -75,7 +91,18 @@ export default class FilesTree {
     this.follow();
     this.refresh(cx);
     // While the panel is hidden the folder watch keeps it current; the timer reads only what someone sees.
-    if (!this.preview && !checking()) cx.timer.every(REFRESH_MS, (cx) => blockShown("files") && this.refresh(cx));
+    if (!this.preview && !checking()) cx.timer.every(REFRESH_MS, (cx) => blockShown(this.block) && this.refresh(cx));
+    // The scoped folder waits for the host check (K4 relay gate), which another Assistant copy may have started.
+    if (this.scoped && !this.preview && !checking()) {
+      probeHost(cx);
+      cx.timer.every(HOST_MS, (cx) => {
+        if (this.gate !== "checking") return;
+        probeHost(cx);
+        const changed = this.follow();
+        if (changed) this.refresh(cx);
+        if (changed || this.gate !== "checking") cx.notify();
+      });
+    }
   }
 
   close() {
@@ -111,8 +138,10 @@ export default class FilesTree {
     return fid8 ? null : {};
   }
 
-  /** The folder in view follows the focused pane; a file tab whose file is inside it keeps it. True on a change. */
+  /** The folder in view follows the focused pane; a file tab whose file is inside it keeps it. True on a change.
+   *  The scoped tree follows the settings instead. */
   follow() {
+    if (this.scoped) return this.followSetting();
     const ctx = this.context;
     const f = focused();
     // A focus on a layout block (this panel, the sidebar) names no folder: the tree stays where it is.
@@ -124,13 +153,30 @@ export default class FilesTree {
     this.space = at.space ?? this.space;
     this.selected = at.file ?? null;
     if (at.file && ctx && (ctx.on ?? null) === (at.on ?? null) && at.file.startsWith(`${ctx.cwd === "/" ? "" : ctx.cwd}/`)) return false;
-    const cwd = at.cwd;
-    const key = JSON.stringify({ cwd, on: at.on ?? null });
+    return this.place(at.cwd, at.on ?? null);
+  }
+
+  /** The scoped tree: the Assistant's folder once this window is known to be the Mac, and the active space (its
+   *  preview tab's eye, where a click opens). True on a change. */
+  followSetting() {
+    const folder = settings().assistant?.folder ?? null;
+    const host = this.preview ? null : snapshotMode() ? "relay" : hostLocal() ? null : "checking";
+    this.gate = host ?? (folder ? null : "none");
+    this.space = activeSpace();
+    this.selected = null;
+    return this.place(this.gate ? null : folder, null);
+  }
+
+  /** Shows folder `cwd` on machine `on` (null: this computer), with the folders that were open there before. True on
+   *  a change. */
+  place(cwd, on) {
+    const ctx = this.context;
+    const key = JSON.stringify({ cwd, on });
     if (key === ctx?.key) return false;
     if (ctx) this.saved.set(ctx.key, new Set(this.folders));
     this.watch?.cancel();
     this.watch = null;
-    this.context = { key, cwd, on: at.on ?? null };
+    this.context = { key, cwd, on };
     this.entries = new Map();
     this.folders = new Set(this.saved.get(key) ?? []);
     this.pending = new Set();
@@ -192,7 +238,8 @@ export default class FilesTree {
         this.error = null;
         this.watchLoop(ctx, cx);
       } catch (e) {
-        if (this.current(ctx)) this.error = String(e?.message ?? e);
+        // The scoped folder gone: the listing's `test -d` fails silently, so the error is the folder itself.
+        if (this.current(ctx)) this.error = this.scoped && e?.message === ctx.cwd ? t("assistant.gate.missing.title") : String(e?.message ?? e);
       } finally {
         if (this.current(ctx)) {
           this.loading = false;
@@ -245,11 +292,31 @@ export default class FilesTree {
     cx.notify();
   }
 
-  /** A file row's click: its preview tab, or (a second click) a normal tab, in the followed space (B2). */
+  /** A file row's click: its preview tab, or (a second click) a normal tab, in the followed space (B2). The scoped
+   *  tree opens it in the active space and shows the work view; with no active space it says so and opens nothing. */
   openPath(path, pin) {
     const ctx = this.context;
     if (!ctx?.cwd || this.preview) return;
-    openFile(`${ctx.cwd}/${path}`, { on: ctx.on, space: this.space ?? undefined, ...(pin ? { pin: true } : { preview: true }) });
+    if (!this.scoped) {
+      openFile(`${ctx.cwd}/${path}`, { on: ctx.on, space: this.space ?? undefined, ...(pin ? { pin: true } : { preview: true }) });
+      return;
+    }
+    const space = activeSpace();
+    if (!space) {
+      this.failed = t("filetab.quickopen.no-place");
+      return;
+    }
+    if (openFile(`${ctx.cwd}/${path}`, { on: null, space, ...(pin ? { pin: true } : { preview: true }) })) showCenter("work");
+  }
+
+  /** Whether a row has Attach: a file of the scoped tree that is not an image (images are not attached). */
+  attachable(entry, path) {
+    return this.scoped && !this.preview && !entry.dir && kindOf(path) !== "image";
+  }
+
+  /** Attach: the file joins the Assistant composer's attachments, by its path from the folder (K7). */
+  attach(path) {
+    if (this.scoped && !this.preview && this.context?.cwd) run(`lazuli.assistant:attach:${path}`);
   }
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -541,7 +608,7 @@ export default class FilesTree {
   tree(k) {
     const rows = treeRows(this, k);
     const naming = this.edit?.kind === "new" && this.edit.folder === "";
-    const idle = this.error ?? t(this.loading ? "files.reading" : this.context?.cwd ? "files.empty" : "files.noFolder");
+    const idle = this.error ?? (this.loading ? t("files.reading") : this.context?.cwd ? t("files.empty") : this.noFolder());
     return v_flex()
       .id("files-tree")
       .flex_1()
@@ -554,5 +621,13 @@ export default class FilesTree {
       .children(rows)
       .when(Boolean(this.error) || (!naming && !this.entries.get("")?.length), (e) => e.child(Text(idle, { size: "sm", tone: "tertiary" }).p(8)))
       .when(this.limited, (e) => e.child(Text(t("files.limited", { folder: PER_FOLDER, total: TOTAL.toLocaleString() }), { size: "xs", tone: "tertiary" }).p(8)));
+  }
+
+  /** Why no folder shows: the panel's own words, or the scoped tree's note. */
+  noFolder() {
+    if (!this.scoped) return t("files.noFolder");
+    if (this.gate === "relay") return t("assistant.gate.relay.short");
+    if (this.gate === "checking") return t("files.reading");
+    return t("assistant.files.none");
   }
 }

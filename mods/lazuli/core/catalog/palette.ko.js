@@ -20,6 +20,7 @@ export default {
   "palette.cmd.go.inbox": "받은 편지함",
   "palette.cmd.go.todo": "할 일",
   "palette.cmd.go.routines": "루틴",
+  "palette.cmd.go.assistant": "비서",
   "palette.cmd.agent-view": "에이전트 보기",
   "palette.cmd.panel": "사이드 패널",
   "palette.cmd.panel.review": "사이드 패널: 리뷰",

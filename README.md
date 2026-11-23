@@ -3,9 +3,10 @@
 [한국어](README.ko.md)
 
 A [Herdr app](https://herdr.dev) layout for working with coding agents: your agents and their pull requests on one
-board, a GitHub inbox, a to-do list and scheduled routines, a review panel that sends line comments to an agent, and
-files opened as tabs with Markdown, HTML, PDF and picture previews. One hand-written mod, `lazuli`, draws all of it; it
-needs nothing besides Herdr, Node.js and the GitHub CLI.
+board, a GitHub inbox, a to-do list and scheduled routines, a review panel that sends line comments to an agent, files
+opened as tabs with Markdown, HTML, PDF and picture previews, and an Assistant screen that chats with
+[Hermes Agent](https://hermes-agent.nousresearch.com) in a folder you choose. One hand-written mod, `lazuli`, draws all
+of it; it needs nothing besides Herdr, Node.js and the GitHub CLI, plus Hermes Agent for the Assistant.
 
 ![lazuli](layouts/lazuli.svg)
 
@@ -19,7 +20,7 @@ part of it. A one-time migration brings your to-do list, routines, sidebar pins 
 
 ## Features
 
-**Center views** (⌥⌘0 to ⌥⌘3):
+**Center views** (⌥⌘0 to ⌥⌘4):
 
 - **Home.** The next thing that needs you, then your agents on a board by stage (needs you, working, ready, done)
   with their pull request and CI state, summaries of Inbox, To-do and Routines, this week's spend, recent GitHub
@@ -34,6 +35,10 @@ part of it. A one-time migration brings your to-do list, routines, sidebar pins 
 - **Routines.** Prompts for a headless agent or shell scripts that run on a schedule (`every 30m`, `daily 09:00`,
   `weekdays 9:00,17:30`, cron), on a GitHub event (`on review`, `on ci-failed`, …) or by hand. Each shows its next and
   last run, output, cost and history; it can run in its own git worktree. Run now, stop, pause, edit, delete.
+- **Assistant** (비서). Chats with Hermes Agent in one folder: your chats on the left, grouped by Hermes profile; the
+  chat in the middle, with replies streaming as Markdown, tool calls as cards (file edits as a diff), approval cards,
+  Stop, steering a running reply with Enter and queueing the next message with ⌥Enter; the folder's files and the
+  chat's model, context, tokens and cost on the right ([Assistant](#assistant)).
 
 **Side panel** (⌘1 to ⌘4), with an activity rail at the right edge that stays visible on every center view:
 
@@ -79,18 +84,18 @@ focused. `●` marks unsaved edits. ⌘⇧V cycles the modes, ⌘⇧O opens a fi
   or OMP session that ran in it comes back: lazuli types the tool's resume command, with its original flags. Home
   lists the terminals whose restore is pending or failed; ⌥⌘R tries them again.
 - **Palette** (⇧⌘P). lazuli's and Herdr's commands with their keys, layouts, the language, spaces, tabs, agents, pull
-  requests, to-dos, routines and past sessions of OMP, Claude Code and Codex (Enter resumes one in a new tab, ⌘Enter
-  forks it), and lazuli's settings.
+  requests, to-dos, routines, the Assistant's chats, and past sessions of OMP, Claude Code and Codex (Enter resumes one
+  in a new tab, ⌘Enter forks it), and lazuli's settings.
 - **Prompt queue** (⌥⌘Q). Write follow-ups while an agent works; send one, or all of them as one numbered prompt. A
   drawer on the right edge shows what waits for the agent in front.
 - **Recap** (⌘R). Every agent by stage with an AI recap of what it did, the question it waits on answered in place,
   snooze, fork into a new tab, and a Time tab with this week's agent time per ticket.
 - **Jumps.** ⌘J goes to the next agent waiting for you, ⇧⌘J the next blocked one, ⇧⌘U the next finished one; ⌘G and
   ⌘L open the focused agent's pull request and ticket.
-- **Notifications.** An agent turning blocked or done, a routine ending, and GitHub events. While Herdr is in front
-  they show inside the window. In the background they become macOS notifications through `terminal-notifier`; clicking
-  one about an agent focuses that agent. Without `terminal-notifier`, lazuli falls back to the in-window toast and a
-  Dock badge.
+- **Notifications.** An agent turning blocked or done, a routine ending, GitHub events, and the Assistant asking for an
+  approval or finishing a reply. While Herdr is in front they show inside the window. In the background they become
+  macOS notifications through `terminal-notifier`; clicking one about an agent focuses that agent, one about an
+  Assistant chat opens it. Without `terminal-notifier`, lazuli falls back to the in-window toast and a Dock badge.
 - **Korean and English.** The macOS language decides at first (Korean → Korean, anything else → English). Switch in
   lazuli's settings or with the palette command "Language"; it applies at once, and AI-written recaps and walkthroughs
   follow it.
@@ -114,6 +119,7 @@ Optional:
 | [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) (`brew install terminal-notifier`) | in-window toasts and a Dock badge instead of macOS notifications |
 | `zstd` (`brew install zstd`) | compressed Codex transcripts (`.jsonl.zst`) are skipped in spend and past sessions |
 | the OMP extension `lazuli-tree.ts` (install step 4) | the call tree still finds OMP sessions from OMP's own files, and marks their statuses as estimated |
+| [Hermes Agent](https://hermes-agent.nousresearch.com) (`hermes`), tested with 0.17.0 | the Assistant screen shows how to install it and has nothing else to show |
 
 ## Install
 
@@ -234,6 +240,7 @@ tab already shows closes the panel.
 | ⌥⌘1 `cmd-alt-1` | `lazuli.go:inbox` | Inbox in the center |
 | ⌥⌘2 `cmd-alt-2` | `lazuli.go:todo` | To-do in the center |
 | ⌥⌘3 `cmd-alt-3` | `lazuli.go:routines` | Routines in the center |
+| ⌥⌘4 `cmd-alt-4` | `lazuli.go:assistant` | the Assistant in the center |
 | ⌥⌘A `cmd-alt-a` | `lazuli.agent-view` | the work view switches between the panes and the focused agent |
 | ⌥⌘B `cmd-alt-b` | `lazuli.panel` | shows or hides the side panel |
 | ⌘1 `cmd-1` | `lazuli.panel:review` | side panel tab Review |
@@ -251,7 +258,9 @@ tab already shows closes the panel.
 | ⌘G `cmd-g` | `lazuli.pr` | opens the focused agent's pull request |
 | ⌘L `cmd-l` | `lazuli.ticket` | opens the focused agent's ticket: the first tracker link in the PR body, else a `KEY-123` in the branch name |
 
-⌘1–⌘4 replace Herdr's tab selection keys while the lazuli layout is shown; ⌘5–⌘9 still select tabs.
+⌘1–⌘4 replace Herdr's tab selection keys while the lazuli layout is shown; ⌘5–⌘9 still select tabs. Updating from a
+lazuli without the Assistant: copy `layouts/lazuli.json` again (install step 2) and merge `keys.json` again (step 3)
+for its screen and ⌥⌘4.
 
 ## Settings
 
@@ -268,9 +277,45 @@ are kept.
 | `gh.org` | `[]` | only pull requests in these GitHub organizations; empty means all |
 | `gh.pollSec` | `120` | seconds between GitHub refreshes while the window is active (at least 30); in the background it is 600 |
 | `routines.maxParallel` | `3` | routines running at once |
-| `pins` | `["inbox", "todo", "routines"]` | the apps pinned in the sidebar, in order |
+| `pins` | `["inbox", "todo", "routines", "assistant"]` | the apps pinned in the sidebar, in order. Settings from before the Assistant gain `"assistant"` once |
 | `pdf.zoom` | `"fit"` | the zoom a PDF opens at: `"fit"`, `50`, `75`, `100`, `125`, `150` or `200` |
 | `editor` | `"code"` | the external editor command for "Open in editor" (`code`, `cursor`, `zed`, …); a remote folder opens with `--folder-uri vscode-remote://ssh-remote+<host><path>` |
+| `assistant.folder` | `null` | the folder on this Mac the Assistant works in; the screen asks for one while it is unset |
+
+## Assistant
+
+The Assistant screen (⌥⌘4, or "비서 / Assistant" in the sidebar) is a chat with
+[Hermes Agent](https://hermes-agent.nousresearch.com) in one folder of this Mac. It is tested with Hermes Agent
+**0.17.0**; it reads parts of Hermes that other versions may change (below).
+
+1. Install Hermes and set up a model:
+   `curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash`, then `hermes setup`. The screen shows the same
+   two commands while `hermes` is missing, and the output of `hermes acp --check` when that fails.
+2. Open the Assistant and choose a folder; the settings view's Assistant section changes it later. Hermes works in
+   that folder, and the list shows only the chats held there.
+
+Using it:
+
+- **Chats.** Grouped by Hermes profile: `default` always, first; another profile only when it has chats in the folder;
+  "Nod · Planned" last and disabled. "+" starts a chat in a profile; a chat row opens it with its history, or forks it.
+  The selected chat and the collapsed groups are remembered.
+- **Composer.** Enter sends, ⇧Enter starts a new line, `@` attaches a file from the folder (not pictures), `/` lists
+  Hermes's commands. While Hermes answers, Enter steers the running reply (Hermes's `/steer`) and ⌥Enter adds the
+  message as a chip that is sent when the reply ends; Stop ends the reply and pauses the chips.
+- **Approvals.** When Hermes asks to run something, a card offers Allow once, Allow always and Deny, with Hermes's other
+  choices under More, and counts down Hermes's 60 seconds.
+- **Model.** The chat header shows the chat's model and changes it for that chat; Hermes's own default stays as it is.
+- **Side column.** The chat's model, mode, context used, last reply's tokens, and the totals and cost Hermes recorded;
+  under it the folder's files: a click opens a file in the work view, Attach adds it to the message.
+- **Notifications.** An approval request, a finished reply and a failed one notify you while the Assistant is not in
+  front; the notification opens that chat.
+
+How it runs: for each Hermes profile in use, lazuli starts a small bridge, `mods/lazuli/bin/acp-bridge.mjs`, with
+`hc run --bg` in the folder. The bridge runs `hermes -p <profile> acp` and talks to lazuli over 127.0.0.1, only with
+clients that hold the token in its discovery file. Its files are in `~/.cache/lazuli/assistant/<home8>/` (the folder
+0700; `<profile>.json` and `<profile>.log` 0600; `<home8>` names the Herdr app home); the log holds method names and
+sizes, never the token or what you write. A bridge keeps running behind other screens and across reloads, and exits
+after 30 minutes with nothing running or waiting for you, or when Herdr quits.
 
 ## What it runs, reads and writes
 
@@ -331,6 +376,14 @@ panel's listing, file reads, quick open, `git`, Review's `gh`, the session looku
   --show-toplevel`, `open <url>`, `pbpaste` and `pbcopy`, and starts `chrome-broker.mjs` with node, which runs the
   browser (`--headless=new --remote-debugging-port=0 --user-data-dir=~/.cache/lazuli/chrome-profile --no-first-run
   --no-default-browser-check`) and `ps -o command= -p <pid>`.
+- Assistant: `/bin/sh -c` with `command -v`, and the login shell's `command -v` with `tail` (finding `hermes` and
+  `node`), `hermes acp --check` (once per start), `/bin/sh -c 'echo "$PPID"'` (Herdr's pid),
+  `/usr/bin/sqlite3 -readonly -json` (the chat list from Hermes's `state.db`), `/usr/bin/find` (Hermes's profiles and
+  the folder's files for @), `/bin/test`, `/bin/ls`, `/bin/kill -0`, `/bin/rm -f` (a stale discovery file),
+  `/bin/ps -o command=` and `kill -s KILL` (only for an agent a dead bridge left, after `ps` shows it is that profile's
+  `hermes … acp`), and `hc run --bg`, `hc kill`, `hc rm` (the bridges). The bridge, `bin/acp-bridge.mjs` under node,
+  runs `hermes -p <profile> acp` in its own process group, in the folder, with the same `PATH` additions as
+  `run-agent.mjs`.
 
 **Reads**, outside its own folders:
 
@@ -340,6 +393,9 @@ panel's listing, file reads, quick open, `git`, Review's `gh`, the session looku
 - The files and folders you open, the Files panel's folders, and the repositories of your spaces and agents.
 - Once, in the migration: `~/.config/cockpit/todo.md`, `~/.config/cockpit/routines/*.md`, the `.spaces` value of
   `~/.config/cockpit/config.json` and `~/.cache/cockpit/queue.json`.
+- The Assistant: `~/.hermes/state.db` and `~/.hermes/profiles/<profile>/state.db`, read-only (the chat list, tokens and
+  cost), the folder names under `~/.hermes/profiles`, and the files of the Assistant's folder. lazuli never writes under
+  `~/.hermes`; Hermes itself does (its chats, and its provider login when it refreshes it).
 
 **Writes**
 
@@ -351,22 +407,25 @@ panel's listing, file reads, quick open, `git`, Review's `gh`, the session looku
 - `~/.cache/lazuli/`: `scan-cache.json`, `run-cache.json`, `usage-cache.json` and `sessions-index.json` (the
   transcript reader's caches), `recaps/`, `routines/<slug>/<id>.*` and `runs/<id>.*` (run files: command, pid, output,
   exit), `bin/pdfd-<hash>`, `pdfd-<home>.json` (one per Herdr app home), `chrome.json` (both 0600), `broker.lock`, `chrome-profile/`, `chrome.log`,
-  `broker.log`.
+  `broker.log`; `assistant/<home8>/<profile>.json` and `<profile>.log` (the Assistant's bridges: the folder 0700, the
+  files 0600, the log rotated at 5 MiB).
 - `~/.herdr/worktrees/<repo>/auto/<slug>-<id>`: a routine's worktree, removed after the run when it left nothing.
-- Herdr's shared state (`shared.json`): `lazuli.*` keys, among them the open file tabs.
-- Terminal labels: `lazuli.resume` (what to restore), `lazuli.run`, `lazuli.sidecar` and `lazuli.view`.
+- Herdr's shared state (`shared.json`): `lazuli.*` keys, among them the open file tabs and the Assistant's selected chat
+  and collapsed groups (`lazuli.assistant.ui`).
+- Terminal labels: `lazuli.resume` (what to restore), `lazuli.run`, `lazuli.sidecar`, `lazuli.view` and
+  `lazuli.assistant` (a bridge's profile).
 - What you save, create, rename or delete. A delete goes to the Trash where `/usr/bin/trash` exists.
 - The OMP extension writes OSC 7501 records to the terminal OMP runs in.
 
 **Network**
 
-- `gh` talks to GitHub with your `gh` login; your agent CLIs talk to their providers.
+- `gh` talks to GitHub with your `gh` login; your agent CLIs, and Hermes, talk to their providers.
 - The HTML viewer's headless browser loads what the page loads, with its own profile in
   `~/.cache/lazuli/chrome-profile`. The rendered Markdown page ("View in Chrome") loads mermaid 12.3.0 and KaTeX
   0.19.1 from `cdn.jsdelivr.net`, pinned by subresource integrity, only when the page has a diagram or math.
 - Loopback only (`127.0.0.1`, random ports): the viewer's file server, the browser's DevTools port, the Chrome
-  broker's lease port, and the PDF renderer, which answers only a client holding the token in its 0600 discovery file.
-  The mod's own network use is the connection to the PDF renderer.
+  broker's lease port, the PDF renderer and the Assistant's bridges, which answer only a client holding the token in
+  their 0600 discovery files. The mod's own network use is the connections to the PDF renderer and the bridges.
 - Links open in your default browser.
 
 ## On your phone and tablet: herdr-relay
@@ -390,6 +449,7 @@ allow `gh`, `omp` or `sh`, saving a file, or opening a tab (herdr-relay's `docs/
 | `gh`, agent runs, the HTML viewer, sending to agents | refused |
 | saving, editing the to-do list, opening a file tab | refused |
 | pictures in Markdown, PDF pages | not drawn |
+| the Assistant | a desktop-only notice; no snapshot holds its folder, chats or bridge token, and the bridge is refused |
 
 To install it:
 
@@ -433,6 +493,12 @@ To install it:
   has no italic (Pretendard has no italic face; emphasis is weight or color) and no diagrams or math: those need "View
   in Chrome", which needs the network for its CDN scripts.
 - **PDF.** No drag selection ("Copy page text" instead). The `pdftocairo` fallback has no search, links or outline.
+- **Assistant.** Hermes Agent only, tested with 0.17.0; Nod is listed as planned. The chat list and the totals and cost
+  come from Hermes's own `state.db`, a private schema read with Hermes 0.17.0's query: another version may fail it, and
+  the list then comes from Hermes's ACP `session/list`, without tokens or cost. Totals of a chat Hermes compressed may
+  count only part of it. File edits show as a diff only while the chat is live (Hermes's history replay has none).
+  Pictures cannot be attached; archive, delete and rename of chats, and Hermes's auto-allow modes, are not there. One
+  folder at a time, on this Mac only.
 - **Files panel:** 500 entries a folder and 5,000 in all. Without `/usr/bin/trash` a delete is permanent, and the
   confirm says so. **Quick open** lists at most 20,000 files (outside git, `find` to depth 6) and shows the best 50.
 - **herdr-relay devices** are read-only (above).
@@ -440,7 +506,8 @@ To install it:
 ## Uninstall
 
 1. Stop any routine that is running, switch to another layout with `ctrl-shift-l`, and wait 5 minutes: the PDF
-   renderer and the shared Chrome exit 5 minutes after their last use.
+   renderer and the shared Chrome exit 5 minutes after their last use. The Assistant's bridges exit when Herdr quits,
+   or 30 minutes after their last use.
 2. Remove the files:
 
    ```sh
@@ -473,6 +540,8 @@ adding text and icons. The design decisions are in [docs/DESIGN.md](docs/DESIGN.
 - [Lucide](https://github.com/lucide-icons/lucide) and Feather: the icons.
 - [marked](https://github.com/markedjs/marked): the Markdown parser.
 - [Pretendard](https://github.com/orioncactus/pretendard) by Kil Hyung-jin: the UI font.
+- [Hermes Agent](https://hermes-agent.nousresearch.com) by Nous Research: the agent the Assistant talks to (not
+  bundled); its adapter source is where the Assistant's protocol details come from.
 
 ## License
 

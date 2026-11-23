@@ -55,6 +55,7 @@ export default {
   "shell.app.inbox": "Inbox",
   "shell.app.todo": "To-do",
   "shell.app.routines": "Routines",
+  "shell.app.assistant": "Assistant",
 
   "shell.brand.name": "lazuli",
   "shell.brand.search": "Search or run a command",
@@ -66,6 +67,7 @@ export default {
   "shell.nav.todoCount": "{count} open to-dos",
   "shell.nav.routinesRunning": "A routine is running",
   "shell.nav.routinesFailed": "Routines whose last run failed: {count}",
+  "shell.nav.assistant": "Assistant: {running} running, {waiting} need you",
 
   "shell.sidebar.search": "Search or command…",
   "shell.sidebar.searchHint": "Search everything, run any command  ⇧⌘P",

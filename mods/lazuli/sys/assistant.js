@@ -1,0 +1,1130 @@
+// The Assistant service (CONTRACTS K4; K2, K3, K5–K7; D3, D12, D22, D25, D28–D30): one module state shared by every
+// lazuli copy, run by the always-shown `status` copy (views/shell/services.js starts it) and acted on by the Assistant
+// views through the calls below. Views call them inside `cx.spawn` and read `snapshot()` in render.
+//
+//   start(cx); stop()                        start reconnects to running bridges of this folder and Herdr (no
+//                                            launch, no hermes command); stop closes sockets, bridges keep running
+//   snapshot(): AssistantState; session(key): ChatState | null           key = `${profile}/${sessionId}`
+//   open(cx); recheck(cx); refreshList(cx, profile?)
+//   pickFolder(cx); setFolder(cx, path, {confirmed})
+//   newSession(cx, profile); select(cx, key); fork(cx, key)
+//   send(cx, key, {text, attachments})       idle: session/prompt; running: "/steer <text>"
+//   queue(cx, key, text); unqueue(key, chipId); resumeQueue(cx, key)      lazuli-held chips (D28)
+//   stopTurn(cx, key); answerPermission(cx, key, requestId, optionId); setModel(cx, key, modelId)
+//   toggleGroup(profile); retryBridge(cx, profile); folderFiles(): string[]
+//   openTarget(cx, profile, sessionId)       a notification's click (`lazuli.target:assistant:<p>:<s>`)
+//   onNotice(fn)                             notices for sys/notify.js: {id, kind, key, title, body, at}
+//
+// Results are `{ok: true, …}` or `{error}`, codes: no-folder relay hermes-missing hermes-check-failed
+// bridge-launch-failed bridge-timeout agent-exit auth disconnected busy not-found too-long too-late rpc:<code>, and
+// `cancelled` for a dismissed folder picker.
+//
+// Each chat is core/assistant-chat.js state, reduced from the bridge's records and the service's own events; the list
+// is core/assistant-list.js `buildList` over each profile's state.db rows (sys/assistant-sessions.js), the sessions
+// made in this run, the running set and the shared key `lazuli.assistant.ui`. Changes redraw every copy through the
+// store `assistant` (no snapshot: nothing of the Assistant reaches the relay, D5), at most once per 80 ms.
+//
+// Every `net`, `exec` and `hc` call is behind `checking()`: `herdr-app check` runs no part of this.
+
+import { checking, exec, home, shared, setShared, pickFolder as pickFolderDialog, window as appWindow } from "herdr";
+import { t } from "../core/i18n.js";
+import * as wire from "../core/acp-wire.js";
+import { emptyChat, reduce, isRunning, queueHead, canAnswer, MAX_MESSAGE } from "../core/assistant-chat.js";
+import { buildList, normalizeUi, pruneUi, mapSessionList, parseKey, sessionKey, isProfileName, isSessionId } from "../core/assistant-list.js";
+import { agentArgv, routeText } from "../core/assistant-agents.js";
+import { normalize } from "../core/paths.js";
+import * as store from "./store.js";
+import { KEY } from "./state.js";
+import { showCenter } from "./bus.js";
+import { blockShown } from "../views/panels/common.js";
+import { AcpClient } from "./acp-client.js";
+import * as bridge from "./assistant-bridge.js";
+import * as disk from "./assistant-sessions.js";
+
+/** The store that redraws the copies; never snapshotted (D5). */
+export const ASSISTANT_STORE = "assistant";
+/** The layout block of the Assistant screen (K2). */
+const SCREEN = "assistant";
+const FLUSH_MS = 80;
+const TICK_MS = 1000;
+const REAP_EVERY = 60;
+const FILES_EVERY = 10;
+const LIST_EVERY = 30;
+const LIST_AFTER_TURN_MS = 1200;
+const NEW_MS = 60000;
+const LOAD_MS = 120000;
+const LIST_MS = 30000;
+const NOTICES_KEPT = 20;
+const BODY_MAX = 300;
+
+const log = (msg) => {
+  console.log(`[lazuli/assistant] ${msg}`);
+  store.debugLog("assistant", msg);
+};
+const errText = (e) => e?.message ?? String(e);
+const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+const run = (command, args, options) => exec(command, args, options);
+
+// ---- state ------------------------------------------------------------------------------------------------------
+
+function fresh(folder = null) {
+  return {
+    gate: "checking",
+    gateDetail: null,
+    folder,
+    hermes: null, // {path, version}
+    bridges: {}, // profile → {state, error?, detail?}
+    sessions: {}, // key → ChatState
+    notices: [],
+    profiles: [], // [{profile, rows, error?}] for buildList
+    local: [], // sessions made this run: [{profile, sessionId, title, updatedAt, cwd}]
+    files: [], // the folder's files for the @ menu
+  };
+}
+
+const S = fresh();
+/** Bumped by every change; snapshot() is rebuilt only when it moved. */
+let version = 0;
+let built = { version: -1, value: null };
+let flushing = false;
+let service = null; // {stopped} while started
+let checked = null; // {key, result} of this start's agent check
+const clients = new Map(); // profile → AcpClient
+const launches = new Map(); // profile → Promise of ensureBridge
+const loads = new Map(); // key → Promise of a session/load
+const promptKeys = new Map(); // request id → {key, kind, resync}
+const listeners = new Set();
+let opening = null;
+let listing = null;
+let switching = null;
+let filesAt = 0;
+const listSoon = new Set();
+let clientSeq = 0;
+const NONCE = `l${Date.now().toString(36)}`;
+
+const debugAgent = () => store.settings().assistant?.debugAgent ?? null;
+const settingsFolder = () => store.settings().assistant?.folder ?? null;
+
+/** Marks a change: copies redraw within FLUSH_MS (one `store.set` per window). */
+function changed(cx) {
+  version++;
+  if (flushing || !cx) return;
+  flushing = true;
+  try {
+    cx.spawn(
+      async (tcx) => {
+        await tcx.sleep(FLUSH_MS);
+        flushing = false;
+        store.set(ASSISTANT_STORE, { version, at: Date.now() }, { snapshot: false });
+      },
+      { owner: null },
+    );
+  } catch (e) {
+    flushing = false;
+    log(`redraw not scheduled: ${errText(e)}`);
+  }
+}
+
+/** Runs `fn(cx)` in a task no view owns (it outlives the copy that asked) and resolves with its result. */
+function owned(cx, fn) {
+  return new Promise((resolve) => {
+    cx.spawn(
+      async (tcx) => {
+        try {
+          resolve(await fn(tcx));
+        } catch (e) {
+          log(`failed: ${errText(e)}`);
+          resolve({ error: "disconnected", detail: errText(e) });
+        }
+      },
+      { owner: null },
+    );
+  });
+}
+
+const gateError = () => (S.gate === "no-folder" || S.gate === "folder-missing" ? "no-folder" : S.gate === "ok" || S.gate === "checking" ? "disconnected" : S.gate);
+
+function uiNow() {
+  return normalizeUi(shared(KEY.assistantUi), S.folder);
+}
+
+function setUi(cx, next) {
+  if (!S.folder) return;
+  setShared(KEY.assistantUi, next);
+  changed(cx);
+}
+
+function selectedKey() {
+  const s = uiNow().selected;
+  return s ? `${s.profile}/${s.session}` : null;
+}
+
+function setBridge(cx, profile, value) {
+  S.bridges = { ...S.bridges, [profile]: value };
+  changed(cx);
+}
+
+function setGate(cx, gate, detail = null) {
+  if (S.gate === gate && S.gateDetail === detail) return;
+  S.gate = gate;
+  S.gateDetail = detail;
+  changed(cx);
+}
+
+function ensureChat(key, meta = {}) {
+  if (!S.sessions[key]) {
+    const k = parseKey(key);
+    S.sessions[key] = emptyChat(key, { profile: k?.profile, sessionId: k?.sessionId, agent: "hermes", ...meta });
+  }
+  return S.sessions[key];
+}
+
+/** Reduces events into a chat (the same state object when nothing changed). */
+function apply(cx, key, ...events) {
+  let c = S.sessions[key];
+  if (!c) return null;
+  const now = Date.now();
+  for (const e of events) c = reduce(c, e, now);
+  if (c !== S.sessions[key]) {
+    S.sessions[key] = c;
+    changed(cx);
+  }
+  return c;
+}
+
+const chatsOf = (profile) => Object.values(S.sessions).filter((c) => c.profile === profile);
+
+// ---- the API: reading -------------------------------------------------------------------------------------------
+
+/** The whole state (K4 AssistantState): `{gate, gateDetail, folder, hermes, bridges, list, sessions, notices}`. The
+ *  same object until something changes. Safe in render(). */
+export function snapshot() {
+  if (built.version === version && built.value) return built.value;
+  const running = Object.values(S.sessions)
+    .filter((c) => isRunning(c))
+    .map((c) => c.key);
+  const list = buildList({ folder: S.folder, home: home(), profiles: S.profiles, local: S.local, running, bridges: S.bridges, ui: uiNow() });
+  const value = { gate: S.gate, gateDetail: S.gateDetail, folder: S.folder, hermes: S.hermes, bridges: S.bridges, list, sessions: S.sessions, notices: S.notices };
+  built = { version, value };
+  return value;
+}
+
+/** One session's ChatState, or null. */
+export const session = (key) => S.sessions[key] ?? null;
+
+/** The folder's files for the @ menu: folder-relative paths, images left out. Kept fresh by the service. */
+export const folderFiles = () => S.files;
+
+/** Calls `fn(notice)` for each notice raised (`{id, kind: permission|done|failed, key, title, body, at}`). Returns a
+ *  function that stops it. */
+export function onNotice(fn) {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
+// ---- notices ----------------------------------------------------------------------------------------------------
+
+function rowOf(key) {
+  const k = parseKey(key);
+  if (!k) return null;
+  const rows = S.profiles.find((p) => p.profile === k.profile)?.rows ?? [];
+  return rows.find((r) => r.id === k.sessionId) ?? S.local.find((l) => l.profile === k.profile && l.sessionId === k.sessionId) ?? null;
+}
+
+function titleOf(key) {
+  const c = S.sessions[key];
+  const first = c?.items?.find((it) => it.type === "user" && it.text)?.text;
+  return c?.title || rowOf(key)?.title || (first ? first.split("\n")[0].slice(0, 60) : "") || t("assistant.list.untitled");
+}
+
+const oneLine = (s) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, BODY_MAX);
+
+/** A notice for the person (K7), unless they are looking at that session in the active window. */
+function raise(cx, kind, key, body) {
+  if (blockShown(SCREEN) && appWindow().active && selectedKey() === key) return;
+  const now = Date.now();
+  const n = { id: `${kind}:${key}:${now}`, kind, key, title: titleOf(key), body: oneLine(body), at: now };
+  S.notices = [...S.notices.slice(-(NOTICES_KEPT - 1)), n];
+  changed(cx);
+  for (const fn of [...listeners]) {
+    try {
+      fn(n);
+    } catch (e) {
+      log(`notice listener failed: ${errText(e)}`);
+    }
+  }
+}
+
+function lastAnswer(key) {
+  const items = S.sessions[key]?.items ?? [];
+  for (let i = items.length - 1; i >= 0; i--) if (items[i].type === "assistant" && items[i].text) return items[i].text;
+  return "";
+}
+
+// ---- records from the bridges -----------------------------------------------------------------------------------
+
+function onRecord(cx, profile, client, rec) {
+  const c = rec.c;
+  if (c.kind === "update") {
+    const key = c.sessionId ? sessionKey(profile, c.sessionId) : null;
+    if (!key) return;
+    ensureChat(key);
+    apply(cx, key, { type: "update", update: c.update });
+    if (c.updateKind === "session_info_update" && typeof c.update?.title === "string") {
+      const local = S.local.find((l) => l.profile === profile && l.sessionId === c.sessionId);
+      if (local) local.title = c.update.title;
+    }
+    return;
+  }
+  if (c.kind === "request") {
+    if (c.method === wire.METHOD.requestPermission && c.sessionId) {
+      const key = sessionKey(profile, c.sessionId);
+      if (!key) return;
+      ensureChat(key);
+      apply(cx, key, { type: "permission", requestId: c.id, toolCall: c.params?.toolCall, options: c.params?.options, at: rec.at ?? Date.now() });
+      raise(cx, "permission", key, c.params?.toolCall?.title ?? "");
+      return;
+    }
+    // fs and terminal are off (K3): nothing else is asked of lazuli.
+    client.send(cx, wire.rpcError(c.id, -32601, "Method not found")).then(undefined, () => {});
+    return;
+  }
+  if (c.kind === "result" || c.kind === "error") onAnswer(cx, String(c.id), c);
+}
+
+function onAnswer(cx, id, c) {
+  const entry = promptKeys.get(id);
+  if (!entry) return;
+  promptKeys.delete(id);
+  const { key, kind } = entry;
+  if (!S.sessions[key]) return;
+  if (c.kind === "result") {
+    const stopReason = typeof c.result?.stopReason === "string" ? c.result.stopReason : "end_turn";
+    apply(cx, key, { type: "prompt-done", requestId: id, stopReason, ...(isObj(c.result?.usage) ? { usage: c.result.usage } : {}) });
+    if (kind === "prompt" && stopReason !== "cancelled") raise(cx, "done", key, lastAnswer(key));
+  } else {
+    apply(cx, key, { type: "prompt-failed", requestId: id, error: c.error });
+    raise(cx, "failed", key, c.error?.message ?? "");
+  }
+  afterTurn(cx, key, entry);
+}
+
+/** After a request ends: a command that rewrote the history reloads the session, the queue head goes, a stale chat
+ *  reloads once idle, and the list is read again (message counts, titles, cost). */
+function afterTurn(cx, key, entry) {
+  const chat = S.sessions[key];
+  if (!chat) return;
+  if (entry?.resync && !isRunning(chat)) {
+    reload(cx, key);
+    return;
+  }
+  flushQueue(cx, key);
+  const after = S.sessions[key];
+  if (after?.stale && !isRunning(after) && selectedKey() === key) reload(cx, key);
+  if (!isRunning(after)) scheduleList(cx, after.profile);
+  refreshFiles(cx);
+}
+
+function onEvent(cx, profile, ev) {
+  if (ev.ev === "gap") {
+    for (const c of chatsOf(profile)) {
+      apply(cx, c.key, { type: "gap" });
+      if (selectedKey() === c.key && !isRunning(S.sessions[c.key])) reload(cx, c.key);
+    }
+  } else if (ev.ev === "dropped") {
+    log(`${profile}: the bridge dropped an agent line of ${ev.bytes} bytes`);
+  }
+}
+
+/** The stream of a profile's bridge ended. A drop with the bridge still running reconnects and replays what was
+ *  missed; otherwise the bridge is gone: its chats' requests fail, the chats turn stale (they load again with the next
+ *  bridge) and the group shows why. */
+async function onEnd(cx, profile, client, why) {
+  if (clients.get(profile) !== client) return;
+  clients.delete(profile);
+  log(`${profile} stream ended: ${why.reason}${why.bye ? ` (bye ${why.bye})` : ""}${why.detail ? `: ${why.detail}` : ""}`);
+  if (why.reason === "replaced") {
+    setBridge(cx, profile, { state: "off" });
+    return;
+  }
+  const crashed = Boolean(why.agentExit) || why.bye === "agent-exit";
+  if (!why.bye && !crashed && (await bridge.pidAlive(client.pid))) {
+    const again = await attach(cx, profile, client.d, client.seq);
+    if (again.ok) return;
+  }
+  const code = crashed ? "agent-exit" : "disconnected";
+  for (const chat of chatsOf(profile)) {
+    const open = Object.keys(chat.inflight ?? {});
+    for (const id of open) {
+      promptKeys.delete(id);
+      apply(cx, chat.key, { type: "prompt-failed", requestId: id, error: code });
+    }
+    apply(cx, chat.key, { type: "disconnected" });
+    if (open.length) raise(cx, "failed", chat.key, t(`assistant.banner.${code}`));
+  }
+  const quiet = why.bye === "idle" || why.bye === "shutdown";
+  setBridge(cx, profile, quiet ? { state: "stopped" } : { state: "error", error: code });
+}
+
+/** A new stream's `hello`: the agent's version, the prompts still running (their answers come later) and the agent
+ *  requests still waiting (approval cards), restored into their chats. */
+function onHello(cx, profile, hello) {
+  const version = hello?.agent?.agentInfo?.version;
+  if (typeof version === "string") S.hermes = { path: S.hermes?.path ?? null, version };
+  for (const r of Array.isArray(hello?.running) ? hello.running : []) {
+    const key = sessionKey(profile, r?.sessionId);
+    if (!key || r.id === undefined) continue;
+    const chat = ensureChat(key);
+    if (!promptKeys.has(String(r.id))) promptKeys.set(String(r.id), { key, kind: "prompt" });
+    if (!chat.inflight[String(r.id)]) apply(cx, key, { type: "prompt-sent", requestId: r.id, kind: "prompt" });
+  }
+  for (const p of Array.isArray(hello?.pending) ? hello.pending : []) {
+    if (p?.method !== wire.METHOD.requestPermission) continue;
+    const key = sessionKey(profile, p.sessionId);
+    if (!key) continue;
+    const chat = ensureChat(key);
+    if (chat.permissions[String(p.id)]) continue;
+    apply(cx, key, { type: "permission", requestId: p.id, toolCall: p.msg?.params?.toolCall, options: p.msg?.params?.options, at: p.at });
+  }
+  changed(cx);
+}
+
+// ---- bridges ----------------------------------------------------------------------------------------------------
+
+/** A client on a bridge's discovery: its stream, then its hello. Resolves `{ok, client}` or `{error}`. */
+async function attach(cx, profile, d, since = null) {
+  const client = new AcpClient({
+    profile,
+    discovery: d,
+    nonce: `${NONCE}${++clientSeq}`,
+    onRecord: (rec, tcx) => onRecord(tcx, profile, client, rec),
+    onEvent: (ev, tcx) => onEvent(tcx, profile, ev),
+    onEnd: (why, tcx) => onEnd(tcx, profile, client, why),
+  });
+  const h = await client.connect(cx, since);
+  if (h.error) return h;
+  const old = clients.get(profile);
+  clients.set(profile, client);
+  if (old && old !== client) old.close();
+  setBridge(cx, profile, { state: "ready" });
+  onHello(cx, profile, h.hello);
+  return { ok: true, client };
+}
+
+/** The argv a profile's bridge runs (K3): `<hermes> -p <profile> acp`, or debugAgent's. */
+function argvFor(profile) {
+  const debug = debugAgent();
+  return debug ? agentArgv({ debugAgent: debug, profile }) : agentArgv({ bin: S.hermes?.path ?? null, profile });
+}
+
+async function connectBridge(cx, profile, { launch = true } = {}) {
+  if (!S.folder) return { error: "no-folder" };
+  const folder = S.folder;
+  const pid = await bridge.herdrPid();
+  if (!pid) {
+    setBridge(cx, profile, { state: "error", error: "bridge-launch-failed" });
+    return { error: "bridge-launch-failed", detail: "Herdr's pid is unknown" };
+  }
+  if (launch) setBridge(cx, profile, { state: "starting" });
+  const d = await bridge.readDiscovery(profile);
+  if (d.state === "ready" && wire.discoveryMatches(d, { profile, cwd: folder, herdrPid: pid }) && (await bridge.pidAlive(d.pid))) {
+    const r = await attach(cx, profile, d);
+    if (r.ok) {
+      log(`reusing the ${profile} bridge pid ${d.pid}`);
+      return r;
+    }
+    log(`the ${profile} bridge pid ${d.pid} gave no hello (${r.error}): replacing it`);
+  }
+  if (!launch) return { error: "disconnected" };
+  if (d.state !== "absent") await bridge.retire(profile, d);
+  // A new bridge starts only once open() passed the gates (K4).
+  if (S.gate !== "ok" || S.folder !== folder) {
+    setBridge(cx, profile, { state: "off" });
+    return { error: gateError() };
+  }
+  const argv = argvFor(profile);
+  if (!argv) {
+    setBridge(cx, profile, { state: "error", error: "hermes-missing" });
+    return { error: "hermes-missing" };
+  }
+  const L = await bridge.launch(cx, { profile, folder, herdrPid: pid, argv });
+  if (L.error) {
+    setBridge(cx, profile, { state: "error", error: L.error, detail: L.detail ?? null });
+    return { error: L.error, detail: L.detail ?? null };
+  }
+  if (S.folder !== folder) return { error: "disconnected" };
+  const r = await attach(cx, profile, L.discovery);
+  if (r.error) setBridge(cx, profile, { state: "error", error: r.error });
+  return r;
+}
+
+/** A profile's client, connecting to its running bridge or launching one. Shared by concurrent callers. */
+function ensureBridge(cx, profile, options) {
+  const c = clients.get(profile);
+  if (c?.open) return Promise.resolve({ ok: true, client: c });
+  if (launches.has(profile)) return launches.get(profile);
+  const p = owned(cx, (tcx) => connectBridge(tcx, profile, options));
+  launches.set(profile, p);
+  p.then(() => launches.delete(profile));
+  return p;
+}
+
+/** Reconnects to the bridges of this folder and Herdr that still run (start; K3 reuse rule). Launches nothing. */
+async function reconnectAll(cx) {
+  if (!S.folder) return;
+  for (const profile of await bridge.discoveredProfiles()) {
+    if (!isProfileName(profile) || clients.get(profile)?.open) continue;
+    const r = await ensureBridge(cx, profile, { launch: false });
+    if (r.ok) log(`reconnected to the ${profile} bridge`);
+  }
+  if (clients.size) await refreshList(cx);
+}
+
+// ---- gates and opening ------------------------------------------------------------------------------------------
+
+async function ensureChecked() {
+  const debug = debugAgent();
+  const key = JSON.stringify(debug ?? "hermes");
+  if (checked?.key !== key) checked = { key, result: await bridge.checkAgent(debug) };
+  return checked.result;
+}
+
+/** `retry`: the gates' Retry asked, so a `default` bridge in error starts again; a plain open leaves it to the
+ *  banner's Retry (retryBridge). */
+async function doOpen(cx, retry = false) {
+  const folder = settingsFolder();
+  if (folder !== S.folder) await switchFolder(cx, folder);
+  if (!S.folder) {
+    setGate(cx, "no-folder");
+    return { error: "no-folder" };
+  }
+  if (!(await bridge.folderExists(S.folder))) {
+    setGate(cx, "folder-missing");
+    return { error: "no-folder" };
+  }
+  if (S.gate !== "ok" && !checked) setGate(cx, "checking");
+  const agent = await ensureChecked();
+  if (!agent.ok) {
+    setGate(cx, agent.gate, agent.detail);
+    return { error: agent.gate };
+  }
+  if (S.hermes?.path !== agent.bin) S.hermes = { path: agent.bin, version: S.hermes?.version ?? null };
+  setGate(cx, "ok");
+  await refreshList(cx);
+  const failed = S.bridges.default?.state === "error" && !retry ? { error: S.bridges.default.error } : null;
+  const b = failed ?? (await ensureBridge(cx, "default"));
+  if (debugAgent() && b.ok) await refreshList(cx, "default");
+  restoreSelection(cx);
+  refreshFiles(cx, { force: true });
+  return b.error ? { error: b.error } : { ok: true };
+}
+
+/** Opens the screen's data (K4 order): the folder gate, the agent check (once per start), the profiles and list, the
+ *  `default` bridge, the remembered selection. Idempotent: every show of the screen may call it. */
+export function open(cx) {
+  if (checking()) return Promise.resolve({ error: "disconnected" });
+  if (!opening) {
+    const p = owned(cx, (tcx) => doOpen(tcx, false));
+    opening = p;
+    p.then(() => {
+      if (opening === p) opening = null;
+    });
+  }
+  return opening;
+}
+
+/** The gates' Retry: the folder and the agent are checked again, then the screen opens as open() does. */
+export async function recheck(cx) {
+  if (checking()) return { error: "disconnected" };
+  if (opening) await opening;
+  checked = null;
+  setGate(cx, "checking");
+  const p = owned(cx, (tcx) => doOpen(tcx, true));
+  opening = p;
+  p.then(() => {
+    if (opening === p) opening = null;
+  });
+  return p;
+}
+
+/** The selection remembered in `lazuli.assistant.ui` is loaded once the screen opens (D25). A profile whose bridge
+ *  shows an error waits for the banner's Retry. */
+function restoreSelection(cx) {
+  const key = selectedKey();
+  if (!key || S.bridges[parseKey(key)?.profile]?.state === "error") return;
+  const chat = S.sessions[key];
+  if (!chat || !chat.loaded || chat.stale) owned(cx, (tcx) => doSelect(tcx, key));
+}
+
+// ---- the list ---------------------------------------------------------------------------------------------------
+
+/** A profile's sessions through its bridge (`session/list {cwd, cursor}`), when the database cannot be read or
+ *  debugAgent is set (K6). */
+async function listViaAgent(cx, profile) {
+  const client = clients.get(profile);
+  // No bridge yet: the group is still loading (a remembered selection stays, core/assistant-list.js pruneUi).
+  if (!client?.open) return { profile, rows: null };
+  const rows = [];
+  let cursor;
+  for (let page = 0; page < 10; page++) {
+    const r = await client.request(cx, wire.METHOD.sessionList, cursor ? { cwd: S.folder, cursor } : { cwd: S.folder }, { timeoutMs: LIST_MS });
+    if (r.error) return rows.length ? { profile, rows } : { profile, rows: [], error: r.error };
+    rows.push(...mapSessionList(r.result));
+    cursor = typeof r.result?.nextCursor === "string" && r.result.nextCursor ? r.result.nextCursor : null;
+    if (!cursor) break;
+  }
+  return { profile, rows };
+}
+
+async function listProfile(cx, profile) {
+  if (debugAgent()) return listViaAgent(cx, profile);
+  const r = await disk.profileSessions(run, home(), profile);
+  if (!r.error) return { profile, rows: r.rows };
+  log(`${profile}: sessions not read (${r.error}: ${r.detail ?? ""})`);
+  if (clients.get(profile)?.open) {
+    const via = await listViaAgent(cx, profile);
+    if (!via.error) return via;
+  }
+  return { profile, rows: [], error: r.error };
+}
+
+/** Stats of the database rows into the chats (K8: refreshed on select and after each turn). */
+function syncStats(cx) {
+  for (const chat of Object.values(S.sessions)) {
+    const stats = rowOf(chat.key)?.stats;
+    if (!isObj(stats) || JSON.stringify(stats) === JSON.stringify(chat.usage?.stats)) continue;
+    apply(cx, chat.key, { type: "stats", stats });
+  }
+}
+
+async function doList(cx, only) {
+  if (!S.folder) return { error: "no-folder" };
+  const folder = S.folder;
+  const names = await disk.listProfiles(run, home());
+  for (const p of clients.keys()) if (!names.includes(p)) names.push(p);
+  const targets = only ? [only] : names;
+  for (const profile of targets) {
+    const src = await listProfile(cx, profile);
+    if (S.folder !== folder) return { error: "disconnected" };
+    const at = S.profiles.findIndex((p) => p.profile === profile);
+    if (at < 0) S.profiles = [...S.profiles, src];
+    else S.profiles = S.profiles.map((p, i) => (i === at ? src : p));
+  }
+  if (!only) {
+    S.profiles = S.profiles.filter((p) => names.includes(p.profile));
+    // Every profile is listed: a remembered selection that no longer exists is cleared (K2).
+    const ui = uiNow();
+    const pruned = pruneUi(ui, buildList({ folder: S.folder, home: home(), profiles: S.profiles, local: S.local, running: [], bridges: S.bridges, ui }));
+    if (pruned !== ui) setUi(cx, pruned);
+  }
+  syncStats(cx);
+  changed(cx);
+  return { ok: true };
+}
+
+/** Reads the list again: every profile, or one. */
+export function refreshList(cx, profile) {
+  if (checking()) return Promise.resolve({ error: "disconnected" });
+  if (profile !== undefined && profile !== null && !isProfileName(profile)) return Promise.resolve({ error: "not-found" });
+  if (!profile) {
+    if (!listing) {
+      listing = owned(cx, (tcx) => doList(tcx, null));
+      listing.then(() => {
+        listing = null;
+      });
+    }
+    return listing;
+  }
+  return owned(cx, (tcx) => doList(tcx, profile));
+}
+
+/** The list once more soon after a turn (several ends close together read it once). */
+function scheduleList(cx, profile) {
+  if (!profile || listSoon.has(profile)) return;
+  listSoon.add(profile);
+  cx.spawn(
+    async (tcx) => {
+      await tcx.sleep(LIST_AFTER_TURN_MS);
+      listSoon.delete(profile);
+      await refreshList(tcx, profile);
+    },
+    { owner: null },
+  );
+}
+
+/** The folder's files for the @ menu, at most every few seconds unless forced. */
+function refreshFiles(cx, { force = false } = {}) {
+  if (!S.folder || !cx || (!force && Date.now() - filesAt < 3000)) return;
+  filesAt = Date.now();
+  const folder = S.folder;
+  cx.spawn(
+    async (tcx) => {
+      const files = await disk.listFolderFiles(run, folder);
+      if (S.folder !== folder) return;
+      if (files.length !== S.files.length || files.some((f, i) => f !== S.files[i])) {
+        S.files = files;
+        changed(tcx);
+      }
+    },
+    { owner: null },
+  );
+}
+
+// ---- the folder -------------------------------------------------------------------------------------------------
+
+/** Stops this folder's bridges (`shutdown`: running prompts cancelled first, K3) and starts over in `folder`. */
+async function switchFolder(cx, folder) {
+  if (switching) await switching;
+  if (folder === S.folder) return;
+  const job = (async () => {
+    const leaving = [...clients.values()];
+    clients.clear();
+    await Promise.all(
+      leaving.map(async (client) => {
+        const r = await client.shutdown(cx);
+        client.close();
+        if (r.ok) await bridge.awaitExit(cx, client.profile, client.pid);
+      }),
+    );
+    for (const id of promptKeys.keys()) promptKeys.delete(id);
+    loads.clear();
+    Object.assign(S, fresh(folder), { hermes: S.hermes, notices: S.notices });
+    filesAt = 0;
+    log(`folder ${folder ?? "(none)"}`);
+    changed(cx);
+  })();
+  switching = job;
+  try {
+    await job;
+  } finally {
+    if (switching === job) switching = null;
+  }
+}
+
+/** A folder for the Assistant (D3, D22): with a turn running it is refused with `busy` unless `confirmed`; then the
+ *  bridges stop, the folder is saved and the screen opens there. */
+export async function setFolder(cx, path, { confirmed = false } = {}) {
+  if (checking()) return { error: "disconnected" };
+  const p = typeof path === "string" ? path.trim() : "";
+  if (!p.startsWith("/")) return { error: "not-found" };
+  const folder = normalize(p);
+  if (folder === S.folder && settingsFolder() === folder) {
+    await recheck(cx);
+    return { ok: true };
+  }
+  if (!confirmed && Object.values(S.sessions).some((c) => isRunning(c))) return { error: "busy" };
+  return owned(cx, async (tcx) => {
+    await store.updateSettings((s) => ({ ...s, assistant: { ...(isObj(s.assistant) ? s.assistant : {}), folder } }));
+    await switchFolder(tcx, folder);
+    setUi(tcx, normalizeUi(null, folder));
+    setGate(tcx, "checking");
+    await open(tcx);
+    return { ok: true };
+  });
+}
+
+/** The system folder picker, then setFolder (not confirmed): `{ok, path}`, `{error: "busy", path}` (the view asks,
+ *  then calls setFolder with `confirmed`), `{error: "cancelled"}` or another error with `path`. */
+export async function pickFolder(cx) {
+  if (checking()) return { error: "cancelled" };
+  let path = null;
+  try {
+    path = await pickFolderDialog();
+  } catch (e) {
+    log(`folder picker failed: ${errText(e)}`);
+  }
+  if (typeof path !== "string" || !path) return { error: "cancelled" };
+  const r = await setFolder(cx, path, { confirmed: false });
+  return { ...r, path };
+}
+
+// ---- sessions ---------------------------------------------------------------------------------------------------
+
+/** `session/load` of a chat: its history replays into it (K5 rule 7). A load result without `models` is Hermes's
+ *  answer for an unknown id (S9): `not-found`. */
+function reload(cx, key) {
+  if (loads.has(key)) return loads.get(key);
+  const p = owned(cx, async (tcx) => {
+    const k = parseKey(key);
+    const b = await ensureBridge(tcx, k.profile);
+    if (b.error) return b;
+    if (!S.sessions[key]) ensureChat(key);
+    apply(tcx, key, { type: "load-start" });
+    const r = await b.client.request(tcx, wire.METHOD.sessionLoad, { sessionId: k.sessionId, cwd: S.folder, mcpServers: [] }, { timeoutMs: LOAD_MS });
+    if (r.error) {
+      apply(tcx, key, { type: "loaded" }, { type: "disconnected" });
+      return r;
+    }
+    if (!isObj(r.result) || !Object.prototype.hasOwnProperty.call(r.result, "models")) {
+      apply(tcx, key, { type: "loaded" });
+      return { error: "not-found" };
+    }
+    apply(tcx, key, { type: "loaded", models: r.result.models, modes: r.result.modes });
+    const stats = rowOf(key)?.stats;
+    if (isObj(stats)) apply(tcx, key, { type: "stats", stats });
+    return { ok: true };
+  });
+  loads.set(key, p);
+  p.then(() => loads.delete(key));
+  return p;
+}
+
+/** A chat ready for a request: its bridge connected and its history loaded once there. */
+async function ready(cx, key) {
+  const k = parseKey(key);
+  const b = await ensureBridge(cx, k.profile);
+  if (b.error) return b;
+  const chat = S.sessions[key];
+  if (chat && (!chat.loaded || chat.stale)) {
+    const r = await reload(cx, key);
+    if (r.error) return r;
+  }
+  return { ok: true, client: clients.get(k.profile) ?? b.client };
+}
+
+/** Selects a session (remembered in `lazuli.assistant.ui`) and loads its history when it is not loaded. */
+async function doSelect(cx, key) {
+  const k = parseKey(key);
+  if (!k) return { error: "not-found" };
+  if (S.gate !== "ok") return { error: gateError() };
+  if (!S.sessions[key] && !rowOf(key)) return { error: "not-found" };
+  const ui = uiNow();
+  if (ui.selected?.profile !== k.profile || ui.selected?.session !== k.sessionId) setUi(cx, { ...ui, selected: { agent: "hermes", profile: k.profile, session: k.sessionId } });
+  const chat = ensureChat(key, { title: rowOf(key)?.title ?? null, updatedAt: rowOf(key)?.updatedAt ?? null });
+  refreshFiles(cx);
+  if (chat.loaded && !chat.stale) {
+    const stats = rowOf(key)?.stats;
+    if (isObj(stats)) apply(cx, key, { type: "stats", stats });
+    return { ok: true };
+  }
+  return reload(cx, key);
+}
+
+/** A notification's click: the screen with that session selected (K7 target `assistant:<profile>:<session>`). */
+export function openTarget(cx, profile, sessionId) {
+  const key = sessionKey(profile, sessionId);
+  if (!key) return;
+  showCenter(SCREEN);
+  if (S.folder) {
+    const ui = uiNow();
+    setUi(cx, { ...ui, selected: { agent: "hermes", profile, session: sessionId } });
+  }
+  if (S.gate === "ok" && !checking()) owned(cx, (tcx) => doSelect(tcx, key));
+}
+
+const emptyChatOf = (key) => {
+  const c = S.sessions[key];
+  return !c || (!c.items.some((it) => it.type === "user") && !Object.keys(c.inflight).length && !c.queue.length);
+};
+
+/** A new chat in a profile; an unused empty one made this run is reused (K4: "+" leaves at most one). */
+async function doNewSession(cx, profile = "default") {
+  if (!isProfileName(profile)) return { error: "not-found" };
+  if (S.gate !== "ok") return { error: gateError() };
+  const unused = S.local.find((l) => l.profile === profile && emptyChatOf(`${profile}/${l.sessionId}`));
+  if (unused) {
+    const key = `${profile}/${unused.sessionId}`;
+    const r = await doSelect(cx, key);
+    return r.error ? r : { ok: true, key };
+  }
+  const b = await ensureBridge(cx, profile);
+  if (b.error) return b;
+  const r = await b.client.request(cx, wire.METHOD.sessionNew, { cwd: S.folder, mcpServers: [] }, { timeoutMs: NEW_MS });
+  if (r.error) return r;
+  const sessionId = r.result?.sessionId;
+  const key = sessionKey(profile, sessionId);
+  if (!key) return { error: "not-found" };
+  const now = Date.now();
+  ensureChat(key, { loaded: true, updatedAt: now });
+  apply(cx, key, { type: "loaded", models: r.result.models ?? null, modes: r.result.modes ?? null });
+  S.local = [...S.local, { profile, sessionId, title: null, updatedAt: now, cwd: S.folder }];
+  const ui = uiNow();
+  if (ui.collapsed.includes(profile)) setUi(cx, { ...ui, collapsed: ui.collapsed.filter((p) => p !== profile) });
+  const sel = await doSelect(cx, key);
+  return sel.error ? sel : { ok: true, key };
+}
+
+/** A new session forked from `key` (`session/fork`); its history loads into a new row. An empty `sessionId` is
+ *  Hermes's answer for an unknown source (S9): `not-found`. */
+async function doFork(cx, key) {
+  const k = parseKey(key);
+  if (!k || (!S.sessions[key] && !rowOf(key))) return { error: "not-found" };
+  if (S.gate !== "ok") return { error: gateError() };
+  const b = await ready(cx, key);
+  if (b.error) return b;
+  const r = await b.client.request(cx, wire.METHOD.sessionFork, { sessionId: k.sessionId, cwd: S.folder, mcpServers: [] }, { timeoutMs: NEW_MS });
+  if (r.error) return r;
+  const next = sessionKey(k.profile, r.result?.sessionId);
+  if (!next) return { error: "not-found" };
+  const now = Date.now();
+  ensureChat(next, { title: titleOf(key), updatedAt: now });
+  S.local = [...S.local, { profile: k.profile, sessionId: r.result.sessionId, title: titleOf(key), updatedAt: now, cwd: S.folder }];
+  const sel = await doSelect(cx, next);
+  return sel.error ? sel : { ok: true, key: next };
+}
+
+// ---- prompts ----------------------------------------------------------------------------------------------------
+
+const absolute = (rel) => (String(rel).startsWith("/") ? String(rel) : `${S.folder}/${String(rel).replace(/^\.\//, "")}`);
+
+/** Sends one session/prompt request; its answer arrives as a record (onAnswer). */
+async function prompt(cx, key, client, id, blocks, entry) {
+  promptKeys.set(id, entry);
+  const chat = S.sessions[key];
+  const r = await client.send(cx, wire.sessionPrompt(id, chat.sessionId, blocks));
+  if (r.error) {
+    promptKeys.delete(id);
+    apply(cx, key, { type: "prompt-failed", requestId: id, error: r.error });
+    afterTurn(cx, key, entry);
+  }
+  return r;
+}
+
+/** The queue head as a plain prompt, once nothing runs and the queue is not paused (K5 rule 6). */
+function flushQueue(cx, key) {
+  const chat = S.sessions[key];
+  const head = chat ? queueHead(chat) : null;
+  if (!head) return;
+  const client = clients.get(chat.profile);
+  if (!client?.open) return;
+  const id = client.nextId();
+  apply(cx, key, { type: "queue-flush", requestId: id, chipId: head.id });
+  prompt(cx, key, client, id, wire.promptBlocks(head.text), { key, kind: "prompt" }).then(undefined, () => {});
+}
+
+/**
+ * Sends the composer's text: a prompt while idle (attachments as resource links), `/steer <text>` while a turn runs
+ * (attachments as `@path` text: Hermes drops a running prompt's attachments, K4), a command the agent answers itself
+ * as it is (a history-rewriting one reloads the session after). `/queue x` makes a chip and `/model x` sets the model.
+ */
+async function doSend(cx, key, { text, attachments = [] } = {}) {
+  if (!S.sessions[key]) return { error: "not-found" };
+  if (S.gate !== "ok") return { error: gateError() };
+  const raw = String(text ?? "");
+  const files = (Array.isArray(attachments) ? attachments : []).map((a) => (typeof a === "string" ? a : a?.path)).filter((a) => typeof a === "string" && a);
+  if (!raw.trim() && !files.length) return { ok: true };
+  if (raw.length > MAX_MESSAGE) return { error: "too-long" };
+  const route = routeText(raw, S.sessions[key].agent);
+  if (route.route === "queue") return doQueue(cx, key, route.text);
+  if (route.route === "model") return doSetModel(cx, key, route.model);
+  const b = await ready(cx, key);
+  if (b.error) return b;
+  const chat = S.sessions[key];
+  const running = isRunning(chat);
+  let kind;
+  let blocks;
+  if (route.route === "command") {
+    kind = "command";
+    blocks = wire.promptBlocks(raw.trim());
+  } else if (running) {
+    kind = "steer";
+    const body = route.route === "steer" ? raw.trim() : `/steer ${[raw.trim(), ...files.map((f) => `@${f}`)].filter(Boolean).join(" ")}`;
+    blocks = wire.promptBlocks(body);
+  } else {
+    kind = "prompt";
+    blocks = wire.promptBlocks(raw, files.map(absolute));
+  }
+  const id = b.client.nextId();
+  apply(cx, key, ...(kind === "prompt" ? [{ type: "queue-resumed" }] : []), { type: "prompt-sent", requestId: id, kind, text: raw, attachments: files.map((path) => ({ path })) });
+  const local = S.local.find((l) => `${l.profile}/${l.sessionId}` === key);
+  if (local && !local.title && kind === "prompt" && raw.trim()) local.title = raw.trim().split("\n")[0].slice(0, 60);
+  const r = await prompt(cx, key, b.client, id, blocks, { key, kind, resync: route.route === "command" && route.resync });
+  return r.error ? r : { ok: true };
+}
+
+/** A lazuli-held chip (D28): sent as a plain prompt once nothing runs. */
+async function doQueue(cx, key, text) {
+  if (!S.sessions[key]) return { error: "not-found" };
+  const s = String(text ?? "");
+  if (!s.trim()) return { ok: true };
+  if (s.length > MAX_MESSAGE) return { error: "too-long" };
+  apply(cx, key, { type: "queued", text: s });
+  return goNow(cx, key);
+}
+
+/** When the queue head would go now: the chat made ready (bridge connected, history loaded), then the head sent. */
+async function goNow(cx, key) {
+  if (!queueHead(S.sessions[key])) return { ok: true };
+  const b = await ready(cx, key);
+  if (b.error) return b;
+  flushQueue(cx, key);
+  return { ok: true };
+}
+
+export function unqueue(key, chipId) {
+  if (!S.sessions[key]) return;
+  apply(null, key, { type: "unqueued", chipId });
+}
+
+/** The paused chips go again: at once when nothing runs, else after the turn. */
+async function doResume(cx, key) {
+  if (!S.sessions[key]) return { error: "not-found" };
+  apply(cx, key, { type: "queue-resumed" });
+  return goNow(cx, key);
+}
+
+/** Stop: `session/cancel` (the running requests end `cancelled`) and the chips pause (K4). */
+async function doStop(cx, key) {
+  const chat = S.sessions[key];
+  if (!chat) return { error: "not-found" };
+  if (!Object.keys(chat.inflight).length) return { ok: true };
+  if (chat.queue.length) apply(cx, key, { type: "queue-paused" });
+  const client = clients.get(chat.profile);
+  if (!client?.open) return { error: "disconnected" };
+  const r = await client.send(cx, wire.sessionCancel(chat.sessionId));
+  return r.error ? r : { ok: true };
+}
+
+/** An approval's answer, by option id (D29). Past its deadline (K5 rule 4) it is refused with `too-late`. */
+async function doAnswer(cx, key, requestId, optionId) {
+  const chat = S.sessions[key];
+  if (!chat) return { error: "not-found" };
+  const now = Date.now();
+  const can = canAnswer(reduce(chat, { type: "tick" }, now), requestId, now, optionId);
+  if (can.error === "not-found") return can;
+  if (can.error) {
+    apply(cx, key, { type: "tick" }, { type: "permission-answered", requestId, optionId });
+    return can;
+  }
+  const client = clients.get(chat.profile);
+  if (!client?.open) return { error: "disconnected" };
+  const r = await client.send(cx, wire.permissionSelected(can.permission.requestId, optionId));
+  if (r.error) return r;
+  apply(cx, key, { type: "permission-answered", requestId, optionId });
+  return { ok: true };
+}
+
+/** The session's model (`session/set_model`); refused with `busy` while a turn runs. */
+async function doSetModel(cx, key, modelId) {
+  const chat = S.sessions[key];
+  if (!chat) return { error: "not-found" };
+  if (typeof modelId !== "string" || !modelId) return { error: "not-found" };
+  if (isRunning(chat)) {
+    apply(cx, key, { type: "notice", code: "busy" });
+    return { error: "busy" };
+  }
+  const b = await ready(cx, key);
+  if (b.error) return b;
+  const r = await b.client.request(cx, wire.METHOD.sessionSetModel, { sessionId: chat.sessionId, modelId }, { timeoutMs: NEW_MS });
+  if (r.error) return r;
+  apply(cx, key, { type: "model-set", modelId });
+  return { ok: true };
+}
+
+/** A group's collapsed state (remembered in `lazuli.assistant.ui`). */
+export function toggleGroup(profile) {
+  if (!isProfileName(profile)) return;
+  const ui = uiNow();
+  const collapsed = ui.collapsed.includes(profile) ? ui.collapsed.filter((p) => p !== profile) : [...ui.collapsed, profile];
+  setUi(null, { ...ui, collapsed });
+}
+
+/** Retry on a bridge error (the group line, the chat banner): a new bridge, the selected session loaded again. */
+async function doRetry(cx, profile) {
+  if (!isProfileName(profile)) return { error: "not-found" };
+  if (S.gate !== "ok") return recheck(cx);
+  const old = clients.get(profile);
+  if (old) {
+    clients.delete(profile);
+    old.close();
+  }
+  const r = await ensureBridge(cx, profile);
+  if (r.error) return r;
+  const key = selectedKey();
+  if (key && parseKey(key)?.profile === profile && S.sessions[key]) await reload(cx, key);
+  refreshList(cx, profile);
+  return { ok: true };
+}
+
+// ---- start and stop ---------------------------------------------------------------------------------------------
+
+/** The service's second: approval deadlines (K5 rule 4), finished bridge terminals (every minute), the folder's files
+ *  and the list while the screen shows, and a folder changed in settings.json by hand. */
+function tick(cx, n) {
+  for (const chat of Object.values(S.sessions)) {
+    if (Object.values(chat.permissions).some((p) => p.state === "pending")) apply(cx, chat.key, { type: "tick" });
+  }
+  if (n % REAP_EVERY === 0) bridge.reap().then(undefined, (e) => log(`reap failed: ${errText(e)}`));
+  const shown = blockShown(SCREEN);
+  if (shown && n % FILES_EVERY === 0) refreshFiles(cx);
+  if (shown && n % LIST_EVERY === 0 && S.gate === "ok") refreshList(cx);
+  const folder = settingsFolder();
+  if (folder !== S.folder && !switching && !opening) {
+    if (shown) open(cx);
+    else switchFolder(cx, folder).then(undefined, () => {});
+  }
+}
+
+/** The status copy's init: reconnects to this folder's running bridges (no launch, no hermes command) so notices
+ *  keep coming after a reload while another screen shows, and runs the service's second. */
+export function start(cx) {
+  stop();
+  if (checking()) return;
+  const me = { stopped: false };
+  service = me;
+  checked = null;
+  changed(cx);
+  cx.spawn(
+    async (tcx) => {
+      try {
+        // The folder comes from settings.json, read once per source version.
+        await store.loadSettings();
+        if (service !== me) return;
+        if (!switching && S.folder !== settingsFolder()) S.folder = settingsFolder();
+        await reconnectAll(tcx);
+      } catch (e) {
+        log(`reconnect failed: ${errText(e)}`);
+      }
+      let n = 0;
+      while (service === me) {
+        await tcx.sleep(TICK_MS);
+        if (service !== me) break;
+        n++;
+        try {
+          tick(tcx, n);
+        } catch (e) {
+          log(`tick failed: ${errText(e)}`);
+        }
+      }
+    },
+    { owner: null },
+  );
+}
+
+/** The status copy's close: the sockets close; the bridges keep running (they idle out, or exit with Herdr). */
+export function stop() {
+  if (!service) return;
+  service.stopped = true;
+  service = null;
+  for (const client of clients.values()) client.close();
+  clients.clear();
+  const off = {};
+  for (const profile of Object.keys(S.bridges)) off[profile] = { state: "off" };
+  S.bridges = off;
+  version++;
+}
+
+// ---- the calls views make ---------------------------------------------------------------------------------------
+
+/** A view's call runs in a task no view owns: it finishes even when the asking copy closes meanwhile. */
+const act =
+  (fn) =>
+  (cx, ...args) =>
+    checking() ? Promise.resolve({ error: "disconnected" }) : owned(cx, (tcx) => fn(tcx, ...args));
+
+export const select = act(doSelect);
+export const newSession = act(doNewSession);
+export const fork = act(doFork);
+export const send = act(doSend);
+export const queue = act(doQueue);
+export const resumeQueue = act(doResume);
+export const stopTurn = act(doStop);
+export const answerPermission = act(doAnswer);
+export const setModel = act(doSetModel);
+export const retryBridge = act(doRetry);
+
+/** Whether `s` is a well-formed notification target `assistant:<profile>:<sessionId>` (K7). */
+export function parseTarget(s) {
+  const m = /^assistant:([^:]+):([^:]+)$/.exec(String(s ?? ""));
+  return m && isProfileName(m[1]) && isSessionId(m[2]) ? { profile: m[1], sessionId: m[2] } : null;
+}

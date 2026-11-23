@@ -1,0 +1,4 @@
+{"i":10,"t":8858.2,"dir":"send","msg":{"jsonrpc":"2.0","id":4,"method":"session/prompt","params":{"sessionId":"4733fa10-9a37-48dc-b388-7db72fdbd59b","prompt":[{"type":"text","text":"/help"}]}}}
+{"i":11,"t":8859.5,"dir":"recv","msg":{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"4733fa10-9a37-48dc-b388-7db72fdbd59b","update":{"content":{"text":"[redacted]","type":"text"},"sessionUpdate":"agent_message_chunk"}}},"redacted":[{"path":"params.update.content.text","chars":511,"lines":13,"sha256":"e7020b09d89e89980165efe2a8392c9e8f03cf8e1732137c8a1e3aaed084a600"}]}
+{"i":12,"t":8859.6,"dir":"recv","msg":{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"4733fa10-9a37-48dc-b388-7db72fdbd59b","update":{"size":272000,"used":11369,"sessionUpdate":"usage_update"}}}}
+{"i":13,"t":8859.6,"dir":"recv","msg":{"jsonrpc":"2.0","id":4,"result":{"stopReason":"end_turn"}}}

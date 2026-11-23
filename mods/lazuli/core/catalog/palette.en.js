@@ -20,6 +20,7 @@ export default {
   "palette.cmd.go.inbox": "Inbox",
   "palette.cmd.go.todo": "To-do",
   "palette.cmd.go.routines": "Routines",
+  "palette.cmd.go.assistant": "Assistant",
   "palette.cmd.agent-view": "Agent view",
   "palette.cmd.panel": "Side panel",
   "palette.cmd.panel.review": "Side panel: Review",

@@ -37,6 +37,16 @@ export default {
   "settings.pins.up": "위로",
   "settings.pins.down": "아래로",
 
+  "settings.assistant.section": "비서",
+  "settings.assistant.folder": "폴더",
+  "settings.assistant.folderHint": "Hermes가 이 폴더에서 실행되고, 비서 목록에는 이 폴더에서 나눈 대화만 나옵니다. 이 Mac의 폴더만 고를 수 있습니다.",
+  "settings.assistant.choose": "폴더 고르기…",
+  "settings.assistant.unset": "정하지 않음",
+  "settings.assistant.relay": "Mac의 lazuli에서 정하세요",
+  "settings.assistant.confirmTitle": "진행 중인 응답을 멈추고 폴더를 바꿀까요?",
+  "settings.assistant.confirmBody": "{folder}에서 응답이 진행 중입니다. 폴더를 바꾸면 응답을 취소하고 Hermes를 {next}에서 다시 시작합니다.",
+  "settings.assistant.confirm": "멈추고 바꾸기",
+
   "settings.notify.section": "알림",
   "settings.notify.system": "Herdr가 뒤에 있을 때 시스템 알림 사용",
   "settings.notify.ask": "알림 허용",

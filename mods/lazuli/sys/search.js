@@ -1,19 +1,22 @@
-// The palette's search index (ARCHITECTURE §4.4, DESIGN A4): lazuli's commands, Herdr's commands (with
-// herdr-caffeinate's when that mod is installed, DESIGN D3), layouts, the language, spaces, tabs, agents, PRs from the
-// gh store, to-dos, routines, and past sessions of OMP, Claude Code and Codex. `query(text)` ranks them; each result
-// carries an action descriptor that `perform(action)` runs, so the palette view only draws and picks.
+// The palette's search index (ARCHITECTURE §4.4, DESIGN A4): lazuli's commands (the Assistant's `go:assistant` row
+// among them, K1), Herdr's commands (with herdr-caffeinate's when that mod is installed, DESIGN D3), layouts, the
+// language, spaces, tabs, agents, PRs from the gh store, to-dos, routines, the Assistant's chats in its folder, and past
+// sessions of OMP, Claude Code and Codex. `query(text)` ranks them; each result carries an action descriptor that
+// `perform(action)` runs, so the palette view only draws and picks.
 //
 // Action descriptors (plain data):
 //   {kind: "command" | "layout" | "place", run, args?, then?: [{run, args?}]}  → run(…) in order
 //   {kind: "pr" | "todo" | "routine", app: "inbox" | "todo" | "routines", key}  → the app, on that row (as Home's links)
 //   {kind: "language", value: "system" | "ko" | "en"}                          → the setting
 //   {kind: "session", run: "tab.new", args: {folder?, argv}}  resume in a new tab; `alt` on the result forks instead
+//   {kind: "command", run: "lazuli.target:assistant:<profile>:<session>"}      an Assistant chat, shown and selected
 
 import { commands, keys, layouts, spaces, agents, home, run } from "herdr";
 import { openApp } from "../views/apps/nav.js";
 import * as store from "./store.js";
 import { STORE, COMMANDS, MOD, LANGUAGE_SETTINGS } from "./state.js";
 import { refreshSessions, findSessions, sessionsOf } from "./scan.js";
+import * as assistant from "./assistant.js";
 import * as caffeinate from "./caffeinate.js";
 import { TOOLS, resumeArgv } from "../core/resume-tools.js";
 import { forkArgv } from "../core/agent-cmd.js";
@@ -260,13 +263,31 @@ function sessionEntries(q) {
   return out;
 }
 
+/** The Assistant's chats in its folder (the list the screen shows): Enter shows the screen with that chat selected
+ *  (K7 target). Nothing while the Assistant has no folder or is not open. */
+function assistantEntries() {
+  const s = assistant.snapshot();
+  if (s?.gate !== "ok") return [];
+  const out = [];
+  for (const g of s.list?.groups ?? []) {
+    for (const r of g.rows ?? []) {
+      out.push({
+        id: `assistant:${r.key}`, kind: "session", group: "session", icon: "bot", title: r.title || t("assistant.list.untitled"),
+        hint: [t("shell.app.assistant"), g.profile].join(" · "), at: r.updatedAt ?? null, words: `assistant hermes ${g.profile}`,
+        action: { kind: "command", run: `lazuli.target:assistant:${r.profile}:${r.sessionId}` },
+      });
+    }
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // The API.
 
 /** Every entry, in group order. */
 export function entries(q = "") {
   const bound = bindings();
-  const all = [...lazuliEntries(bound), ...placeEntries(), ...herdrEntries(bound), ...caffeinateEntries(bound), ...languageEntries(), ...prEntries(), ...todoEntries(), ...routineEntries(), ...sessionEntries(q)];
+  const all = [...lazuliEntries(bound), ...placeEntries(), ...herdrEntries(bound), ...caffeinateEntries(bound), ...languageEntries(), ...prEntries(), ...todoEntries(), ...routineEntries(), ...assistantEntries(), ...sessionEntries(q)];
   return all.sort((a, b) => GROUPS.indexOf(a.group) - GROUPS.indexOf(b.group));
 }
 
