@@ -387,6 +387,29 @@ export function createTracker(now = 0) {
   };
 }
 
+// The agent's environment.
+
+/** The PATH the agent runs with: the bridge's own (when it has one) and the folders where agents usually live
+ *  (`bin/run-agent.mjs`), joined with ":" and never with an empty entry (an empty PATH entry is the current folder). */
+export function agentPath(path, home) {
+  const extra = ["/opt/homebrew/bin", "/usr/local/bin", `${home}/.local/bin`, `${home}/.claude/local`];
+  const own = typeof path === "string" ? path.split(":").filter((p) => p !== "") : [];
+  return [...own, ...extra].join(":");
+}
+
+// A first line before its newline.
+
+/** How much of a first line the bridge reads before it has seen a valid token. */
+export const PRE_AUTH_BYTES = 65536;
+const TOKEN_FIRST = /^\s*\{\s*"op"\s*:\s*"[a-z]+"\s*,\s*"token"\s*:\s*"([0-9a-f]{64})"/;
+
+/** The token at the head of a first line still being read, or null: the lines streamLine, sendLine and shutdownLine
+ *  make start `{"op":…,"token":"<64 hex>"`, so a long `send` line is authenticated before its body is all in. */
+export function leadingToken(head) {
+  const m = TOKEN_FIRST.exec(typeof head === "string" ? head : "");
+  return m ? m[1] : null;
+}
+
 // The agent's stderr.
 
 const RECORD_START = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/;

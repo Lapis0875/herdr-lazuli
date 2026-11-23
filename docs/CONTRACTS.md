@@ -646,8 +646,9 @@ and `palette`, `layouts/lazuli.json`, `keys.json`, `relay/lazuli.profile.json`.
 - `state.js`: `CENTER` ends with `"assistant"`; `COMMANDS["go:assistant"] = status`; `PREFIXED["assistant:"] = self`
   (parsed as `{name:"assistant", arg}`); `KEY.assistantUi = "lazuli.assistant.ui"`; `DEFAULT_PINS` ends with
   `"assistant"`; `SETTINGS_VERSION = 2`; settings gain `assistant: {folder: string|null, debugAgent: string[]|null}`
-  (`folder`: absolute, trailing slashes dropped, else null; `debugAgent`: a non-empty array of non-empty strings, else
-  null). `migratedSettings(raw)` returns the normalized settings when a file below version 2 has its own `pins` array
+  (`folder`: absolute, trailing slashes dropped, else null; `debugAgent`: a non-empty array of non-empty strings as it
+  is, else null: one element of another kind or an empty one makes it null, nothing is dropped from it).
+  `migratedSettings(raw)` returns the normalized settings when a file below version 2 has its own `pins` array
   without `"assistant"` (that array then gains it once), else null; `store.js` writes such a file back once, through
   `writeTextFile` with the text it read as `expected`.
 - `bus.js`: `go:assistant` → `showCenter("assistant")`; `assistant:<verb>` → every copy's `command("assistant:<verb>")`.
@@ -694,6 +695,9 @@ export function createTracker(now = 0)   // fromClient(msg, t, seq), fromAgent(m
 export function createStderrFilter({promptLength})   // push(text) → lines, end() → lines
 export const AGENT_ERROR_MAX = 1000
 export function agentErrorText(line): string | null
+export function agentPath(path, home): string        // the agent's PATH: its own entries, then /opt/homebrew/bin, /usr/local/bin, ~/.local/bin, ~/.claude/local; no empty entry
+export const PRE_AUTH_BYTES = 65536                  // a first line may grow past this only with its token at its head
+export function leadingToken(head): string | null    // the 64-hex token a first line starts with ({"op":…,"token":…), or null
 ```
 - A ready discovery needs a 64-hex `token`, a port in 1–65535, an absolute `cwd` and positive pids; an unknown start
   error code reads as `init-failed`; `argv` is null in a file without one. `discoveryMatches` needs the profile,
@@ -841,12 +845,16 @@ row = {key, profile, sessionId, title, updatedAt, model, messageCount, running, 
 | `{op:"send", token, msg}` | `msg` to the agent's stdin; `{ok:true}` or `{ok:false, error:{code: bad-request\|agent-gone\|too-large}}`; close |
 | `{op:"shutdown", token}` | cancel running sessions, wait up to 3 s, SIGTERM the agent group, SIGKILL 2 s later (5 s after a cancel), remove the discovery, `bye shutdown`, exit 0 |
 | a missing, wrong or late token | `{ok:false, error:{code:"auth"}}`; close (constant-time compare) |
+| 64 KiB of a first line without its token at the head (`leadingToken`) | `{ok:false, error:{code:"auth"}}` at once |
+
+Every reply ends its connection, and the bridge destroys it 1 s later (no half-open socket is kept).
 
 - Stream events: `ping` (after 10 s of silence), `replaced` (to the older subscriber: one stream, the newest wins),
   `{seq, at, ev:"dropped", bytes}` (an agent line over 16 MiB), `{seq, at, ev:"agent-error", text}` (after
-  `initialize`, a stderr line `agentErrorText` reads; replayed like an agent line), `agent-exit {code, signal}`,
-  `bye {reason}` with reason in `BYE_REASONS`. A line that is not a JSON object is skipped and logged. The replay ring
-  keeps the last 4,000 records or 8 MiB.
+  `initialize`, a stderr line `agentErrorText` reads; replayed like an agent line, and with the running turns' records
+  to a `turns: true` stream when it came while one ran), `agent-exit {code, signal}`, `bye {reason}` with reason in
+  `BYE_REASONS`. A line that is not a JSON object is skipped and logged. The replay ring keeps the last 4,000 records or
+  8 MiB.
 - The discovery file adds `argv`, the agent argv after `--`.
 - Files and timings: ARCHITECTURE §13.1–§13.2. Exit codes: 0 after a shutdown, a signal, Herdr gone or idle; 1 when
   the agent exits or the start fails (the discovery file then holds the error); 2 for bad arguments.
@@ -865,7 +873,13 @@ row = {key, profile, sessionId, title, updatedAt, model, messageCount, running, 
   client.
 - `sys/assistant.js` (K4) bounds: `session/list` 30 s, `session/load` 45 s, `session/new`/`fork`/`set_model` 60 s. A
   stream with no line for 30 s, or an unanswered list or load, is reopened from the last record held; the load then
-  tries once more after the replay (no launch); a failed list keeps the rows it had.
+  tries once more after the replay (no launch); a failed list keeps the rows it had. On each `hello`, a request held in
+  flight that `hello.running` does not list fails and its chat turns stale (the selected one loads again). `start(cx)`
+  is a no-op on a herdr-relay device; elsewhere, after reconnecting, the chats of a profile with no bridge that still
+  hold requests fail them (stale). `ensureBridge(cx, profile, {launch})`: a launch-wanting caller never gets the
+  answer of a reuse-only connect (a reopen) in flight; it waits for it and launches when it found no bridge. An
+  approval gets one answer per request id (a second click during the send shares the first's result). The folder's
+  files are never walked twice at once.
 - `sys/assistant-bridge.js`: `runtimeDir()`, `nodePath()`, `hermesPath()`, `hermesLooked()`, `folderExists(path)`,
   `herdrPid()`, `pidAlive(pid)`, `checkAgent(debugAgent)` → `{ok, bin}` or `{gate, detail}`, `readDiscovery(profile)`,
   `discoveredProfiles()`, `bridgeTerminals(profile)` (async: `hc ls --all --json --label lazuli.assistant=<profile>`,
@@ -878,7 +892,9 @@ row = {key, profile, sessionId, title, updatedAt, model, messageCount, running, 
 - `sys/assistant-sessions.js` (takes `run(command, args, options)`, so tests run it on real sqlite3 files):
   `querySessions(run, db)` → `{rows, via: readonly|immutable|absent}` or `{error: schema|locked|open|parse|failed,
   detail}`; `profileSessions(run, home, profile)`; `listProfiles(run, home)`; `listFolderFiles(run, folder)` (at most
-  2,000 folder-relative paths to depth 8, no pictures, hidden entries, `node_modules`, `.venv`, `venv`, `__pycache__`);
+  2,000 folder-relative paths to depth 8, no pictures, hidden entries, `node_modules`, `.venv`, `venv`, `__pycache__`;
+  one `/bin/sh -c` running `find … -print0 | head -c WALK_BYTES` (512 KiB), so the walk stops at that cap; a path the
+  cut ends inside is left out);
   `resolvePaths(run, paths)` → `{[path]: resolved}` (one `/bin/sh -c` with `cd -P` and `pwd -P` per 200 absolute paths;
   `""` for one that is missing, not a folder or unreadable; paths holding a NUL or newline are left out);
   `shortFolder(run, path)` → `firmlinkShort(path)` when both forms resolve to the same folder, else `path`.

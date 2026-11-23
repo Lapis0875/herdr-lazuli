@@ -121,6 +121,19 @@ test('prompt paths: the file links promptBlocks makes',()=>{
  assert.deepEqual(w.promptPaths(null),[]);
 });
 
+test('the agent PATH never gets an empty entry; a first line is authenticated by the token at its head',()=>{
+ const tail='/opt/homebrew/bin:/usr/local/bin:/Users/u/.local/bin:/Users/u/.claude/local';
+ assert.equal(w.agentPath('/usr/bin:/bin','/Users/u'),`/usr/bin:/bin:${tail}`);
+ for(const empty of ['',undefined,null,':']) assert.equal(w.agentPath(empty,'/Users/u'),tail,String(empty));
+ assert.equal(w.agentPath('/usr/bin::/bin:','/Users/u'),`/usr/bin:/bin:${tail}`);
+ assert.ok(!w.agentPath('','/Users/u').split(':').includes(''));
+ const tok='a'.repeat(64);
+ for(const line of [w.sendLine(tok,{pad:'x'}),w.streamLine(tok,3,'mod',false),w.shutdownLine(tok)]) assert.equal(w.leadingToken(JSON.stringify(line).slice(0,120)),tok);
+ assert.equal(w.leadingToken(w.encodeLine(w.sendLine(tok,{text:'한글'})).slice(0,90)),tok);
+ for(const head of ['{"msg":{},"op":"send","token":"'+tok+'"}','{"op":"send","token":"'+tok.slice(1)+'"','{"op":"send","token":"'+tok.toUpperCase()+'"','x'.repeat(100),'',null]) assert.equal(w.leadingToken(head),null,String(head).slice(0,40));
+ assert.equal(w.PRE_AUTH_BYTES,65536);
+});
+
 test('stderr filter keeps prompt text out of the log',()=>{
  const lengths={s1:250}; const f=w.createStderrFilter({promptLength:s=>lengths[s]??null});
  assert.deepEqual(f.push('2026-11-23 07:20:32 [INFO] acp_adapter.server: Prompt on session s1: secret plans for'),[]);

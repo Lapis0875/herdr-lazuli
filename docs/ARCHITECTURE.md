@@ -573,7 +573,8 @@ snapshot or `shared.json`.
   argv is `<abs hermes> -p <profile> acp`, `-p` also for `default` so `hermes profile use` never changes which profile a
   bridge serves; with `assistant.debugAgent` set it is `debugAgent ++ ["-p", <profile>, "acp"]`.
 - **Start.** The bridge spawns the agent in its own process group (cwd = folder, `PATH` extended as for
-  `run-agent.mjs`), sends `initialize` once (protocol 1, client `fs` and `terminal` capabilities off, `clientInfo`
+  `run-agent.mjs`, with no empty entry when the bridge has no `PATH`: `acp-wire.agentPath`), sends `initialize` once
+  (protocol 1, client `fs` and `terminal` capabilities off, `clientInfo`
   lazuli) and keeps the answer for every `hello`. No answer in 40 s is `init-timeout`. The mod polls the discovery file
   every 100 ms for up to 45 s (S9: cold start 0.6–1.6 s; `initialize` may refresh the provider login over the network).
 - **Reuse.** A discovery is reused when its pid lives, its `profile`, `cwd`, `herdrPid` and agent `argv` match, and
@@ -602,7 +603,12 @@ snapshot or `shared.json`.
   "end_turn"` and no message; the cause goes to stderr only (`acp_adapter/server.py:1557-1562`, 1593-1672). After
   `initialize`, each stderr line that is Hermes's `❌ …` line or an `[ERROR]`/`[CRITICAL]` log record (never a
   prompt-preview or turn line) also becomes an `agent-error {text}` record (at most 1,000 characters) with its own seq,
-  kept in the replay ring like an agent line.
+  kept in the replay ring like an agent line. Written while a turn runs, it belongs to every running turn, so a
+  `turns: true` stream gets it with that turn's records.
+- **First lines.** A connection's first line must bring a valid token: within 5 s, and within its first 64 KiB
+  (`PRE_AUTH_BYTES`) unless those bytes start `{"op":…,"token":"<the token>"` (a long `send` line; lazuli's lines put
+  the token second). A refused or answered connection is destroyed 1 s after its reply, so a client that never closes
+  its side leaves no half-open socket.
 
 ### 13.3 Connection (`sys/acp-client.js`)
 
@@ -625,14 +631,18 @@ snapshot or `shared.json`.
   kept across a stop of the service, and a record seen already is not applied again. A client with no record of a
   bridge (after a mod reload) opens with `turns: true`: `hello.running[]` gives each running prompt's start seq and
   blocks, and the bridge sends that session's records since the turn began (outside its history loads), so a turn that
-  began before the reload shows once and whole. `hello.pending` restores open approval cards. A bridge that is gone
-  fails the chats' open requests and shows a banner with Retry.
+  began before the reload shows once and whole. `hello.pending` restores open approval cards. A request the service
+  holds in flight that `hello.running` no longer lists (its answer went while no stream listened: a reopen past the
+  ring, a bridge that came back) fails, and its chat turns stale and loads again (the selected one at once), so no chat
+  shows "Responding" for a turn that ended. A bridge that is gone fails the chats' open requests and shows a banner with
+  Retry.
 - **Stalls.** A stream whose loop handled no line for 30 s (pings come after 10 s of silence), a `session/list`
   unanswered within 30 s, and a `session/load` unanswered within 45 s all reopen the stream (`since` = the last record
   held): the waiting requests end `disconnected`, the bridge replays what was missed, and a load tries once more after
   that replay was handled (`caughtUp`), on the bridge still running (no launch). A bridge that does not answer the new
   stream turns the group to `error` (the banner's Retry). A list that fails keeps the rows read before, so neither the
-  rows nor the selection go.
+  rows nor the selection go. A reopen is shared as a connect that may not launch; a caller that wants a bridge waits for
+  it and then launches when it found none.
 
 ### 13.4 Service (`sys/assistant.js`)
 
@@ -640,11 +650,14 @@ snapshot or `shared.json`.
   (`views/shell/services.js`). Views call it inside `cx.spawn` and read `snapshot()` in render. Every `net`, `exec` and
   `hc` call is behind `checking()`. Changes redraw the copies through the store `assistant` (`snapshot: false`), at most
   one `store.set` per 80 ms.
-- **`start(cx)`** launches nothing and runs no `hermes`: it reconnects to running bridges of the current folder and
-  Herdr (the reuse rule), so notices keep coming after a reload while another screen shows. Its one-second tick expires
+- **`start(cx)`** does nothing on a herdr-relay device (it probes `true` as the views' relay gate does: the Assistant is
+  desktop-only). Elsewhere it launches nothing and runs no `hermes`: it reconnects to running bridges of the current
+  folder and Herdr (the reuse rule), so notices keep coming after a reload while another screen shows, and fails what
+  the chats of a profile left without a bridge still hold in flight (they turn stale). Its one-second tick expires
   approval cards, reopens a stream that handled no line for 30 s (13.3 Stalls), removes finished bridge terminals every
   60 s, rereads the folder's files every 10 s and the list every 30 s while the screen shows, and follows a folder
-  changed in `settings.json` by hand.
+  changed in `settings.json` by hand. The folder's files (for @) come from one `find` whose output `head -c` cuts at
+  512 KiB, so `find` stops there; a walk never starts while another runs (a forced one follows it).
 - **`open(cx)`**, called by a local Assistant view on every show (idempotent): the folder (unset → `no-folder`; not a
   folder on disk → `folder-missing`); once per start `hermes acp --check` (with `debugAgent`, `debugAgent ++ ["acp",
   "--check"]`; not found or not executable → `hermes-missing` with where it looked; a non-zero exit →
@@ -665,7 +678,8 @@ snapshot or `shared.json`.
   selection cleared once its row is gone.
 - **Chats.** `+` makes `session/new` (an unused empty chat of that profile made in this run is reused); selecting runs
   `session/load`, whose history replays into the chat; Fork runs `session/fork`. Text goes as described in 13.6. Stop
-  sends `session/cancel` and pauses the chips. An approval answer is `{outcome:{outcome:"selected", optionId}}`, refused
+  sends `session/cancel` and pauses the chips. An approval answer is `{outcome:{outcome:"selected", optionId}}`, one per
+  request (a second click while the first is sent gets its result and sends nothing), refused
   with `too-late` after the card's 60 s. A card still open when its turn ends closes as `expired` when that is within
   2 s of its deadline or later (Hermes gave up at its own 60 s; its clock starts a moment before the bridge's receive
   time), else as `cancelled`; a late answer to either is refused with `too-late`. The model changes with

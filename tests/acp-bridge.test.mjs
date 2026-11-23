@@ -68,7 +68,7 @@ readline.createInterface({input:process.stdin}).on('line',l=>{const m=JSON.parse
   err('   \u{1F4A1} This type of error will not be fixed by retrying.');
   err("2026-11-23 18:09:33 [ERROR] agent.conversation_loop: Non-retryable client error: Error code: 400");
   return setTimeout(()=>out({jsonrpc:'2.0',id:m.id,result:{stopReason:'end_turn'}}),300);}
- chunk(s,'one'); chunk(s,'two'); held.set(m.id,s);});
+ chunk(s,'one'); chunk(s,'two'); held.set(m.id,s); setTimeout(()=>err("\u274C Stream trouble (HTTP 500)"),150);});
 `;
 
 let shared; let RAW; let TURNS;
@@ -369,6 +369,7 @@ describe('acp-bridge',{concurrency:8},()=>{
   try{
    const [s]=await hello(b); await sendOk(b,w.sessionPrompt('t:s','s1',w.promptBlocks('stream',['/tmp/a b.md'])));
    const one=await s.until(v=>v.msg?.params?.update?.content?.text==='one'); await s.until(v=>v.msg?.params?.update?.content?.text==='two');
+   const trouble=await s.until(v=>v.ev==='agent-error'); assert.equal(trouble.text,'Stream trouble (HTTP 500)');
    await sendOk(b,w.notification('test/other',{})); await s.until(v=>v.msg?.params?.sessionId==='other');
    await sendOk(b,w.sessionLoad('t:l','s1',b.folder)); await s.until(isResult('t:l'));
    // A plain stream from now on gets live records only.
@@ -376,12 +377,33 @@ describe('acp-bridge',{concurrency:8},()=>{
    const t=open(b.d.port,w.streamLine(b.d.token,null,'test',true)); const h=await t.next();
    assert.equal(h.ev,'hello'); assert.equal(h.running.length,1);
    assert.deepEqual([h.running[0].id,h.running[0].sessionId,h.running[0].seq],['t:s','s1',one.seq-1]); assert.deepEqual(h.running[0].prompt,w.promptBlocks('stream',['/tmp/a b.md']));
-   // The turn's two chunks only: not the other session's update, not the history its load replayed.
-   const replay=[await t.next(),await t.next()]; assert.deepEqual(replay.map(v=>v.msg.params.update.content.text),['one','two']); assert.ok(replay.every(v=>v.seq<=h.seq));
+   // The turn's two chunks and the error line it wrote: not the other session's update, not the history its load replayed.
+   const replay=[await t.next(),await t.next(),await t.next()]; assert.deepEqual(replay.map(v=>v.msg?.params.update.content.text??v.ev),['one','two','agent-error']); assert.ok(replay.every(v=>v.seq<=h.seq));
+   assert.deepEqual([replay[2].seq,replay[2].text],[trouble.seq,'Stream trouble (HTTP 500)']);
    await sendOk(b,w.notification('test/finish',{})); const next=await t.next(); assert.equal(next.msg.params.update.content.text,'three','then live');
    assert.equal((await t.next()).msg.id,'t:s'); t.close();
    // Once the turn ended there is nothing to replay.
    const u=open(b.d.port,w.streamLine(b.d.token,null,'test',true)); const h2=await u.next(); assert.deepEqual(h2.running,[]); await assert.rejects(u.next(400),/no line/); u.close();
+  }finally{await b.cleanup();}
+ });
+
+ it('closes a refused or answered connection itself, and refuses a first line that runs past 64 KiB without its token',async()=>{
+  const b=await startBridge({agent:rawArgv()});
+  try{
+   // A client that never closes its own side (allowHalfOpen) and keeps writing after the reply: a socket the bridge
+   // destroyed answers with a reset (an error or a close here); one it kept half-open would swallow the bytes.
+   const halfOpen=(first)=>new Promise((resolve)=>{const sock=net.connect({port:b.d.port,host:'127.0.0.1',allowHalfOpen:true});let got='';let replyAt=null;let done=false;const t0=Date.now();
+    const finish=(how)=>{if(done)return;done=true;clearTimeout(give);clearInterval(poke);sock.destroy();const line=got.split('\n')[0];resolve({how,reply:line?JSON.parse(line):null,replyMs:replyAt===null?null:replyAt-t0,goneMs:Date.now()-t0});};
+    sock.on('data',d=>{got+=d;if(replyAt===null&&got.includes('\n'))replyAt=Date.now();}); sock.on('error',e=>finish(`error ${e.code}`)); sock.on('close',()=>finish('close'));
+    const poke=setInterval(()=>{if(replyAt!==null&&!done)sock.write('x');},250); const give=setTimeout(()=>finish('still open'),6000);
+    sock.on('connect',()=>sock.write(first));});
+   for(const first of [JSON.stringify(w.sendLine('ab',{}))+'\n',JSON.stringify(w.sendLine(b.d.token,w.notification('raw/none',{})))+'\n']){
+    const r=await halfOpen(first); assert.notEqual(r.how,'still open',JSON.stringify(r)); assert.ok(r.goneMs<5000,`gone after ${r.goneMs} ms`); assert.ok(r.reply&&('ok' in r.reply),JSON.stringify(r.reply));}
+   // 70 KiB with no token at its head: refused at once, not after the 5 s first-line wait.
+   const big=await halfOpen('x'.repeat(70*1024)); assert.deepEqual(big.reply,{ok:false,error:{code:'auth'}}); assert.ok(big.replyMs<3000,`refused after ${big.replyMs} ms`); assert.notEqual(big.how,'still open');
+   // A long line whose token comes first goes through.
+   await sendOk(b,w.notification('raw/none',{pad:'z'.repeat(200*1024)})); assert.ok(alive(b.d.pid));
+   assert.match(await readLog(b),/no token in the first 65536 bytes/);
   }finally{await b.cleanup();}
  });
 

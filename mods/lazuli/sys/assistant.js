@@ -97,7 +97,7 @@ let service = null; // {stopped} while started
 let checked = null; // {key, result} of this start's agent check
 let hermesBin = null; // the hermes program this start checked or looked up (never debugAgent's): the bridges' argv
 const clients = new Map(); // profile → AcpClient
-const launches = new Map(); // profile → Promise of ensureBridge
+const launches = new Map(); // profile → {promise, launch}: the connect (or reopen) in flight, and whether it may launch
 const loads = new Map(); // key → Promise of a session/load
 const promptKeys = new Map(); // request id → {key, kind, resync}
 const listeners = new Set();
@@ -105,6 +105,8 @@ let opening = null;
 let listing = null;
 let switching = null;
 let filesAt = 0;
+let filesBusy = false; // a walk of the folder's files runs
+let filesAgain = false; // a forced refresh came while it ran: one more walk after it
 const listSoon = new Set();
 // Where each folder of the list really is (symlinks and macOS firmlinks resolved, once per distinct path): a session
 // made in `/tmp/x` belongs to a folder picked as `/private/tmp/x` and the other way round (core/assistant-list.js).
@@ -505,11 +507,26 @@ function restoredPrompt(r) {
   return { kind: text.startsWith("/") ? "command" : "prompt", text, attachments };
 }
 
-/** A new stream's `hello`: the agent's version, the prompts still running (their answers come later; their user
- *  items and turn logs restored) and the agent requests still waiting (approval cards), restored into their chats. */
+/** A new stream's `hello`: the agent's version; the requests this service holds in flight that the bridge no longer
+ *  runs (their answers went while no stream listened: a reopened stream past the ring, a bridge that came back) fail,
+ *  and those chats turn stale and load again (the selected one now); the prompts still running (their answers come
+ *  later; their user items and turn logs restored) and the agent requests still waiting (approval cards) are restored
+ *  into their chats. */
 function onHello(cx, profile, hello) {
   const version = hello?.agent?.agentInfo?.version;
   if (typeof version === "string") S.hermes = { path: S.hermes?.path ?? null, version };
+  const running = new Set((Array.isArray(hello?.running) ? hello.running : []).map((r) => String(r?.id)));
+  for (const chat of chatsOf(profile)) {
+    const lost = Object.keys(chat.inflight ?? {}).filter((id) => !running.has(id));
+    if (!lost.length) continue;
+    log(`${chat.key}: ${lost.length} request(s) the bridge no longer runs: failed, the chat loads again`);
+    for (const id of lost) {
+      promptKeys.delete(id);
+      apply(cx, chat.key, { type: "prompt-failed", requestId: id, error: "disconnected" });
+    }
+    apply(cx, chat.key, { type: "disconnected" });
+    if (selectedKey() === chat.key) reload(cx, chat.key);
+  }
   for (const r of Array.isArray(hello?.running) ? hello.running : []) {
     const key = sessionKey(profile, r?.sessionId);
     if (!key || r.id === undefined) continue;
@@ -639,28 +656,42 @@ async function connectBridge(cx, profile, { launch = true } = {}) {
   return r;
 }
 
-/** A profile's client, connecting to its running bridge or launching one. Shared by concurrent callers. A connected
- *  bridge that runs another agent than the one this profile starts now is replaced. */
+/** Registers a connect in flight for a profile until it settles. */
+function inFlight(profile, promise, launch) {
+  const entry = { promise, launch };
+  launches.set(profile, entry);
+  promise.then(() => {
+    if (launches.get(profile) === entry) launches.delete(profile);
+  });
+  return promise;
+}
+
+/** A profile's client, connecting to its running bridge or launching one (`launch: false`: reuse only). Shared by
+ *  concurrent callers; a caller that wants a launch while a reuse-only connect is in flight waits for it, then launches
+ *  when it found no bridge. A connected bridge that runs another agent than the one this profile starts now is
+ *  replaced. */
 function ensureBridge(cx, profile, options) {
   const c = clients.get(profile);
   if (c?.open && sameAgent(c, profile)) return Promise.resolve({ ok: true, client: c });
-  if (launches.has(profile)) return launches.get(profile);
-  const p = owned(cx, (tcx) => connectBridge(tcx, profile, options));
-  launches.set(profile, p);
-  p.then(() => launches.delete(profile));
-  return p;
+  const launch = options?.launch !== false;
+  const running = launches.get(profile);
+  if (running) {
+    if (running.launch || !launch) return running.promise;
+    return running.promise.then((r) => (r?.ok ? r : ensureBridge(cx, profile, options)));
+  }
+  return inFlight(profile, owned(cx, (tcx) => connectBridge(tcx, profile, { launch })), launch);
 }
 
 /**
  * Reopens a profile's stream that stopped delivering (its read loop handled no line for STALL_MS, or a load or list got
  * no answer within its bound): the client closes (its waiting requests end `disconnected`; a load then tries once
  * more) and a new one attaches from the last record held, so the bridge replays what was missed (K3 ring; `gap` when
- * the ring no longer has it). Shared with ensureBridge's callers meanwhile. A bridge that no longer answers turns the
- * group's state to `error` (the banner's Retry).
+ * the ring no longer has it). Shared with ensureBridge's callers meanwhile (as a reuse-only connect). A bridge that no
+ * longer answers turns the group's state to `error` (the banner's Retry).
  */
 function reopenStream(cx, profile, client, why) {
   if (clients.get(profile) !== client || !client.open) return Promise.resolve({ ok: false });
-  if (launches.has(profile)) return launches.get(profile);
+  if (launches.has(profile)) return launches.get(profile).promise;
   log(`${profile}: the stream stopped (${why}); reopening it from seq ${client.seq}`);
   clients.delete(profile);
   if (Number.isInteger(client.seq)) resume.set(profile, { pid: client.pid, seq: client.seq });
@@ -674,9 +705,7 @@ function reopenStream(cx, profile, client, why) {
     }
     return r;
   });
-  launches.set(profile, p);
-  p.then(() => launches.delete(profile));
-  return p;
+  return inFlight(profile, p, false);
 }
 
 /** Reconnects to the bridges of this folder and Herdr that still run (start; K3 reuse rule). Launches nothing. */
@@ -884,22 +913,39 @@ function scheduleList(cx, profile) {
   );
 }
 
-/** The folder's files for the @ menu, at most every few seconds unless forced. */
+/** The folder's files for the @ menu, at most every few seconds unless forced, and never while a walk still runs (a
+ *  forced one then follows it). */
 function refreshFiles(cx, { force = false } = {}) {
-  if (!S.folder || !cx || (!force && Date.now() - filesAt < 3000)) return;
+  if (filesBusy && force) filesAgain = true;
+  if (!S.folder || !cx || filesBusy || (!force && Date.now() - filesAt < 3000)) return;
   filesAt = Date.now();
+  filesBusy = true;
   const folder = S.folder;
-  cx.spawn(
-    async (tcx) => {
-      const files = await disk.listFolderFiles(run, folder);
-      if (S.folder !== folder) return;
-      if (files.length !== S.files.length || files.some((f, i) => f !== S.files[i])) {
-        S.files = files;
-        changed(tcx);
-      }
-    },
-    { owner: null },
-  );
+  try {
+    cx.spawn(
+      async (tcx) => {
+        try {
+          const files = await disk.listFolderFiles(run, folder);
+          if (S.folder !== folder) return;
+          if (files.length !== S.files.length || files.some((f, i) => f !== S.files[i])) {
+            S.files = files;
+            changed(tcx);
+          }
+        } finally {
+          filesBusy = false;
+          filesAt = Date.now();
+          if (filesAgain) {
+            filesAgain = false;
+            refreshFiles(tcx, { force: true });
+          }
+        }
+      },
+      { owner: null },
+    );
+  } catch (e) {
+    filesBusy = false;
+    log(`the folder's files not read: ${errText(e)}`);
+  }
 }
 
 // ---- the folder -------------------------------------------------------------------------------------------------
@@ -1254,8 +1300,21 @@ async function doStop(cx, key) {
   return r.error ? r : { ok: true };
 }
 
-/** An approval's answer, by option id (D29). Past its deadline (K5 rule 4) it is refused with `too-late`. */
-async function doAnswer(cx, key, requestId, optionId) {
+const answering = new Map(); // `${key} ${requestId}` → the answer being sent for that approval
+
+/** An approval's answer, by option id (D29). Past its deadline (K5 rule 4) it is refused with `too-late`. One answer
+ *  per request: a second click while the first is being sent gets the first's result and sends nothing. */
+function doAnswer(cx, key, requestId, optionId) {
+  const id = `${key} ${String(requestId)}`;
+  if (answering.has(id)) return answering.get(id);
+  const p = sendAnswer(cx, key, requestId, optionId);
+  answering.set(id, p);
+  const done = () => answering.delete(id);
+  p.then(done, done);
+  return p;
+}
+
+async function sendAnswer(cx, key, requestId, optionId) {
   const chat = S.sessions[key];
   if (!chat) return { error: "not-found" };
   const now = Date.now();
@@ -1348,8 +1407,22 @@ function tick(cx, n) {
   }
 }
 
-/** The status copy's init: reconnects to this folder's running bridges (no launch, no hermes command) so notices
- *  keep coming after a reload while another screen shows, and runs the service's second. */
+/** Whether this window's host is a herdr-relay device: herdr-relay refuses every program its profile does not enable,
+ *  `true` among them (the probe views/apps/snapshot.js makes for the views' relay gate). A probe that fails to run
+ *  counts as not a relay. */
+async function onRelay() {
+  try {
+    const r = await exec("true", [], { timeout: 5000 });
+    return r?.code === 126 && String(r.stderr ?? "").trimStart().startsWith("herdr-relay:");
+  } catch {
+    return false;
+  }
+}
+
+/** The status copy's init: on a herdr-relay device nothing (K4: the Assistant is desktop-only); otherwise it reconnects
+ *  to this folder's running bridges (no launch, no hermes command) so notices keep coming after a reload while another
+ *  screen shows, fails what the chats of a profile without a bridge still hold in flight (a stop before the bridge
+ *  went: they turn stale and load again), and runs the service's second. */
 export function start(cx) {
   stop();
   if (checking()) return;
@@ -1360,12 +1433,21 @@ export function start(cx) {
   changed(cx);
   cx.spawn(
     async (tcx) => {
+      if (await onRelay()) {
+        log("a herdr-relay device: the Assistant service stays off");
+        if (service === me) setGate(tcx, "relay");
+        return;
+      }
       try {
         // The folder comes from settings.json, read once per source version.
         await store.loadSettings();
         if (service !== me) return;
         if (!switching && S.folder !== settingsFolder()) S.folder = settingsFolder();
         await reconnectAll(tcx);
+        if (service !== me) return;
+        for (const profile of new Set(Object.values(S.sessions).map((c) => c.profile))) {
+          if (!clients.get(profile)?.open && chatsOf(profile).some((c) => isRunning(c) || Object.keys(c.inflight).length)) failChats(tcx, profile, "disconnected");
+        }
       } catch (e) {
         log(`reconnect failed: ${errText(e)}`);
       }

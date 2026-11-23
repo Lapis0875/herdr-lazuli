@@ -22,6 +22,11 @@ const LIST_MS = 15000;
 /** The @ menu lists at most this many files, at most this deep. */
 export const MAX_FILES = 2000;
 const MAX_DEPTH = 8;
+/** The walk's output is cut at this many bytes (about four times MAX_FILES paths): `head` then closes the pipe and
+ *  `find` stops at its next write, so a huge folder costs no more than this. */
+export const WALK_BYTES = 512 * 1024;
+// find "$folder" <args…> -print0, its output cut at WALK_BYTES (find's own complaints go nowhere).
+const WALK = `f=$1; shift; /usr/bin/find "$f" "$@" 2>/dev/null | /usr/bin/head -c ${WALK_BYTES}`;
 /** Folders the @ menu never lists. */
 const SKIPPED = Object.freeze([".git", "node_modules", ".venv", "venv", "__pycache__", ".DS_Store"]);
 
@@ -109,12 +114,14 @@ export async function listProfiles(run, home) {
 }
 
 /** `find` output (NUL-separated absolute paths under `folder`) → folder-relative paths for the @ menu, images left
- *  out (core/paths.js kindOf "image"), sorted shallow first then by name, at most MAX_FILES. */
+ *  out (core/paths.js kindOf "image"), sorted shallow first then by name, at most MAX_FILES. Text after the last NUL
+ *  (a path the WALK_BYTES cut ended inside) is left out. */
 export function folderFileList(output, folder) {
   const root = String(folder ?? "").replace(/\/+$/, "");
   const prefix = `${root}/`;
   const out = [];
-  for (const p of String(output ?? "").split("\0")) {
+  const text = String(output ?? "");
+  for (const p of text.slice(0, text.lastIndexOf("\0") + 1).split("\0")) {
     if (!p.startsWith(prefix)) continue;
     const rel = p.slice(prefix.length);
     if (!rel || kindOf(rel) === "image") continue;
@@ -125,15 +132,15 @@ export function folderFileList(output, folder) {
   return out.slice(0, MAX_FILES);
 }
 
-/** The folder's files for the @ menu: hidden entries and SKIPPED folders are not walked. Resolves `[]` on any
- *  failure (a missing folder too). */
+/** The folder's files for the @ menu: hidden entries and SKIPPED folders are not walked, and the walk stops after
+ *  WALK_BYTES of output. Resolves `[]` on any failure (a missing folder too). */
 export async function listFolderFiles(run, folder) {
   if (typeof folder !== "string" || !folder.startsWith("/")) return [];
   const prune = ["(", "-name", ".*", ...SKIPPED.flatMap((n) => ["-o", "-name", n]), ")", "-prune"];
-  const args = [folder, "-mindepth", "1", "-maxdepth", String(MAX_DEPTH), ...prune, "-o", "-type", "f", "-print0"];
+  const args = ["-mindepth", "1", "-maxdepth", String(MAX_DEPTH), ...prune, "-o", "-type", "f", "-print0"];
   try {
-    const r = await run("/usr/bin/find", args, { timeout: LIST_MS });
-    // find exits non-zero on an unreadable subfolder and still prints the rest.
+    const r = await run("/bin/sh", ["-c", WALK, "lazuli-walk", folder, ...args], { timeout: LIST_MS });
+    // find exits non-zero on an unreadable subfolder and still prints the rest; the pipeline's status is head's.
     return folderFileList(r.stdout, folder);
   } catch {
     return [];

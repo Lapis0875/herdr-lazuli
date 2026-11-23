@@ -121,14 +121,15 @@ export default class Assistant {
 
   // Actions.
 
-  /** Runs one service call; its error shows for a few seconds. A drawing-only copy acts on nothing. */
+  /** Runs one service call; its error shows for a few seconds. `after(cx, result)` runs once it settles. A drawing-only
+   *  copy acts on nothing. */
   act(cx, call, after) {
     if (this.mode.preview) return;
     cx.spawn(async (cx) => {
       const r = await call(cx);
       // A refused answer after expiry already stands in the transcript (K5 rule 4).
       if (r?.error && r.error !== "too-late") this.notice.show(cx, { tone: "error", text: errorText(r.error) });
-      after?.(cx);
+      after?.(cx, r);
       cx.notify();
     });
   }
@@ -141,33 +142,56 @@ export default class Assistant {
 
   /** Enter (`how: "send"`) sends, or steers while a turn runs; ⌥Enter or ⌘Enter (`"queue"`) adds a chip. A typed
    *  `/queue x` is a chip and `/model x` the model menu's choice; anything else, a typed `/steer x` or a command too,
-   *  goes to the agent (K4 slash routing, core/assistant-agents.js routeText). */
+   *  goes to the agent (K4 slash routing, core/assistant-agents.js routeText).
+   *
+   *  The box empties at once, and the message comes back to it when the service refused it before taking it: no user
+   *  item (send, steer, command) or chip (queue) of it appeared, as when it is too long, a gate or the bridge stands in
+   *  the way, or the session would not load. One the service took stays in the transcript or the queue even when the
+   *  agent later fails it. */
   submit(cx, how) {
     const s = this.state();
     const chat = this.chat(s);
     if (!chat || this.mode.preview || bridgeError(s, chat.profile)) return;
+    const key = chat.key;
     const text = this.composer.value().trim();
     const attachments = [...this.composer.attachments];
     if (how === "queue") {
       if (!text) return;
       this.composer.set("", attachments);
-      this.act(cx, (cx) => this.svc.queue(cx, chat.key, text));
+      this.queueText(cx, chat, text);
       return;
     }
     if (!text && !attachments.length) return;
     const route = routeText(text, chat.agent);
     if (route.route === "queue") {
       this.composer.set("", attachments);
-      this.act(cx, (cx) => this.svc.queue(cx, chat.key, route.text));
+      this.queueText(cx, chat, route.text, text);
     } else if (route.route === "model") {
       this.composer.set("", attachments);
-      this.act(cx, (cx) => this.svc.setModel(cx, chat.key, modelIdFor(chat, route.model)));
+      this.act(cx, (cx) => this.svc.setModel(cx, key, modelIdFor(chat, route.model)), (_cx, r) => r?.error && this.restore(text, []));
     } else {
+      // The user items there before this send: a new one of this text means the service took it.
+      const before = new Set((chat.items ?? []).filter((it) => it.type === "user"));
+      const took = () => (this.svc.session(key)?.items ?? []).some((it) => it.type === "user" && it.via !== "replay" && !before.has(it) && it.text === text);
       this.composer.set("", []);
-      this.scrolls.of(chat.key).follow = true;
-      this.act(cx, (cx) => this.svc.send(cx, chat.key, { text, attachments }));
+      this.scrolls.of(key).follow = true;
+      this.act(cx, (cx) => this.svc.send(cx, key, { text, attachments }), (_cx, r) => r?.error && !took() && this.restore(text, attachments));
     }
     cx.notify();
+  }
+
+  /** A chip for `text`; `typed` (the whole `/queue x` line) comes back to the box when no chip of it appeared. */
+  queueText(cx, chat, text, typed = text) {
+    const count = (c) => (c?.queue ?? []).filter((q) => q.text === text).length;
+    const before = count(chat);
+    this.act(cx, (cx) => this.svc.queue(cx, chat.key, text), (_cx, r) => r?.error && count(this.svc.session(chat.key)) <= before && this.restore(typed, []));
+  }
+
+  /** Puts a message the service did not take back in the box, ahead of anything typed meanwhile, with its files. */
+  restore(text, attachments) {
+    const typed = this.composer.value();
+    const files = [...attachments, ...this.composer.attachments.filter((a) => !attachments.includes(a))];
+    this.composer.set(typed.trim() ? `${text}\n${typed}` : text, files);
   }
 
   stop(cx) {

@@ -46,7 +46,11 @@ const KILL_AFTER_CANCEL_MS = 5000;
 const FAST_KILL_MS = 300;
 const FAST_EXIT_MS = 380;
 const STDOUT_DRAIN_MS = 500;
-const EXTRA_PATH = (home) => [":/opt/homebrew/bin", "/usr/local/bin", `${home}/.local/bin`, `${home}/.claude/local`].join(":");
+/** A refused or answered connection is destroyed this long after its reply, so a client that never closes its side
+ *  does not keep a half-open socket (the server is allowHalfOpen for streams). */
+const REPLY_LINGER_MS = 1000;
+/** The `turn` of a ring record that belongs to every running turn (an `agent-error`: stderr names no session). */
+const ANY_TURN = "*";
 
 // The terminal may be gone (hc kill closes it): writing to it must never crash the bridge.
 process.stdout.on("error", () => {});
@@ -375,7 +379,7 @@ process.on("uncaughtException", (e) => {
 
 function agentEnv() {
   const env = { ...process.env };
-  env.PATH = `${env.PATH ?? ""}${EXTRA_PATH(env.HOME || homedir())}`;
+  env.PATH = wire.agentPath(env.PATH, env.HOME || homedir());
   return env;
 }
 
@@ -413,7 +417,7 @@ if (agent) {
       const text = initDone ? wire.agentErrorText(l) : null;
       if (text) {
         const seq = ++lastSeq;
-        pushRecord(seq, Buffer.from(`${JSON.stringify({ seq, at: Date.now(), ev: "agent-error", text })}\n`));
+        pushRecord(seq, Buffer.from(`${JSON.stringify({ seq, at: Date.now(), ev: "agent-error", text })}\n`), tracker.runningSessions().length ? ANY_TURN : null);
       }
     }
   };
@@ -592,7 +596,10 @@ function tokenOk(t) {
   return timingSafeEqual(createHash("sha256").update(t).digest(), TOKEN_HASH);
 }
 
-const reply = (sock, value) => sock.end(`${JSON.stringify(value)}\n`);
+function reply(sock, value) {
+  sock.end(`${JSON.stringify(value)}\n`);
+  setTimeout(() => sock.destroy(), REPLY_LINGER_MS).unref();
+}
 const refuse = (sock, code) => reply(sock, { ok: false, error: { code } });
 
 function onConnection(sock) {
@@ -603,6 +610,7 @@ function onConnection(sock) {
   let parts = [];
   let len = 0;
   let first = true;
+  let tokenSeen = false; // a valid token at the head of a first line still being read (wire.leadingToken)
   let ignored = false;
   const authTimer = setTimeout(() => {
     if (!first) return;
@@ -628,6 +636,17 @@ function onConnection(sock) {
         clearTimeout(authTimer);
         log(`conn ${id}: first line over ${FIRST_LINE_MAX} bytes`);
         refuse(sock, "too-large");
+      } else if (!tokenSeen && len > wire.PRE_AUTH_BYTES) {
+        // Only an authenticated line may grow past PRE_AUTH_BYTES (a long `send`): its token comes first.
+        const token = wire.leadingToken(Buffer.concat(parts).subarray(0, 512).toString("latin1"));
+        if (token !== null && tokenOk(token)) tokenSeen = true;
+        else {
+          first = false;
+          parts = [];
+          clearTimeout(authTimer);
+          log(`conn ${id}: no token in the first ${wire.PRE_AUTH_BYTES} bytes`);
+          refuse(sock, "auth");
+        }
       }
       return;
     }
@@ -709,7 +728,7 @@ function onStream(sock, id, req) {
     if (Number.isFinite(oldest) && oldest + 1 < firstSeq) toSub(eventLine("gap", { since: oldest, first: firstSeq, last: lastSeq }));
     for (let i = ringHead; i < ring.length; i++) {
       const r = ring[i];
-      const start = r.turn === null ? undefined : starts.get(r.turn);
+      const start = r.turn === null ? undefined : r.turn === ANY_TURN ? oldest : starts.get(r.turn);
       if (!Number.isInteger(start) || r.seq <= start) continue;
       toSub(r.buf);
       replayed++;

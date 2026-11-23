@@ -145,6 +145,9 @@ export function defaultSettings() {
 const isPlain = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const plain = (v) => (isPlain(v) ? JSON.parse(JSON.stringify(v)) : {});
 const strings = (v) => (Array.isArray(v) ? v.filter((s) => typeof s === "string" && s.trim() !== "") : []);
+/** `assistant.debugAgent`: a non-empty array of non-empty strings as it is, else null (one element of another kind
+ *  makes the whole argv unusable, so it is not trimmed down to the rest). */
+const argvOrNull = (v) => (Array.isArray(v) && v.length > 0 && v.every((s) => typeof s === "string" && s.trim() !== "") ? [...v] : null);
 const positive = (v) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null);
 const positiveInt = (v) => (Number.isInteger(v) && v > 0 ? v : null);
 
@@ -172,7 +175,6 @@ export function normalizeSettings(raw) {
   const routines = plain(r.routines);
   const pdf = plain(r.pdf);
   const assistant = plain(r.assistant);
-  const debugAgent = strings(assistant.debugAgent);
   return {
     ...r,
     version: SETTINGS_VERSION,
@@ -184,7 +186,7 @@ export function normalizeSettings(raw) {
     pins: Array.isArray(r.pins) ? [...new Set(strings(r.pins)), ...(gainsAssistantPin(r) ? ["assistant"] : [])] : d.pins,
     pdf: { ...pdf, zoom: PDF_ZOOMS.includes(pdf.zoom) ? pdf.zoom : d.pdf.zoom },
     editor: typeof r.editor === "string" && r.editor.trim() !== "" ? r.editor.trim() : d.editor,
-    assistant: { ...assistant, folder: assistantFolder(assistant.folder), debugAgent: debugAgent.length ? debugAgent : null },
+    assistant: { ...assistant, folder: assistantFolder(assistant.folder), debugAgent: argvOrNull(assistant.debugAgent) },
   };
 }
 

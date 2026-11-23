@@ -30,6 +30,10 @@ test('settings v1 → v2 pins the assistant once',()=>{
  const fresh=normalizeSettings(null); assert.deepEqual(fresh.pins,['inbox','todo','routines','assistant']); assert.deepEqual(fresh.assistant,{folder:null,debugAgent:null});
  assert.deepEqual(normalizeSettings({assistant:{folder:' /tmp/lz-assistant-a/ ',debugAgent:['/usr/local/bin/node','/x/fake-acp-agent.mjs']}}).assistant,{folder:'/tmp/lz-assistant-a',debugAgent:['/usr/local/bin/node','/x/fake-acp-agent.mjs']});
  assert.deepEqual(normalizeSettings({assistant:{folder:'rel/dir',debugAgent:[]}}).assistant,{folder:null,debugAgent:null}); assert.equal(normalizeSettings({assistant:{folder:'/'}}).assistant.folder,'/');
+ // debugAgent: a non-empty array of non-empty strings, else null; one element of another kind voids it (not dropped).
+ for(const bad of [['/usr/local/bin/node',3],['/usr/local/bin/node',''],['/usr/local/bin/node',null],[' '],'/usr/local/bin/node',{0:'node'},7])
+  assert.equal(normalizeSettings({assistant:{debugAgent:bad}}).assistant.debugAgent,null,JSON.stringify(bad));
+ assert.deepEqual(normalizeSettings({assistant:{debugAgent:['node',' x ']}}).assistant.debugAgent,['node',' x '],'kept as it is');
  // The one-time write-back (store.js): only an older file whose pins gain the assistant; never the result again.
  assert.deepEqual(migratedSettings({version:1,pins:['todo','inbox']}),v1); assert.equal(migratedSettings(v1),null); assert.equal(migratedSettings(JSON.parse(JSON.stringify(v1))),null);
  assert.deepEqual(migratedSettings({pins:['inbox']}).pins,['inbox','assistant']); assert.equal(migratedSettings({version:1,pins:['assistant']}),null); assert.equal(migratedSettings({version:1,language:'ko'}),null);
