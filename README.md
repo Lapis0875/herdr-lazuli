@@ -314,13 +314,13 @@ Using it:
 - **When Hermes fails.** Hermes ends a reply it could not give (a model your provider rejects, an expired login) with
   no message and writes the reason to its error output. The chat then shows a failed notice with Hermes's error line
   (Show all opens a long one), or says Hermes ended the turn without a reply; the whole story is in the bridge log,
-  `~/.cache/lazuli/assistant/<home8>/<profile>.log`.
+  `~/.cache/lazuli/assistant/<home8>/v2/<profile>.log`.
 
 How it runs: for each Hermes profile in use, lazuli starts a small bridge, `mods/lazuli/bin/acp-bridge.mjs`, with
 `hc run --bg` in the folder. The bridge runs `hermes -p <profile> acp` and talks to lazuli over 127.0.0.1, only with
-clients that hold the token in its discovery file. Its files are in `~/.cache/lazuli/assistant/<home8>/` (the folder
-0700; `<profile>.json` and `<profile>.log` 0600; `<home8>` names the Herdr app home); the log holds method names and
-sizes, never the token or what you write (Hermes's lines that quote a prompt are cut). A bridge keeps running behind
+clients that hold the token in its discovery file. Its files are in `~/.cache/lazuli/assistant/<home8>/v2/` (the
+folder is 0700; discovery, lock, and log are 0600; `<home8>` names the Herdr app home). The bridge holds the
+profile lock until it exits. The log holds method names and sizes, never the token or prompt text. A bridge keeps running behind
 other screens and across reloads, and exits after 30 minutes with nothing running or waiting for you, or when Herdr
 quits. A reload reuses it only while it runs the same `hermes`; a turn that was running shows once, whole. Every
 minute lazuli removes the terminals of bridges that ended.
@@ -388,11 +388,10 @@ panel's listing, file reads, quick open, `git`, Review's `gh`, the session looku
   `node`), `hermes acp --check` (once per start), `/bin/sh -c 'echo "$PPID"'` (Herdr's pid),
   `/usr/bin/sqlite3 -readonly -json` (the chat list from Hermes's `state.db`), `/usr/bin/find` (Hermes's profiles and
   the folder's files for @), `cd -P` and `pwd -P` under `/bin/sh -c` (where a folder really is: a chat made in `/tmp/x`
-  belongs to `/private/tmp/x`), `/bin/test`, `/bin/ls`, `/bin/kill -0`, `/bin/rm -f` (a stale discovery file),
-  `/bin/ps -o command=` and `kill -s KILL` (only for an agent a dead bridge left, after `ps` shows it is that profile's
-  `hermes … acp`), and `hc run --bg`, `hc kill`, `hc rm`, `hc ls --all --json` (the bridges and their finished
-  terminals). The bridge, `bin/acp-bridge.mjs` under node, runs `hermes -p <profile> acp` in its own process group, in
-  the folder, with the same `PATH` additions as `run-agent.mjs`.
+  belongs to `/private/tmp/x`), `/bin/test`, `/bin/ls`, `/bin/kill -0`, `/bin/ps -p … -o pid=` (liveness only),
+  and `hc run --bg`, `hc kill`, `hc rm`, `hc ls --all --json` (bridge terminals). The bridge runs `hermes -p
+  <profile> acp` in its own process group, in the folder, with the same `PATH` additions as `run-agent.mjs`.
+  Orphans from a hard-killed bridge are not signalled using saved PIDs.
 
 **Reads**, outside its own folders:
 
@@ -416,13 +415,12 @@ panel's listing, file reads, quick open, `git`, Review's `gh`, the session looku
 - `~/.cache/lazuli/`: `scan-cache.json`, `run-cache.json`, `usage-cache.json` and `sessions-index.json` (the
   transcript reader's caches), `recaps/`, `routines/<slug>/<id>.*` and `runs/<id>.*` (run files: command, pid, output,
   exit), `bin/pdfd-<hash>`, `pdfd-<home>.json` (one per Herdr app home), `chrome.json` (both 0600), `broker.lock`, `chrome-profile/`, `chrome.log`,
-  `broker.log`; `assistant/<home8>/<profile>.json` and `<profile>.log` (the Assistant's bridges: the folder 0700, the
-  files 0600, the log rotated at 5 MiB).
+  `broker.log`; Assistant bridge discovery, stable lock, and logs in `assistant/<home8>/v2/` (log rotated at 5 MiB).
 - `~/.herdr/worktrees/<repo>/auto/<slug>-<id>`: a routine's worktree, removed after the run when it left nothing.
 - Herdr's shared state (`shared.json`): `lazuli.*` keys, among them the open file tabs and the Assistant's selected chat
   and collapsed groups (`lazuli.assistant.ui`).
 - Terminal labels: `lazuli.resume` (what to restore), `lazuli.run`, `lazuli.sidecar`, `lazuli.view` and
-  `lazuli.assistant` (a bridge's profile).
+  `lazuli.assistant.v2` (a bridge's profile; `lazuli.assistant` for older bridges).
 - What you save, create, rename or delete. A delete goes to the Trash where `/usr/bin/trash` exists.
 - The OMP extension writes OSC 7501 records to the terminal OMP runs in.
 

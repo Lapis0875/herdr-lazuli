@@ -105,6 +105,7 @@ const listeners = new Set();
 let opening = null;
 let listing = null;
 let switching = null;
+let folderGeneration = 0;
 let filesAt = 0;
 let filesBusy = false; // a walk of the folder's files runs
 let filesAgain = false; // a forced refresh came while it ran: one more walk after it
@@ -557,7 +558,7 @@ function onHello(cx, profile, hello) {
 /** A client on a bridge's discovery: its stream, then its hello. Resolves `{ok, client}` or `{error}`. `since` null
  *  (a bridge this run holds no record of) asks also for the turns still running there (K3 `turns`), so a turn that
  *  began before a reload shows whole; its hello (the prompts running) is applied before those records. */
-async function attach(cx, profile, d, since = null) {
+async function attach(cx, profile, d, since = null, valid = () => true) {
   const client = new AcpClient({
     profile,
     discovery: d,
@@ -567,6 +568,10 @@ async function attach(cx, profile, d, since = null) {
     onEnd: (why, tcx) => onEnd(tcx, profile, client, why),
   });
   const ready = (hello) => {
+    if (!valid()) {
+      client.close();
+      return;
+    }
     const old = clients.get(profile);
     clients.set(profile, client);
     if (old && old !== client) old.close();
@@ -574,6 +579,7 @@ async function attach(cx, profile, d, since = null) {
     onHello(cx, profile, hello);
   };
   const h = await client.connect(cx, since, { turns: since === null, ready });
+  if (!valid()) return { error: "disconnected" };
   return h.error ? h : { ok: true, client };
 }
 
@@ -597,9 +603,13 @@ function sameAgent(client, profile) {
 }
 
 async function connectBridge(cx, profile, { launch = true } = {}) {
+  if (switching) return { error: "disconnected" };
   if (!S.folder) return { error: "no-folder" };
   const folder = S.folder;
+  const generation = folderGeneration;
+  const valid = () => generation === folderGeneration && !switching;
   const pid = await bridge.herdrPid();
+  if (!valid()) return { error: "disconnected" };
   if (!pid) {
     setBridge(cx, profile, { state: "error", error: "bridge-launch-failed" });
     return { error: "bridge-launch-failed", detail: "Herdr's pid is unknown" };
@@ -614,13 +624,21 @@ async function connectBridge(cx, profile, { launch = true } = {}) {
   }
   const argv = await expectedArgv(profile);
   const found = await bridge.readDiscovery(profile);
+  if (!valid()) return { error: "disconnected" };
+  if (found.state === "unreadable" || found.state === "invalid") {
+    const r = { error: "disconnected", detail: "Bridge discovery could not be read safely" };
+    if (launch) setBridge(cx, profile, { state: "error", ...r });
+    return r;
+  }
   const pending = pendingStops.get(profile);
   const d = found.state === "absent" && pending ? pending : found;
   const ours = d.state === "ready" && d.profile === profile && d.cwd === folder && d.herdrPid === pid;
   if (ours && argv && (await bridge.pidState(d.pid)) !== "gone") {
+    if (!valid()) return { error: "disconnected" };
     if (wire.discoveryMatches(d, { profile, cwd: folder, herdrPid: pid, argv })) {
       const from = resume.get(profile);
-      const r = await attach(cx, profile, d, from?.pid === d.pid ? from.seq : null);
+      const r = await attach(cx, profile, d, from?.pid === d.pid ? from.seq : null, valid);
+      if (!valid()) return { error: "disconnected" };
       if (r.ok) {
         pendingStops.delete(profile);
         log(`reusing the ${profile} bridge pid ${d.pid}`);
@@ -635,14 +653,21 @@ async function connectBridge(cx, profile, { launch = true } = {}) {
     const stopped = await shutdownBridge(cx, d);
     if (!(await bridge.awaitExit(cx, profile, d.pid))) {
       pendingStops.set(profile, d);
+      if (!valid()) return { error: "disconnected" };
       const r = { error: "bridge-timeout", detail: stopped.ok ? "The previous bridge has not exited" : "The previous bridge could not be confirmed stopped" };
       setBridge(cx, profile, { state: "error", ...r });
       return r;
     }
   }
+  if (launch && !ours && d === pending && (await bridge.pidState(d.pid)) !== "gone") {
+    const r = { error: "bridge-timeout", detail: "The previous bridge could not be confirmed stopped" };
+    if (valid()) setBridge(cx, profile, { state: "error", ...r });
+    return r;
+  }
+  if (!valid()) return { error: "disconnected" };
   if (!launch) return { error: "disconnected" };
   // A new bridge starts only once open() passed the gates (K4).
-  if (S.gate !== "ok" || S.folder !== folder) {
+  if (S.gate !== "ok") {
     setBridge(cx, profile, { state: "off" });
     return { error: gateError() };
   }
@@ -650,26 +675,30 @@ async function connectBridge(cx, profile, { launch = true } = {}) {
     setBridge(cx, profile, { state: "error", error: "hermes-missing" });
     return { error: "hermes-missing" };
   }
-  if (!(await bridge.retire(profile, d))) {
-    const r = { error: "disconnected", detail: "The previous bridge discovery changed or could not be retired" };
-    setBridge(cx, profile, { state: "error", ...r });
-    return r;
+  // Reaping touches finished terminals only. The bridge compares and replaces discovery under its own lock.
+  if (found.state !== "absent") await bridge.reap([profile]);
+  const L = await bridge.launch(cx, { profile, folder, herdrPid: pid, argv, snapshot: found, valid });
+  if (!valid()) {
+    await bridge.cancelLaunch(L.address);
+    return { error: "disconnected" };
   }
-  pendingStops.delete(profile);
-  const L = await bridge.launch(cx, { profile, folder, herdrPid: pid, argv });
   if (L.error) {
     setBridge(cx, profile, { state: "error", error: L.error, detail: L.detail ?? null });
     return { error: L.error, detail: L.detail ?? null };
   }
-  if (S.folder !== folder) return { error: "disconnected" };
-  const r = await attach(cx, profile, L.discovery);
+  pendingStops.delete(profile);
+  const r = await attach(cx, profile, L.discovery, null, valid);
+  if (!valid()) {
+    await bridge.cancelLaunch(L.address);
+    return { error: "disconnected" };
+  }
   if (r.error) setBridge(cx, profile, { state: "error", error: r.error });
   return r;
 }
 
 /** Registers a connect in flight for a profile until it settles. */
 function inFlight(profile, promise, launch) {
-  const entry = { promise, launch };
+  const entry = { promise, launch, generation: folderGeneration };
   launches.set(profile, entry);
   promise.then(() => {
     if (launches.get(profile) === entry) launches.delete(profile);
@@ -687,6 +716,7 @@ function ensureBridge(cx, profile, options) {
   const launch = options?.launch !== false;
   const running = launches.get(profile);
   if (running) {
+    if (running.generation !== folderGeneration) return running.promise.then(() => ensureBridge(cx, profile, options));
     if (running.launch || !launch) return running.promise;
     return running.promise.then((r) => (r?.ok ? r : ensureBridge(cx, profile, options)));
   }
@@ -965,6 +995,7 @@ function refreshFiles(cx, { force = false } = {}) {
 async function switchFolder(cx, folder) {
   if (switching) await switching;
   if (folder === S.folder) return;
+  folderGeneration++;
   const job = (async () => {
     const leaving = [...clients.values()];
     clients.clear();
@@ -1453,7 +1484,10 @@ export function start(cx) {
         // The folder comes from settings.json, read once per source version.
         await store.loadSettings();
         if (service !== me) return;
-        if (!switching && S.folder !== settingsFolder()) S.folder = settingsFolder();
+        if (!switching && S.folder !== settingsFolder()) {
+          folderGeneration++;
+          S.folder = settingsFolder();
+        }
         await reconnectAll(tcx);
         if (service !== me) return;
         for (const profile of new Set(Object.values(S.sessions).map((c) => c.profile))) {

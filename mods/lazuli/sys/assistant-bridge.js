@@ -1,28 +1,24 @@
 // The Assistant's bridges (CONTRACTS K3, K4; spikes S5, S8, S9): finding Hermes and Node, the once-per-start
 // `acp --check`, the Herdr pid, launching a profile's bridge (bin/acp-bridge.mjs) with `hc run --bg`, reading its
-// discovery file, the reuse rule, retiring stale bridges and removing finished bridge terminals.
+// discovery file, the reuse rule, and removing finished bridge terminals.
 //
-// Runtime folder (K2): `~/.cache/lazuli/assistant/<home8>/`, `<home8>` the first 8 hex digits of sha256(app home), as
-// for pdfd (ARCHITECTURE §5). The bridge makes it 0700 and writes `<profile>.json` (discovery) and `<profile>.log`
-// there, both 0600; this module only reads them (and removes a stale discovery file with `rm`).
-//
-// Launch: `hc run --bg --json --no-parent --no-notify --cwd <folder> --label lazuli.assistant=<profile> -- <abs node>
-// <bridge> --profile <p> --cwd <folder> --discovery … --log … --herdr-pid <pid> --idle-min 30 --agent -- <argv…>`.
+// Runtime folder (K2): `~/.cache/lazuli/assistant/<home8>/`. The manager never writes discovery.
+// Versioned discoveries and the associated stable lock in `v2/` are owned by the publishing bridge.
+// The unversioned directory is read-only migration input.
 // The Herdr process carries HC_TERMINAL_ID, so without --no-parent --no-notify the bridge's terminal would get a
 // parent and hc would type notes into it (S8). A terminal that ended is kept by hc until `hc rm` (S5): the reaper
-// removes finished `lazuli.assistant=<profile>` terminals every minute. `terminals()` lists live terminals only (as
-// `hc ls` does: a finished one is counted in `hidden_finished`), and the JSON of `hc ls --all` carries no labels and no
-// pids, so a profile's bridge terminals are listed by hc's own filter: `hc ls --all --json --label
-// lazuli.assistant=<profile>` (one call per profile; `--label` takes K=V only).
+// reaps both generations of finished bridge terminals. `terminals()` lists live terminals only, and the
+// JSON of `hc ls --all` has no labels or pids, so the reaper queries by label.
 //
 // Every function here runs host commands: callers check `checking()` first.
 
 import { exec, hc, home, appHome, readTextFile, terminals } from "herdr";
-import { createHash } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import * as wire from "../core/acp-wire.js";
 import { checkArgv } from "../core/assistant-agents.js";
 
-export const LABEL = "lazuli.assistant";
+const LEGACY_LABEL = "lazuli.assistant";
+const LABEL = "lazuli.assistant.v2";
 /** The mod waits this long for a new bridge's discovery file (S9 cold start 0.6–1.6 s; K3). */
 const LAUNCH_WAIT_MS = wire.DISCOVERY_WAIT_MS;
 const POLL_MS = 100;
@@ -46,7 +42,7 @@ export function runtimeDir() {
 /** A profile's discovery and log files. */
 export function bridgePaths(profile) {
   const dir = runtimeDir();
-  return { dir, discovery: `${dir}/${profile}.json`, log: `${dir}/${profile}.log` };
+  return { discovery: `${dir}/v2/${profile}.json`, legacy: `${dir}/${profile}.json`, log: `${dir}/v2/${profile}.log` };
 }
 
 /** The bridge script of this app home. */
@@ -177,65 +173,62 @@ export async function checkAgent(debugAgent) {
 
 // ---- discovery --------------------------------------------------------------------------------------------------
 
-/** A profile's discovery file, checked (core/acp-wire.js parseDiscovery), or `{state: "absent"}`. */
+const parse = (text) => text === null ? { state: "absent" } : wire.parseDiscovery(text);
+const fingerprint = (text) => text === null ? "absent" : createHash("sha256").update(text).digest("hex");
+
+/** Read both generations; absence means ENOENT, not an unreadable or malformed file. */
 export async function readDiscovery(profile) {
-  let text = null;
   try {
-    text = await readTextFile(bridgePaths(profile).discovery);
-  } catch {
-    text = null;
-  }
-  return typeof text === "string" ? wire.parseDiscovery(text) : { state: "absent" };
+    const node = await nodePath();
+    if (node) {
+      const { discovery, legacy } = bridgePaths(profile);
+      const r = await exec(node, [bridgeScript(), "--inspect-discovery", discovery, legacy], { timeout: 5000 });
+      if (r.code === 0) {
+        const { current, legacy: old } = JSON.parse(r.stdout);
+        if ([current, old].every((text) => text === null || typeof text === "string")) {
+          const legacyRecord = parse(old);
+          return { ...(current === null ? legacyRecord : parse(current)), previous: fingerprint(current),
+            legacyPrevious: fingerprint(old), legacyRecord };
+        }
+      }
+    }
+  } catch {}
+  return { state: "unreadable" };
 }
 
 /** The profiles that have a discovery file. */
 export async function discoveredProfiles() {
-  try {
-    const r = await exec("/bin/ls", [runtimeDir()], { timeout: 5000 });
-    if (r.code !== 0) return [];
-    return r.stdout
-      .split("\n")
-      .map((n) => n.trim())
-      .filter((n) => n.endsWith(".json") && !n.includes(".tmp-"))
-      .map((n) => n.slice(0, -5));
-  } catch {
-    return [];
+  const profiles = new Set();
+  for (const dir of [runtimeDir(), `${runtimeDir()}/v2`]) {
+    try {
+      const r = await exec("/bin/ls", [dir], { timeout: 5000 });
+      if (r.code !== 0) continue;
+      for (const n of r.stdout.split("\n")) if (n.endsWith(".json")) profiles.add(n.slice(0, -5));
+    } catch {}
   }
-}
-
-/** Discards only the discovery we read; a newer bridge may have written its own. */
-async function removeDiscovery(profile, previous) {
-  const d = await readDiscovery(profile);
-  if (d.state === "absent") return true;
-  if (d.state !== previous.state || d.pid !== previous.pid || d.token !== previous.token) return false;
-  try {
-    return (await exec("/bin/rm", ["-f", bridgePaths(profile).discovery], { timeout: 5000 })).code === 0;
-  } catch (e) {
-    log(`stale discovery of ${profile} not removed: ${errText(e)}`);
-  }
-  return false;
+  return [...profiles];
 }
 
 // ---- terminals ---------------------------------------------------------------------------------------------------
 
-const labelled = (profile) => (t) => isObj(t?.labels) && t.labels[LABEL] === profile;
+const labelled = (profile, label) => (t) => isObj(t?.labels) && t.labels[label] === profile;
 
-/** A profile's bridge terminals, finished ones included: `hc ls --all --json --label lazuli.assistant=<profile>` (that
+/** A profile's bridge terminals, finished ones included: `hc ls --all --json --label <label>=<profile>` (that
  *  JSON has no labels or pids, so hc filters), each with the pid `terminals()` gives a live one (null for a finished
  *  one). The live ones `terminals()` lists when hc cannot be read. */
-export async function bridgeTerminals(profile) {
+export async function bridgeTerminals(profile, label = LABEL) {
   let list = null;
   try {
-    const r = await hc(["ls", "--all", "--json", "--label", `${LABEL}=${profile}`]);
+    const r = await hc(["ls", "--all", "--json", "--label", `${label}=${profile}`]);
     if (r.code === 0) {
       const v = JSON.parse(r.stdout);
       list = Array.isArray(v) ? v : Array.isArray(v?.terminals) ? v.terminals : null;
-    } else log(`hc ls --all --label ${LABEL}=${profile}: ${(r.stderr || r.stdout).trim()}`);
+    } else log(`hc ls --all --label ${label}=${profile}: ${(r.stderr || r.stdout).trim()}`);
   } catch (e) {
-    log(`hc ls --all --label ${LABEL}=${profile} failed: ${errText(e)}`);
+    log(`hc ls --all --label ${label}=${profile} failed: ${errText(e)}`);
   }
   const live = terminals() ?? [];
-  if (!list) return live.filter(labelled(profile));
+  if (!list) return live.filter(labelled(profile, label));
   return list
     .filter((t) => isObj(t) && typeof t.address === "string")
     .map((t) => ({ ...t, pid: live.find((x) => x?.address === t.address)?.pid ?? null }));
@@ -252,12 +245,6 @@ async function hcQuiet(args) {
   }
 }
 
-/** Ends a terminal's program (hc kill) when it still runs, then removes it (hc rm). */
-async function killAndRemove(term) {
-  if (term.state === "live") await hcQuiet(["kill", term.address]);
-  await hcQuiet(["rm", term.address]);
-}
-
 /** Whether a listed terminal ended (its process gone). */
 const ended = async (term) => term.state !== "live" && !(await pidAlive(term.pid));
 
@@ -266,23 +253,13 @@ export async function reap(profiles) {
   let n = 0;
   for (const profile of new Set(profiles)) {
     if (typeof profile !== "string" || profile === "") continue;
-    for (const term of await bridgeTerminals(profile)) {
+    for (const term of [...await bridgeTerminals(profile), ...await bridgeTerminals(profile, LEGACY_LABEL)]) {
       if (!(await ended(term))) continue;
       if (await hcQuiet(["rm", term.address])) n++;
     }
   }
   if (n) log(`removed ${n} finished bridge terminal(s)`);
   return n;
-}
-
-/**
- * Discards a discovery that may not be reused and removes the profile's finished bridge terminals.
- * Neither a saved PID nor an argv match identifies a live process instance. An orphan from an ungraceful
- * bridge death may remain running; do not signal it or any live terminal based on discovery.
- */
-export async function retire(profile, d) {
-  if (d.state === "ready" || d.state === "failed") await reap([profile]);
-  return d.state === "absent" || removeDiscovery(profile, d);
 }
 
 /** Resolves true only when the old PID is confirmed gone. An ACK or a failed probe is not proof of exit. */
@@ -304,24 +281,48 @@ export async function awaitExit(cx, profile, pid) {
 /** A failed start's code (discovery `error.code`) → the service's error (K4). */
 const START_ERROR = Object.freeze({ "agent-exit": "agent-exit", "init-failed": "bridge-launch-failed", "init-timeout": "bridge-timeout" });
 
+/** Stop only a terminal returned by this launch, never one found by profile or PID. */
+export async function cancelLaunch(address) {
+  if (!address) return;
+  await hcQuiet(["kill", address]);
+  await hcQuiet(["rm", address]);
+}
+
 /**
  * Launches a profile's bridge in `folder` and waits up to 45 s for its discovery file. Resolves `{discovery}` or
  * `{error, detail}` with `error` one of `bridge-launch-failed`, `bridge-timeout`, `agent-exit`. A terminal that ends
  * without a usable discovery file is removed; one that takes too long is killed and removed.
  */
-export async function launch(cx, { profile, folder, herdrPid: pid, argv }) {
+export async function launch(cx, { profile, folder, herdrPid: pid, argv, snapshot, valid }) {
+  if (!valid()) return { error: "disconnected" };
   const node = await nodePath();
   if (!node) return { error: "bridge-launch-failed", detail: "node not found" };
+  // Legacy binaries cannot touch the versioned path. Do not overlap a known or ambiguous legacy bridge,
+  // including one still initializing before it has written its unversioned discovery.
+  const old = snapshot.legacyRecord;
+  if (!old || old.state === "invalid" || (old.state !== "absent" && (await pidState(old.pid)) !== "gone")) {
+    return { error: "bridge-timeout", detail: "The legacy bridge could not be confirmed stopped" };
+  }
+  const live = terminals();
+  if (!Array.isArray(live) || live.some(labelled(profile, LEGACY_LABEL))) {
+    return { error: "bridge-timeout", detail: "A legacy bridge may still be running" };
+  }
   const p = bridgePaths(profile);
+  const launchId = randomBytes(16).toString("hex");
   const at = Date.now();
   let address = null;
+  const cancelled = async () => {
+    await cancelLaunch(address);
+    return { error: "disconnected" };
+  };
   try {
+    if (!valid()) return { error: "disconnected" };
     const r = await hc([
       "run", "--bg", "--json", "--no-parent", "--no-notify", "--cwd", folder, "--label", `${LABEL}=${profile}`, "--",
       node, bridgeScript(), "--profile", profile, "--cwd", folder, "--discovery", p.discovery, "--log", p.log,
-      "--herdr-pid", String(pid), "--idle-min", String(wire.IDLE_MIN), "--agent", "--", ...argv,
+      "--herdr-pid", String(pid), "--idle-min", String(wire.IDLE_MIN), "--launch-id", launchId,
+      "--previous", snapshot.previous, "--legacy", p.legacy, "--legacy-previous", snapshot.legacyPrevious, "--agent", "--", ...argv,
     ]);
-    if (r.code !== 0) return { error: "bridge-launch-failed", detail: (r.stderr || r.stdout).trim() };
     for (const line of r.stdout.split("\n")) {
       try {
         const v = JSON.parse(line);
@@ -330,6 +331,8 @@ export async function launch(cx, { profile, folder, herdrPid: pid, argv }) {
         // Not the JSON line.
       }
     }
+    if (!valid()) return cancelled();
+    if (r.code !== 0) return { error: "bridge-launch-failed", detail: (r.stderr || r.stdout).trim() };
   } catch (e) {
     return { error: "bridge-launch-failed", detail: errText(e) };
   }
@@ -340,27 +343,28 @@ export async function launch(cx, { profile, folder, herdrPid: pid, argv }) {
   let seen = null;
   for (let waited = 0; waited < LAUNCH_WAIT_MS; waited += POLL_MS) {
     await cx.sleep(POLL_MS);
-    const d = await readDiscovery(profile);
+    if (!valid()) return cancelled();
+    const text = await readTextFile(p.discovery).catch(() => null);
+    if (!valid()) return cancelled();
+    const d = typeof text === "string" ? wire.parseDiscovery(text) : { state: "unreadable" };
     const t = term();
     if (t) seen = t;
-    const mine = !seen?.pid || d.pid === seen.pid;
-    if (d.state === "ready" && mine && d.startedAt >= at - 1000 && wire.discoveryMatches(d, { profile, cwd: folder, herdrPid: pid, argv })) {
+    const mine = d.launchId === launchId;
+    if (d.state === "ready" && mine && wire.discoveryMatches(d, { profile, cwd: folder, herdrPid: pid, argv })) {
       log(`${profile} bridge pid ${d.pid} ready on port ${d.port} after ${Date.now() - at} ms`);
       return { discovery: d, address };
     }
     const gone = (seen !== null && (!t || t.state !== "live")) || (d.state === "failed" && mine);
     if (gone && !(await pidAlive(seen?.pid ?? d.pid))) {
-      const last = await readDiscovery(profile);
+      if (!valid()) return cancelled();
       if (address) await hcQuiet(["rm", address]);
-      if (last.state === "failed" && (!seen?.pid || last.pid === seen.pid)) {
-        log(`${profile} bridge failed to start: ${last.code} ${last.detail}`);
-        return { error: START_ERROR[last.code] ?? "bridge-launch-failed", detail: last.detail };
+      if (d.state === "failed" && mine) {
+        log(`${profile} bridge failed to start: ${d.code} ${d.detail}`);
+        return { error: START_ERROR[d.code] ?? "bridge-launch-failed", detail: d.detail };
       }
       return { error: "bridge-launch-failed", detail: `the bridge ended (${t?.reason ?? t?.state ?? "finished"})` };
     }
   }
-  const t = term();
-  if (t) await killAndRemove(t);
-  else if (address) await hcQuiet(["rm", address]);
+  await cancelLaunch(address);
   return { error: "bridge-timeout", detail: `no discovery file in ${LAUNCH_WAIT_MS / 1000} s` };
 }

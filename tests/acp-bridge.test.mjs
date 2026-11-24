@@ -6,6 +6,8 @@ import {describe,it,before,after} from 'node:test'; import assert from 'node:ass
 import {spawn,execFile} from 'node:child_process'; import {mkdtemp,mkdir,readFile,writeFile,stat,rm} from 'node:fs/promises'; import {existsSync} from 'node:fs';
 import net from 'node:net'; import {tmpdir,networkInterfaces} from 'node:os'; import {join} from 'node:path'; import {fileURLToPath} from 'node:url';
 import * as w from '../mods/lazuli/core/acp-wire.js';
+import { closeSync } from 'node:fs';
+import { reserve } from '../mods/lazuli/bin/lib/acp-discovery.mjs';
 
 const BRIDGE=fileURLToPath(new URL('../mods/lazuli/bin/acp-bridge.mjs',import.meta.url));
 const FAKE=fileURLToPath(new URL('./fixtures/fake-acp-agent.mjs',import.meta.url));
@@ -354,6 +356,8 @@ describe('acp-bridge',{concurrency:8},()=>{
    while(!existsSync(`${marker}.term`)&&Date.now()<termUntil)await sleep(10);
    assert.equal(await readFile(`${marker}.term`,'utf8'),'received');
    assert.ok(!existsSync(`${marker}.exit`),'only the test can release the descendant');
+   const lock=reserve(`${b.discovery}.lock`); assert.notEqual(lock,null,'the live descendant did not inherit the reservation');
+   closeSync(lock);
    await writeFile(`${marker}.release`,'');
    const until=Date.now()+2000;
    while(!existsSync(`${marker}.exit`)&&Date.now()<until)await sleep(10);

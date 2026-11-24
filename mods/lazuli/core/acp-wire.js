@@ -270,9 +270,10 @@ export function parseDiscovery(text) {
     return { state: "invalid" };
   }
   if (!isObj(d) || d.version !== DISCOVERY_VERSION || !posInt(d.pid)) return { state: "invalid" };
+  const receipt = typeof d.launchId === "string" && /^[0-9a-f]{32}$/.test(d.launchId) ? { launchId: d.launchId } : {};
   if (isObj(d.error)) {
     const code = START_ERRORS.includes(d.error.code) ? d.error.code : "init-failed";
-    return { state: "failed", pid: d.pid, code, detail: typeof d.error.detail === "string" ? d.error.detail : "" };
+    return { state: "failed", pid: d.pid, code, detail: typeof d.error.detail === "string" ? d.error.detail : "", ...receipt };
   }
   const ok =
     posInt(d.agentPid) &&
@@ -289,7 +290,7 @@ export function parseDiscovery(text) {
     Number.isFinite(d.startedAt);
   if (!ok) return { state: "invalid" };
   const { pid, agentPid, port, token, profile, cwd, herdrPid, startedAt } = d;
-  return { state: "ready", pid, agentPid, port, token, profile, cwd, herdrPid, startedAt, argv: isArgv(d.argv) ? [...d.argv] : null };
+  return { state: "ready", pid, agentPid, port, token, profile, cwd, herdrPid, startedAt, argv: isArgv(d.argv) ? [...d.argv] : null, ...receipt };
 }
 
 /** Whether a ready discovery belongs to this profile, folder and Herdr and runs this agent argv (K3 reuse rule: a bridge

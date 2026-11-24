@@ -282,7 +282,7 @@ Scheduler, a reducer over `H/data/lazuli/routines-state.json`:
 | Chrome broker `bin/chrome-broker.mjs` | the first viewer that finds none | `spawn(process.execPath, [broker], {detached:true, stdio:"ignore"}).unref()`; the broker holds an exclusive flock on `~/.cache/lazuli/broker.lock` for its whole life (review fix) | `~/.cache/lazuli/chrome.json` (0600) | 300 s after the last lease closes |
 | PDF daemon `~/.cache/lazuli/bin/pdfd-<sha8>` | `sys/sidecars.js`, on the first PDF | `hc run --bg --json --cwd ~ --label lazuli.sidecar=pdfd -- <bin> --cache <H>/data/lazuli/cache/pdf --discovery ~/.cache/lazuli/pdfd-<home8>.json --idle 300` | `~/.cache/lazuli/pdfd-<home8>.json` (0600; `<home8>` = first 8 hex of sha256(app home); reused only when the build and the recorded `cache` both match this home) | 300 s with no connection |
 | Headless run `bin/run-agent.mjs` | `sys/runner.js` | §4.8 | label `lazuli.run=<id>` + run files | command exit |
-| ACP bridge `bin/acp-bridge.mjs`, one per Hermes profile | `sys/assistant-bridge.js`, when the Assistant screen opens | `hc run --bg --json --no-parent --no-notify --cwd <folder> --label lazuli.assistant=<profile> -- <abs node> <bridge> …` (§13.2) | `~/.cache/lazuli/assistant/<home8>/<profile>.json` (0600, folder 0700; reused only when its pid lives, profile, folder, Herdr pid and agent argv match and `hello` comes within 5 s) | 30 min idle with nothing running or pending, Herdr gone, `{op:"shutdown"}`, a signal, or the agent's exit; the service's 60 s reaper removes its finished terminal (found with `hc ls --all`) |
+| ACP bridge `bin/acp-bridge.mjs`, one per Hermes profile | `sys/assistant-bridge.js`, when the Assistant screen opens | `hc run --bg` with label `lazuli.assistant.v2=<profile>` (§13.2) | `~/.cache/lazuli/assistant/<home8>/v2/<profile>.json` (0600, folder 0700) | 30 min idle, Herdr gone, authenticated shutdown, a signal, or agent exit; its terminal is reaped |
 
 **HTML viewer (B7, B8)**
 - Chrome is driven over CDP: `Page.startScreencast {format:"png"}` (F6), each frame drawn as one Kitty image replaced in place.
@@ -546,7 +546,7 @@ tokens; the recorded messages are `docs/spikes/S9/*.jsonl`). Module contracts: C
 Assistant views (local window only) ──K4 calls──► sys/assistant.js  (module state; the status copy runs it)
                                                     │  sys/acp-client.js per profile: one stream socket, short send sockets
                                                     ▼  127.0.0.1:<port>, token from the discovery file
-hc run --bg … node bin/acp-bridge.mjs --profile <p> …    (terminal label lazuli.assistant=<p>; one per profile)
+hc run --bg … node bin/acp-bridge.mjs --profile <p> …    (terminal label lazuli.assistant.v2=<p>; one per profile)
                                                     │  stdio, one JSON-RPC object per line
                                                     ▼
 <abs hermes> -p <p> acp                           (its own process group; cwd = the assistant folder)
@@ -554,9 +554,10 @@ hc run --bg … node bin/acp-bridge.mjs --profile <p> …    (terminal label laz
 
 | Path | Mode | Writer | Content |
 |---|---|---|---|
-| `~/.cache/lazuli/assistant/<home8>/` | 0700 | the bridge | `<home8>` = first 8 hex of sha256(app home), as for pdfd (§5) |
-| `<profile>.json` | 0600 | the bridge, via a 0600 temp file and a rename, only after `initialize` succeeded | `{version:1, pid, agentPid, argv, port, token, profile, cwd, herdrPid, startedAt}` (`argv`: the agent argv it runs); a failed start `{version:1, pid, error:{code: agent-exit\|init-failed\|init-timeout, detail}}` |
-| `<profile>.log`, `<profile>.log.1` | 0600 | the bridge | method names, ids, sizes, the agent's stderr (prompt text cut out); 5 MiB with one rotation. Where a failed turn's cause is when Hermes said nothing in the chat |
+| `~/.cache/lazuli/assistant/<home8>/v2/` | 0700 | the bridge | `<home8>` = first 8 hex of sha256(app home), as for pdfd (§5) |
+| `<profile>.json.lock` | 0600 | the bridge | stable inode; never unlink; kernel releases the exclusive lock at process exit |
+| `<profile>.json` | 0600 | only the lock holder, via a 0600 temp file and rename | `{version:1, launchId, pid, agentPid, argv, port, token, profile, cwd, herdrPid, startedAt}` after `initialize`; or a failed start `{version:1, launchId, pid, error:{code, detail}}` |
+| `<profile>.log`, `<profile>.log.1` | 0600 | the bridge | method names, ids, sizes, the agent's stderr (prompt text cut out); 5 MiB with one rotation |
 
 The token is 32 random bytes in hex. It lives in the discovery file and in the mod's memory only: never in a log, a
 snapshot or `shared.json`.
@@ -566,12 +567,23 @@ snapshot or `shared.json`.
 - **Programs.** `node` and `hermes` are looked up on `PATH`, then in `~/.local/bin`, `/opt/homebrew/bin` and
   `/usr/local/bin`, then through the login shell's `command -v`, and run by absolute path (Herdr's own `PATH` may lack
   them, S5). Herdr's pid is `$PPID` of `/bin/sh -c 'echo "$PPID"'`.
-- **Launch.** `hc run --bg --json --no-parent --no-notify --cwd <folder> --label lazuli.assistant=<profile> -- <node>
-  <H>/mods/lazuli/bin/acp-bridge.mjs --profile <p> --cwd <folder> --discovery <dir>/<p>.json --log <dir>/<p>.log
-  --herdr-pid <pid> --idle-min 30 --agent -- <argv>`. The Herdr process carries `HC_TERMINAL_ID`: without
-  `--no-parent --no-notify` the bridge's terminal would get a parent and `hc` would type notes into it (S8). The agent
+- **Launch.** `hc run --bg --json --no-parent --no-notify --cwd <folder> --label lazuli.assistant.v2=<profile> -- <node>
+  <H>/mods/lazuli/bin/acp-bridge.mjs …` passes v2 paths, a random launch receipt, and hashes of the observed discovery
+  files (not their authentication tokens). The manager revalidates the folder generation immediately before `hc run`;
+  if it changes during launch (including A→B→A), only that invocation's returned terminal address can be stopped.
+  No address means no guessed cleanup. The Herdr process carries `HC_TERMINAL_ID`: without `--no-parent --no-notify`
+  the bridge's terminal would get a parent and hc would type notes into it (S8). The agent
   argv is `<abs hermes> -p <profile> acp`, `-p` also for `default` so `hermes profile use` never changes which profile a
   bridge serves; with `assistant.debugAgent` set it is `debugAgent ++ ["-p", <profile>, "acp"]`.
+- **Reservation and migration.** Before starting an agent the bridge takes a nonblocking exclusive kernel lock
+  (Darwin `O_EXLOCK`, or `flock` elsewhere), then checks the receipts against the launch snapshot. A disappeared
+  record is safe; a changed existing receipt, lock contention, or any read/lock error refuses launch. The
+  bridge holds the lock through publication and final discovery cleanup; the agent never inherits the descriptor.
+  The manager only reads; a crash releases the lock and can leave stale discovery for the next holder. Pre-v2
+  discovery and terminal labels are read-only migration inputs; the old binary cannot write to v2. Replacement
+  is refused while a legacy record is unreadable, malformed, or its PID cannot be confirmed gone, or a legacy
+  terminal is still live (including pre-publication startup). Migration assumes only one active mod version per
+  Herdr home; running an older mod concurrently cannot be coordinated by the v2 lock.
 - **Start.** The bridge spawns the agent in its own process group (cwd = folder, `PATH` extended as for
   `run-agent.mjs`, with no empty entry when the bridge has no `PATH`: `acp-wire.agentPath`), sends `initialize` once
   (protocol 1, client `fs` and `terminal` capabilities off, `clientInfo`
@@ -582,10 +594,9 @@ snapshot or `shared.json`.
   a different agent argv) requests authenticated shutdown unless the process is already confirmed gone. An ACK is
   not exit: only confirmed absence permits retirement and replacement. An inconclusive result leaves discovery alone
   and shows a retryable error; the mod also remembers the discovery if an older bridge unlinks it early. A reuse-only
-  connection never shuts down the bridge. Other stale discoveries are discarded and finished terminals are reaped,
-  without signalling any live terminal from a saved PID. Only a launch still in progress can fall back to `hc kill` by the
-  terminal address returned by its own `hc run`. Neither an argv match nor checking a PID with `ps` can bind a later
-  signal to the same process group. Discovery cleanup deliberately leaves any orphan after an ungraceful bridge death.
+  connection never shuts down the bridge. The read helper distinguishes ENOENT from an unreadable file; an uncertain
+  or invalid discovery cannot authorize replacement. Finished terminals are reaped without signalling any live
+  terminal from a saved PID. An orphan after ungraceful bridge death is deliberately not signalled.
 - **Ends.** Idle: 30 minutes with no `send` and no agent line, no prompt in flight and no agent request open (pings and
   stream connects do not count). Herdr: `process.kill(herdrPid, 0)` every second. SIGHUP (`hc kill`), SIGTERM, SIGINT
   or Herdr gone take the fast path: `session/cancel` for running sessions without waiting, SIGTERM to the owned agent
@@ -599,9 +610,8 @@ snapshot or `shared.json`.
 - **Reaper.** A bridge that ended leaves its terminal behind until `hc rm` (S5). Herdr's `terminals()` lists live
   terminals only, and the JSON of `hc ls --all --json` carries no labels and no pids, so a profile's bridge
   terminals, finished ones included, are listed with hc's own filter: `hc ls --all --json --label
-  lazuli.assistant=<profile>` (`--label` takes `K=V` only: one call per profile). Every 60 s the service removes the
-  finished ones of every profile it knows (`default`, Hermes's profile folders, the listed, connected and discovered
-  ones); retiring or replacing a profile's bridge also removes that profile's finished ones.
+  lazuli.assistant.v2=<profile>` (plus the legacy `lazuli.assistant=<profile>`). Every 60 s the service removes the
+  finished ones for known profiles; replacing a profile's bridge also reaps its finished terminals.
 - **Log.** Hermes logs the first 100 characters of every prompt to stderr (`acp_adapter/server.py:1383`) and the first
   80 again in a `conversation turn: … msg='…'` line (`agent/turn_context.py:213-217`); the bridge rewrites the first to
   its session id and `[<n> chars]` and the second to `msg=[redacted]`.

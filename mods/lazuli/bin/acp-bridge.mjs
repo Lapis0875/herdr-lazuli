@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // lazuli's Assistant bridge (plan K3; spikes S8, S9): one per Hermes profile, started by the mod with
-//   hc run --bg --json --no-parent --no-notify --cwd <folder> --label lazuli.assistant=<profile> -- <abs node> \
+//   hc run --bg --json --no-parent --no-notify --cwd <folder> --label lazuli.assistant.v2=<profile> -- <abs node> \
 //     <H>/mods/lazuli/bin/acp-bridge.mjs --profile <name> --cwd <abs folder> --discovery <abs>.json \
 //     --log <abs>.log --herdr-pid <pid> --idle-min 30 --agent -- <agent argv…>
 // It runs the agent (`<abs hermes> -p <profile> acp`) in a process group of its own, sends `initialize`
@@ -32,6 +32,7 @@ import net from "node:net";
 import { homedir } from "node:os";
 import { dirname, isAbsolute } from "node:path";
 import * as wire from "../core/acp-wire.js";
+import { fingerprint, readDiscoveryFile, reserve } from "./lib/acp-discovery.mjs";
 
 const BRIDGE_VERSION = 1;
 const LOG_MAX_BYTES = 5 * 1024 * 1024;
@@ -63,7 +64,8 @@ const cut = (s, n) => (s.length > n ? `${s.slice(0, n)}…` : s);
 
 // Arguments.
 
-const KEYS = new Set(["profile", "cwd", "discovery", "log", "herdr-pid", "idle-min"]);
+const KEYS = new Set(["profile", "cwd", "discovery", "log", "herdr-pid", "idle-min", "launch-id", "previous", "legacy", "legacy-previous"]);
+const isFingerprint = (value) => value === "absent" || /^[0-9a-f]{64}$/.test(value ?? "");
 
 function parseArgs(argv) {
   const dd = argv.indexOf("--");
@@ -93,7 +95,12 @@ function parseArgs(argv) {
   const idleMin = o["idle-min"] === undefined ? wire.IDLE_MIN : Number(o["idle-min"]);
   if (!Number.isFinite(idleMin) || idleMin <= 0) return fail("--idle-min must be a positive number");
   if (agent.length === 0 || agent[0] === "") return fail("missing the agent argv after --");
-  return { profile: o.profile, cwd: o.cwd, discovery, log: o.log, herdrPid, idleMs: idleMin * 60000, agent };
+  const launchId = o["launch-id"], previous = o.previous ?? "absent", legacy = o.legacy, legacyPrevious = o["legacy-previous"];
+  if ((launchId !== undefined && !/^[0-9a-f]{32}$/.test(launchId)) || !isFingerprint(previous)
+      || (legacy !== undefined && (!isAbsolute(legacy) || legacy === discovery || !isFingerprint(legacyPrevious)))
+      || (legacy === undefined && legacyPrevious !== undefined)) return fail("invalid discovery reservation");
+  return { profile: o.profile, cwd: o.cwd, discovery, log: o.log, herdrPid, idleMs: idleMin * 60000, agent,
+    launchId, previous, legacy, legacyPrevious };
 }
 
 /** Creates the folder 0700, and makes an existing one 0700. */
@@ -109,16 +116,45 @@ function writeDiscoveryFile(path, value) {
   fs.renameSync(tmp, path);
 }
 
+// Read-only command for Herdr, whose readTextFile returns null for more than one error.
+if (process.argv[2] === "--inspect-discovery") {
+  const [current, legacy] = process.argv.slice(3);
+  try {
+    if (!current || !legacy || !isAbsolute(current) || !isAbsolute(legacy)) throw new Error("expected absolute discovery paths");
+    await new Promise((resolve) => process.stdout.write(JSON.stringify({ current: readDiscoveryFile(current), legacy: readDiscoveryFile(legacy) }), resolve));
+    process.exit(0);
+  } catch (e) {
+    await new Promise((resolve) => process.stderr.write(`acp discovery: ${reason(e)}\n`, resolve));
+    process.exit(1);
+  }
+}
+
 const args = parseArgs(process.argv.slice(2));
 if (args.error) {
   process.stderr.write(`acp-bridge: ${args.error}\n`);
   if (args.discovery) {
     try {
       privateDir(dirname(args.discovery));
-      writeDiscoveryFile(args.discovery, { version: wire.DISCOVERY_VERSION, pid: process.pid, error: { code: "init-failed", detail: `usage: ${args.error}` } });
+      if (reserve(`${args.discovery}.lock`) !== null && readDiscoveryFile(args.discovery) === null) {
+        writeDiscoveryFile(args.discovery, { version: wire.DISCOVERY_VERSION, pid: process.pid, error: { code: "init-failed", detail: `usage: ${args.error}` } });
+      }
     } catch {}
   }
   process.exit(2);
+}
+
+// Holds through agent shutdown and discovery cleanup. Node's open fd is close-on-exec and isn't in agent stdio.
+try {
+  privateDir(dirname(args.discovery));
+  if (reserve(`${args.discovery}.lock`) === null) throw new Error("another bridge holds the profile reservation");
+  const current = fingerprint(readDiscoveryFile(args.discovery));
+  const legacy = args.legacy === undefined ? "absent" : fingerprint(readDiscoveryFile(args.legacy));
+  if ((current !== "absent" && current !== args.previous) || (legacy !== "absent" && legacy !== args.legacyPrevious)) {
+    throw new Error("discovery changed before reservation");
+  }
+} catch (e) {
+  process.stderr.write(`acp-bridge: ${reason(e)}\n`);
+  process.exit(1);
 }
 
 const { profile: PROFILE, cwd: CWD, discovery: DISCOVERY, log: LOG, herdrPid: HERDR_PID, idleMs: IDLE_MS } = args;
@@ -127,6 +163,11 @@ const TOKEN = randomBytes(32).toString("hex");
 const TOKEN_HASH = createHash("sha256").update(TOKEN).digest();
 const ids = wire.createIds("b");
 const INIT_ID = ids.next();
+let publishedReady = false;
+function publish(fields) {
+  writeDiscoveryFile(DISCOVERY, { version: wire.DISCOVERY_VERSION, pid: process.pid, launchId: args.launchId, ...fields });
+  publishedReady = !fields.error;
+}
 
 // The log: 0600, 5 MiB with one rotation.
 
@@ -156,22 +197,21 @@ function log(text) {
 }
 
 try {
-  privateDir(dirname(DISCOVERY));
   privateDir(dirname(LOG));
   openLog();
 } catch (e) {
   process.stderr.write(`acp-bridge: cannot prepare ${dirname(DISCOVERY)}: ${reason(e)}\n`);
   try {
-    writeDiscoveryFile(DISCOVERY, { version: wire.DISCOVERY_VERSION, pid: process.pid, error: { code: "init-failed", detail: `files: ${reason(e)}` } });
+    publish({ error: { code: "init-failed", detail: `files: ${reason(e)}` } });
   } catch {}
   process.exit(1);
 }
 
-/** Deletes the discovery file when it still names this bridge (a newer bridge may have replaced it). */
+/** Only the reservation holder can publish or remove a versioned discovery. */
 function removeDiscovery() {
+  if (!publishedReady) return;
   try {
-    const d = JSON.parse(fs.readFileSync(DISCOVERY, "utf8"));
-    if (d?.pid !== process.pid || d.token !== TOKEN) return;
+    publishedReady = false;
     fs.unlinkSync(DISCOVERY);
     log("discovery deleted");
   } catch {}
@@ -334,7 +374,7 @@ function failStart(code, detail) {
   const text = cut(String(detail), DETAIL_MAX);
   log(`start failed: ${code}: ${text}`);
   try {
-    writeDiscoveryFile(DISCOVERY, { version: wire.DISCOVERY_VERSION, pid: process.pid, error: { code, detail: text } });
+    publish({ error: { code, detail: text } });
   } catch (e) {
     log(`cannot write the discovery file: ${reason(e)}`);
   }
@@ -537,9 +577,7 @@ function onInit(msg, now) {
     if (stopping) return;
     port = server.address().port;
     try {
-      writeDiscoveryFile(DISCOVERY, {
-        version: wire.DISCOVERY_VERSION,
-        pid: process.pid,
+      publish({
         agentPid,
         port,
         token: TOKEN,

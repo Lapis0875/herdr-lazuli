@@ -703,6 +703,7 @@ export function leadingToken(head): string | null    // the 64-hex token a first
   error code reads as `init-failed`; `argv` is null in a file without one. `discoveryMatches` needs the profile,
   folder, Herdr pid and the whole agent argv equal, so a file without `argv` never matches.
 - Discovery pids are informational and useful for liveness checks; neither they nor `argv` authorize an OS signal.
+- `parseDiscovery` preserves an optional `launchId` (32 lowercase hex digits) on ready and failed records.
 - Tracker: a `session/prompt` request is running until its answer, kept with the last record seq when it went and its
   prompt blocks (`running()` → `[{id, sessionId, at, seq, prompt}]`); when a session's last prompt ends, that session's
   open agent requests end too (Hermes stops waiting after 60 s without saying so); `$/cancel_request` ends one. A
@@ -839,7 +840,10 @@ row = {key, profile, sessionId, title, updatedAt, model, messageCount, running, 
 ### CLI: `bin/acp-bridge.mjs` (K3)
 
 `node acp-bridge.mjs --profile <name> --cwd <abs folder> --discovery <abs>.json --log <abs>.log --herdr-pid <pid>
---idle-min 30 --agent -- <agent argv…>`. Node built-ins only.
+--idle-min 30 --agent -- <agent argv…>`. The manager also passes `--launch-id`, `--previous`, `--legacy`,
+and `--legacy-previous`; the previous values are SHA-256 fingerprints or `absent`. The standalone form expects
+no previous discovery. `--inspect-discovery <current> <legacy>` reads without taking the lock and reports both
+texts (`null` only on ENOENT); read errors return a nonzero exit. Non-Darwin hosts require `flock`.
 
 | First client line (within 5 s) | Answer |
 |---|---|
@@ -886,17 +890,20 @@ Every reply ends its connection, and the bridge destroys it 1 s later (no half-o
   result). The folder's files are never walked twice at once.
 - `sys/assistant-bridge.js`: `runtimeDir()`, `nodePath()`, `hermesPath()`, `hermesLooked()`, `folderExists(path)`,
   `herdrPid()`, `pidAlive(pid)`, `pidState(pid)` (`present`, `gone`, or `unknown` on lookup failure),
-  `checkAgent(debugAgent)` → `{ok, bin}` or `{gate, detail}`, `readDiscovery(profile)`,
-  `discoveredProfiles()`, `bridgeTerminals(profile)` (async: `hc ls --all --json --label lazuli.assistant=<profile>`,
+  `checkAgent(debugAgent)` → `{ok, bin}` or `{gate, detail}`. `readDiscovery(profile)` reads v2 and legacy paths via a
+  Node helper; only ENOENT is `absent`, failed I/O is `unreadable`, and malformed data is `invalid`.
+  `discoveredProfiles()`, `bridgeTerminals(profile, label)` (async: `hc ls --all --json --label <label>=<profile>`,
   finished terminals included, since that JSON carries no labels or pids; a live one gets its pid from `terminals()`;
   the live `terminals()` of that label when hc cannot be read), `reap(profiles)` (removes those profiles' ended bridge
   terminals; the service passes `default`, Hermes's profile folders and the listed, connected and discovered profiles
-  every 60 s), `retire(profile, d)` (true when the stale discovery was removed or is already absent; false when it
-  changed or removal failed) and `awaitExit(cx, profile, pid)` (true only on confirmed absence, false on timeout or
-  an unavailable probe). No PID-based fallback kill. Only the bridge signals its own agent group, and not after its
-  child exits. A hard-killed bridge or exited agent can leave processes running when no safe group target remains.
-  `launch(cx, {profile, folder, herdrPid, argv})` → `{discovery, address}` (a discovery that matches with that `argv`)
-  or `{error, detail}` (`bridge-launch-failed`, `bridge-timeout`, `agent-exit`). Callers check `checking()` first.
+  every 60 s) and `awaitExit(cx, profile, pid)` (true only on confirmed absence). No PID-based fallback kill.
+  `launch(cx, {profile, folder, herdrPid, argv, snapshot, valid})` → `{discovery, address}` for its own publication,
+  or `{error, detail}`. `valid` identifies the folder generation and is checked immediately before `hc run`
+  and again after awaits; `cancelLaunch(address)` uses only the address returned by that `hc run`. The manager
+  never removes discovery. The bridge takes a stable exclusive lock before starting the agent and, while holding
+  it, replaces only a matching or absent current file and removes only its own ready publication. Unknown reads
+  or reservation failures do not permit launch. Only the bridge signals its agent group, and not after its child
+  exits. Callers check `checking()` first. See ARCHITECTURE §13 for legacy migration assumptions.
 - `sys/assistant-sessions.js` (takes `run(command, args, options)`, so tests run it on real sqlite3 files):
   `querySessions(run, db)` → `{rows, via: readonly|immutable|absent}` or `{error: schema|locked|open|parse|failed,
   detail}`; `profileSessions(run, home, profile)`; `listProfiles(run, home)`; `listFolderFiles(run, folder)` (at most
