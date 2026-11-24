@@ -397,6 +397,17 @@ export function agentPath(path, home) {
   return [...own, ...extra].join(":");
 }
 
+/** Whether a process's command line (`ps -o command=`: its argv joined with spaces) is a profile's agent as
+ *  core/assistant-agents.js agentArgv builds it: at least one word before a tail of exactly `-p <profile> acp` (so
+ *  `-p dev` is not `-p dev2`, and `acp` before `-p` is not that agent). The mod kills an agent group a dead bridge left
+ *  only when this holds (K3). */
+export function isProfileAgent(command, profile) {
+  if (typeof command !== "string" || typeof profile !== "string" || profile === "" || /\s/.test(profile)) return false;
+  const words = command.trim().split(/\s+/);
+  const n = words.length;
+  return n >= 4 && words[n - 3] === "-p" && words[n - 2] === profile && words[n - 1] === "acp";
+}
+
 // A first line before its newline.
 
 /** How much of a first line the bridge reads before it has seen a valid token. */

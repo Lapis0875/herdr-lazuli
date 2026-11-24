@@ -696,6 +696,7 @@ export function createStderrFilter({promptLength})   // push(text) → lines, en
 export const AGENT_ERROR_MAX = 1000
 export function agentErrorText(line): string | null
 export function agentPath(path, home): string        // the agent's PATH: its own entries, then /opt/homebrew/bin, /usr/local/bin, ~/.local/bin, ~/.claude/local; no empty entry
+export function isProfileAgent(command, profile): boolean // a `ps -o command=` line ends `… -p <profile> acp` as agentArgv builds it (orphan kill, K3)
 export const PRE_AUTH_BYTES = 65536                  // a first line may grow past this only with its token at its head
 export function leadingToken(head): string | null    // the 64-hex token a first line starts with ({"op":…,"token":…), or null
 ```
@@ -797,7 +798,8 @@ Rules, one test each (`tests/assistant-chat.test.mjs`):
     `failed {detail}` with that text, or `NO_REPLY` (drawn as "Hermes ended the turn without a reply; see the bridge
     log"), and sets `lastError`. An `agent-error` that comes within 5 s after a `NO_REPLY` notice that is still the last
     item fills in its detail (stderr and stdout are separate pipes). Hermes ends a failed turn this way: `end_turn`, no
-    message, the cause on stderr.
+    message, the cause on stderr. `done()` clears `lastError` when the turn ends with a reply, a cancel or a stop once
+    nothing in it runs, so a failed request inside it (a refused steer) no longer marks the turn failed.
 
 `approvalButtons(options)` → `{buttons, more}`: buttons are the adapter's button ids that are present, in its order;
 `more` keeps every other option in the order Hermes sent it. Never by kind: Hermes sends `allow_session` with kind

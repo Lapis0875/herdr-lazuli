@@ -1,5 +1,6 @@
 import {test} from 'node:test'; import assert from 'node:assert/strict';
 import * as w from '../mods/lazuli/core/acp-wire.js';
+import { agentArgv } from '../mods/lazuli/core/assistant-agents.js';
 
 test('constants follow K3 and the S8 limits',()=>{
  assert.equal(w.PROTOCOL_VERSION,1); assert.equal(w.DISCOVERY_VERSION,1); assert.equal(w.MAX_LINE_BYTES,16*1024*1024); assert.equal(w.MAX_WRITE_BYTES,1048576);
@@ -132,6 +133,25 @@ test('the agent PATH never gets an empty entry; a first line is authenticated by
  assert.equal(w.leadingToken(w.encodeLine(w.sendLine(tok,{text:'한글'})).slice(0,90)),tok);
  for(const head of ['{"msg":{},"op":"send","token":"'+tok+'"}','{"op":"send","token":"'+tok.slice(1)+'"','{"op":"send","token":"'+tok.toUpperCase()+'"','x'.repeat(100),'',null]) assert.equal(w.leadingToken(head),null,String(head).slice(0,40));
  assert.equal(w.PRE_AUTH_BYTES,65536);
+});
+
+test('an orphan agent is a profile\'s only when its command line ends as agentArgv builds it',()=>{
+ const bin='/Users/u/.local/bin/hermes';
+ // A correct tail, from the argv the bridge runs (ps joins it with spaces), plain and with debugAgent.
+ assert.equal(w.isProfileAgent(agentArgv({bin,profile:'dev'}).join(' '),'dev'),true);
+ assert.equal(w.isProfileAgent(agentArgv({bin,debugAgent:['/usr/local/bin/node','/x/fake-acp-agent.mjs'],profile:'default'}).join(' '),'default'),true);
+ assert.equal(w.isProfileAgent(`  ${bin}   -p dev  acp \n`,'dev'),true);
+ // -p dev is not -p dev2, either way.
+ assert.equal(w.isProfileAgent(`${bin} -p dev2 acp`,'dev'),false);
+ assert.equal(w.isProfileAgent(`${bin} -p dev acp`,'dev2'),false);
+ // Missing acp, acp before -p, words after acp, no program before the tail.
+ assert.equal(w.isProfileAgent(`${bin} -p dev`,'dev'),false);
+ assert.equal(w.isProfileAgent(`${bin} acp -p dev`,'dev'),false);
+ assert.equal(w.isProfileAgent(`${bin} -p dev acp --check`,'dev'),false);
+ assert.equal(w.isProfileAgent('-p dev acp','dev'),false);
+ // Empty or bad inputs.
+ for(const command of ['','   ',null,undefined,42]) assert.equal(w.isProfileAgent(command,'dev'),false,String(command));
+ for(const profile of ['',null,'dev acp','-p']) assert.equal(w.isProfileAgent(`${bin} -p dev acp`,profile),false,String(profile));
 });
 
 test('stderr filter keeps prompt text out of the log',()=>{
