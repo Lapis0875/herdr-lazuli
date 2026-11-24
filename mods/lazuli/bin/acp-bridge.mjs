@@ -205,18 +205,10 @@ let lastStderr = "";
 
 // Stopping. Signal handlers come first: a SIGHUP while the agent starts must not orphan it.
 
-function agentGroupAlive() {
-  if (!agentPid) return false;
-  try {
-    process.kill(-agentPid, 0);
-    return true;
-  } catch (e) {
-    return e.code === "EPERM";
-  }
-}
-
 function signalAgent(sig) {
-  if (!agentPid) return;
+  // The detached child pins the group ID until Node reaps it and emits "exit". After that,
+  // even a group with the same ID need not be ours.
+  if (!agentAlive) return;
   try {
     process.kill(-agentPid, sig);
     log(`${sig} to agent group ${agentPid}`);
@@ -309,11 +301,11 @@ async function gracefulStop(why) {
   if (fastStarted) return;
   bye(why);
   signalAgent("SIGTERM");
-  await waitUntil(() => fastStarted || (!agentAlive && !agentGroupAlive()), cancelled ? KILL_AFTER_CANCEL_MS : KILL_AFTER_MS);
+  await waitUntil(() => fastStarted || !agentAlive, cancelled ? KILL_AFTER_CANCEL_MS : KILL_AFTER_MS);
   if (fastStarted) return;
-  if (agentGroupAlive()) {
+  if (agentAlive) {
     signalAgent("SIGKILL");
-    await waitUntil(() => fastStarted || !agentGroupAlive(), 500);
+    await waitUntil(() => fastStarted || !agentAlive, 500);
     if (fastStarted) return;
   }
   await finish(Date.now() + 200);
@@ -328,10 +320,8 @@ async function fastStop(why) {
   const t0 = Date.now();
   bye(stopping.reason);
   signalAgent("SIGTERM");
-  const killTimer = setTimeout(() => {
-    if (agentGroupAlive()) signalAgent("SIGKILL");
-  }, FAST_KILL_MS);
-  await waitUntil(() => !agentAlive && !agentGroupAlive(), FAST_EXIT_MS - 40);
+  const killTimer = setTimeout(() => signalAgent("SIGKILL"), FAST_KILL_MS);
+  await waitUntil(() => !agentAlive, FAST_EXIT_MS - 40);
   clearTimeout(killTimer);
   await finish(t0 + FAST_EXIT_MS);
 }
@@ -583,7 +573,6 @@ async function onAgentExit(code, signal) {
   tracker.clear();
   toSub(eventLine("agent-exit", { code, signal }));
   bye("agent-exit");
-  if (agentGroupAlive()) signalAgent("SIGTERM");
   await finish(Date.now() + 200);
 }
 

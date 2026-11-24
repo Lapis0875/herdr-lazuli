@@ -696,13 +696,13 @@ export function createStderrFilter({promptLength})   // push(text) → lines, en
 export const AGENT_ERROR_MAX = 1000
 export function agentErrorText(line): string | null
 export function agentPath(path, home): string        // the agent's PATH: its own entries, then /opt/homebrew/bin, /usr/local/bin, ~/.local/bin, ~/.claude/local; no empty entry
-export function isProfileAgent(command, profile): boolean // a `ps -o command=` line ends `… -p <profile> acp` as agentArgv builds it (orphan kill, K3)
 export const PRE_AUTH_BYTES = 65536                  // a first line may grow past this only with its token at its head
 export function leadingToken(head): string | null    // the 64-hex token a first line starts with ({"op":…,"token":…), or null
 ```
 - A ready discovery needs a 64-hex `token`, a port in 1–65535, an absolute `cwd` and positive pids; an unknown start
   error code reads as `init-failed`; `argv` is null in a file without one. `discoveryMatches` needs the profile,
   folder, Herdr pid and the whole agent argv equal, so a file without `argv` never matches.
+- Discovery pids are informational and useful for liveness checks; neither they nor `argv` authorize an OS signal.
 - Tracker: a `session/prompt` request is running until its answer, kept with the last record seq when it went and its
   prompt blocks (`running()` → `[{id, sessionId, at, seq, prompt}]`); when a session's last prompt ends, that session's
   open agent requests end too (Hermes stops waiting after 60 s without saying so); `$/cancel_request` ends one. A
@@ -845,7 +845,7 @@ row = {key, profile, sessionId, title, updatedAt, model, messageCount, running, 
 |---|---|
 | `{op:"stream", token, since, client, turns?}` | `{ev:"hello", seq, bridge:{pid, agentPid, version, profile, cwd, startedAt}, agent:<initialize result>, running:[{id, sessionId, at, seq, prompt}], pending:[{id, method, sessionId, at, seq, msg}]}`, then the records after `since` (or `{ev:"gap", since, first, last}`); with `since` null and `turns: true`, instead each running session's records since its oldest running prompt went (`running[].seq`; outside its history loads; `gap` when the ring no longer holds them); then every agent line as `{seq, at, msg}` |
 | `{op:"send", token, msg}` | `msg` to the agent's stdin; `{ok:true}` or `{ok:false, error:{code: bad-request\|agent-gone\|too-large}}`; close |
-| `{op:"shutdown", token}` | cancel running sessions, wait up to 3 s, SIGTERM the agent group, SIGKILL 2 s later (5 s after a cancel), remove the discovery, `bye shutdown`, exit 0 |
+| `{op:"shutdown", token}` | cancel running sessions, wait up to 3 s, SIGTERM the owned agent group, SIGKILL 2 s later (5 s after a cancel) if the child has not exited, remove the discovery, `bye shutdown`, exit 0 |
 | a missing, wrong or late token | `{ok:false, error:{code:"auth"}}`; close (constant-time compare) |
 | 64 KiB of a first line without its token at the head (`leadingToken`) | `{ok:false, error:{code:"auth"}}` at once |
 
@@ -888,7 +888,10 @@ Every reply ends its connection, and the bridge destroys it 1 s later (no half-o
   finished terminals included, since that JSON carries no labels or pids; a live one gets its pid from `terminals()`;
   the live `terminals()` of that label when hc cannot be read), `reap(profiles)` (removes those profiles' ended bridge
   terminals; the service passes `default`, Hermes's profile folders and the listed, connected and discovered profiles
-  every 60 s), `retire(profile, d)` and `awaitExit(cx, profile, pid)` (both also remove the profile's ended terminals),
+  every 60 s), `retire(profile, d)` (discards the stale discovery without signalling a live process or terminal)
+  and `awaitExit(cx, profile, pid)` (waits for an authenticated shutdown; no PID-based fallback kill). Both remove
+  the profile's finished terminals for a known bridge. Only the bridge signals its own agent group, and not after its
+  child exits. A hard-killed bridge or exited agent can leave processes running when no safe group target remains.
   `launch(cx, {profile, folder, herdrPid, argv})` → `{discovery, address}` (a discovery that matches with that `argv`)
   or `{error, detail}` (`bridge-launch-failed`, `bridge-timeout`, `agent-exit`). Callers check `checking()` first.
 - `sys/assistant-sessions.js` (takes `run(command, args, options)`, so tests run it on real sqlite3 files):

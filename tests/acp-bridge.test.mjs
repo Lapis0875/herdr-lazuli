@@ -313,6 +313,7 @@ describe('acp-bridge',{concurrency:8},()=>{
    const [s]=await hello(b); const t0=Date.now(); const c=open(b.d.port,w.shutdownLine(b.d.token)); assert.deepEqual(await c.next(),{ok:true});
    assert.equal((await s.until(v=>v.ev==='bye')).reason,'shutdown'); const x=await waitExit(b,4000); assert.equal(x?.code,0); assert.ok(x.at-t0<3000,`exit ${x.at-t0} ms after the request`);
    assert.ok(!existsSync(b.discovery)); assert.ok(!groupAlive(b.d.agentPid));
+   const log=await readLog(b); assert.ok(log.includes(`SIGTERM to agent group ${b.d.agentPid}`)); assert.ok(!log.includes('SIGKILL to agent group'));
   }finally{await b.cleanup();}
  });
 

@@ -262,49 +262,24 @@ export async function reap(profiles) {
   return n;
 }
 
-/** Kills an agent process group a dead bridge left (K3): only when its command line (`ps -o command=`) ends as that
- *  profile's agent argv does (`wire.isProfileAgent`: `… -p <profile> acp`). */
-async function killOrphanAgent(profile, agentPid) {
-  if (!(await pidAlive(agentPid))) return;
-  let command = "";
-  try {
-    command = (await exec("/bin/ps", ["-o", "command=", "-p", String(agentPid)], { timeout: 5000 })).stdout.trim();
-  } catch {
-    return;
-  }
-  if (!wire.isProfileAgent(command, profile)) {
-    log(`not killing pid ${agentPid}: "${command.slice(0, 120)}" is not ${profile}'s agent`);
-    return;
-  }
-  log(`killing the agent group ${agentPid} a dead ${profile} bridge left`);
-  try {
-    await exec("/bin/sh", ["-c", 'kill -s KILL -- "-$1"', "lazuli-kill", String(agentPid)], { timeout: 5000 });
-  } catch (e) {
-    log(`kill ${agentPid} failed: ${errText(e)}`);
-  }
-}
-
 /**
- * A discovery that may not be reused (another folder, Herdr or agent argv, a dead bridge, no hello within 5 s, a failed
- * start): its labelled terminal gets `hc kill` and `hc rm` (K3), the profile's finished bridge terminals are removed,
- * an agent a dead bridge left is killed, the file removed.
+ * Discards a discovery that may not be reused and removes the profile's finished bridge terminals.
+ * Neither a saved PID nor an argv match identifies a live process instance. An orphan from an ungraceful
+ * bridge death may remain running; do not signal it or any live terminal based on discovery.
  */
 export async function retire(profile, d) {
-  if (d.state === "ready" || d.state === "failed") {
-    for (const term of await bridgeTerminals(profile)) if (term.pid === d.pid || (await ended(term))) await killAndRemove(term);
-    if (d.state === "ready" && Number.isInteger(d.agentPid) && !(await pidAlive(d.pid))) await killOrphanAgent(profile, d.agentPid);
-  }
+  if (d.state === "ready" || d.state === "failed") await reap([profile]);
   if (d.state !== "absent") await removeDiscovery(profile, d.pid ?? null);
 }
 
-/** Waits until a bridge's process is gone (after `shutdown`), then removes its terminal (finished, so found by the
- *  profile's finished terminals); a bridge still running after SHUTDOWN_WAIT_MS gets `hc kill`. */
+/** Waits for an authenticated shutdown, then reaps finished terminals. A recycled PID can delay the reaping,
+ *  but cannot authorize a signal to a live terminal. */
 export async function awaitExit(cx, profile, pid) {
   for (let waited = 0; waited < SHUTDOWN_WAIT_MS; waited += 200) {
     if (!(await pidAlive(pid))) break;
     await cx.sleep(200);
   }
-  for (const term of await bridgeTerminals(profile)) if (term.pid === pid || (await ended(term))) await killAndRemove(term);
+  await reap([profile]);
 }
 
 // ---- launch -----------------------------------------------------------------------------------------------------

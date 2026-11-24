@@ -580,16 +580,20 @@ snapshot or `shared.json`.
 - **Reuse.** A discovery is reused when its pid lives, its `profile`, `cwd`, `herdrPid` and agent `argv` match, and
   `hello` arrives within 5 s. A running bridge of this folder and Herdr that runs another argv (`assistant.debugAgent`
   set or cleared, another `hermes` path) gets `{op:"shutdown"}` and is replaced, also when a connected one no longer
-  matches. Any other discovery that may not be reused has its labelled terminal killed and removed (`hc kill`,
-  `hc rm`), the file removed, and an agent group a dead bridge left killed once `ps -o command=` shows it is that
-  profile's `acp`. So a mod reload or a layout switch keeps the same bridge; a new folder, a new Herdr or another agent
-  gets a new one.
+  matches. Other discoveries that cannot be reused are discarded and finished terminals are reaped, without
+  signalling any live terminal from a saved PID. A mod reload or layout switch keeps the same bridge; a new folder,
+  a new Herdr or another agent gets a new one. Only a launch still in progress can fall back to `hc kill` by the
+  terminal address returned by its own `hc run`. Neither an argv match nor checking a PID with `ps` can bind a later
+  signal to the same process group. Discovery cleanup deliberately leaves any orphan after an ungraceful bridge death.
 - **Ends.** Idle: 30 minutes with no `send` and no agent line, no prompt in flight and no agent request open (pings and
   stream connects do not count). Herdr: `process.kill(herdrPid, 0)` every second. SIGHUP (`hc kill`), SIGTERM, SIGINT
-  or Herdr gone take the fast path: `session/cancel` for running sessions without waiting, SIGTERM to the agent group,
-  SIGKILL 300 ms later, discovery removed, exit within 400 ms. `{op:"shutdown"}` (a folder or agent change) cancels
-  running sessions and waits up to 3 s, then SIGTERM and SIGKILL 2 s later (5 s after a cancel): out within 3 s with
-  nothing running, 11 s with a turn. The agent's exit sends `agent-exit` and `bye`, then exit 1; nothing respawns it.
+  or Herdr gone take the fast path: `session/cancel` for running sessions without waiting, SIGTERM to the owned agent
+  group, SIGKILL 300 ms later if the agent child has not exited, discovery removed, exit within 400 ms.
+  `{op:"shutdown"}` (an authenticated folder or agent change) cancels running sessions and waits up to 3 s, then
+  SIGTERM and, if the child has not exited, SIGKILL 2 s later (5 s after a cancel): out within 3 s with nothing
+  running, 11 s with a turn. An unexpected agent exit sends `agent-exit` and `bye`, then exit 1; nothing respawns it.
+  Once the agent child exits, the bridge stops signalling its group even if descendants remain: the child no longer
+  pins that group ID, and no process-instance-bound group signal is available.
 - **Reaper.** A bridge that ended leaves its terminal behind until `hc rm` (S5). Herdr's `terminals()` lists live
   terminals only, and the JSON of `hc ls --all --json` carries no labels and no pids, so a profile's bridge
   terminals, finished ones included, are listed with hc's own filter: `hc ls --all --json --label
