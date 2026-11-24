@@ -115,11 +115,11 @@ function rowElement(view, chat, r, now) {
     case "assistant":
       return AgentText(`ac-md-${chat.key}-${r.seq}`, r);
     case "thought":
-      return ThoughtItem(view, `thought:${r.seq}`, r);
+      return ThoughtItem(view, chat, `thought:${r.seq}`, r);
     case "tool":
       return ToolCard(view, chat, `tool:${r.id}`, r, now);
     case "notice":
-      return NoticeItem(view, id, r);
+      return NoticeItem(view, chat, id, r);
     default:
       return null;
   }
@@ -134,11 +134,11 @@ export function Transcript(view, chat, now) {
     const id = rowId(row);
     const open =
       row.type === "tool"
-        ? view.expanded.has(`tool:${row.id}`)
+        ? view.isOpen(chat.key, `tool:${row.id}`)
         : row.type === "thought"
-          ? view.expanded.has(`thought:${row.seq}`)
+          ? view.isOpen(chat.key, `thought:${row.seq}`)
           : row.type === "notice"
-            ? view.expanded.has(`notice:${row.seq}`)
+            ? view.isOpen(chat.key, `notice:${row.seq}`)
             : false;
     return { id, row, open };
   });

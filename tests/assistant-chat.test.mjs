@@ -636,3 +636,24 @@ test('a running turn applied again after its history loads shows once and whole'
   assert.deepEqual([again.inflight, isRunning(again), again.items[0].text], [{}, false, 'done before']);
   assert.equal(reduce(s, { type: 'prompt-sent', requestId: 'c:1', kind: 'prompt', text: 'slow' }, 99).inflight['c:1'].at, at);
 });
+
+test('a turn that replied ends without lastError even when a steer inside it failed (done, not failed)', () => {
+  const sent = (id, kind, text) => ({ type: 'prompt-sent', requestId: id, kind, text });
+  const steerFail = { type: 'prompt-failed', requestId: 'c:2', error: { code: -32603, message: 'steer refused' } };
+  let s = run(live(), [sent('c:1', 'prompt', 'slow'), say('part one '), sent('c:2', 'steer', 'go left'), steerFail], 1);
+  assert.equal(isRunning(s), true);
+  assert.deepEqual(s.lastError, { code: -32603, message: 'steer refused' }, 'the refused steer, while the turn runs');
+  assert.equal(s.items.at(-1).code, 'failed');
+  s = run(s, [say('part two'), { type: 'prompt-done', requestId: 'c:1', stopReason: 'end_turn' }], 2);
+  assert.equal(isRunning(s), false);
+  assert.equal(s.lastError, null, 'the turn replied: the service raises done (sys/assistant.js onAnswer)');
+  assert.equal(s.items.filter((i) => i.code === 'failed').length, 1, 'the steer failure stays in the transcript');
+  // A turn stopped or cancelled did not fail either; one that ends without a reply sets its own (rule 11).
+  const ended = (stopReason) => run(live(), [sent('c:1', 'prompt', 'x'), sent('c:2', 'steer', 'y'), steerFail, { type: 'prompt-done', requestId: 'c:1', stopReason }], 1);
+  for (const stopReason of ['cancelled', 'max_tokens']) assert.equal(ended(stopReason).lastError, null, stopReason);
+  assert.deepEqual(ended('end_turn').lastError, { code: null, message: NO_REPLY });
+  // While the turn still runs (its steer answered first), a failure stays.
+  const running = run(live(), [sent('c:1', 'prompt', 'x'), say('a'), sent('c:2', 'steer', 'y'), steerFail, sent('c:3', 'steer', 'z'), { type: 'prompt-done', requestId: 'c:3', stopReason: 'end_turn' }], 1);
+  assert.equal(isRunning(running), true);
+  assert.deepEqual(running.lastError, { code: -32603, message: 'steer refused' });
+});

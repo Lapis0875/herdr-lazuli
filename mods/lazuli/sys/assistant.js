@@ -418,7 +418,8 @@ function onAnswer(cx, id, c) {
   if (c.kind === "result") {
     const stopReason = typeof c.result?.stopReason === "string" ? c.result.stopReason : "end_turn";
     const after = apply(cx, key, { type: "prompt-done", requestId: id, stopReason, ...(isObj(c.result?.usage) ? { usage: c.result.usage } : {}) });
-    // A turn that ended without a word (K5 rule 11) is a failure, not an answer.
+    // The turn's own outcome: lastError is set once nothing runs only when this turn failed (K5 rule 11); an earlier
+    // request's failure inside it (a refused steer) is cleared when the turn ends otherwise.
     if (kind === "prompt" && stopReason !== "cancelled") {
       if (after?.lastError && !isRunning(after)) raise(cx, "failed", key, after.lastError.message);
       else raise(cx, "done", key, lastAnswer(key));

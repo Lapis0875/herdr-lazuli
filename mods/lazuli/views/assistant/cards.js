@@ -2,7 +2,8 @@
 // streams, a thought (collapsed to one line), a tool card (collapsed: kind, title, status, duration; open: input,
 // changes as a diff, output), an approval card (Allow once / Always allow / Deny as buttons, the rest in More, a 60 s
 // countdown, expired and answered states), a notice line, and the plan dock above the composer.
-// Expanded items and the open More menu are the chat view's own state (`view.expanded`, `view.more`).
+// Expanded items and the open More menu are the chat view's own state, per session (`view.isOpen(key, id)`,
+// `view.toggle(cx, key, id)`, `view.more`).
 
 import { div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
@@ -209,9 +210,9 @@ export function AgentText(id, it) {
 }
 
 /** A thought: one line ("Thinking" and its first line) that opens to the whole text beside a rule. */
-export function ThoughtItem(view, id, it) {
+export function ThoughtItem(view, chat, id, it) {
   const k = tokens();
-  const open = view.expanded.has(id);
+  const open = view.isOpen(chat.key, id);
   const text = String(it.text ?? "");
   const first = text.split("\n").find((l) => l.trim()) ?? "";
   const head = h_flex()
@@ -228,7 +229,7 @@ export function ThoughtItem(view, id, it) {
     .role("button")
     .tab_index(0)
     .accessibility_label(`${t(it.streaming ? "assistant.thought.streaming" : "assistant.thought")} · ${t(open ? "assistant.item.hide" : "assistant.item.show")}`)
-    .on_click((_e, cx) => view.toggle(cx, id))
+    .on_click((_e, cx) => view.toggle(cx, chat.key, id))
     .child(it.streaming ? Icon("brain", { size: 14 }).loop("opacity", { from: 0.45, to: 1, period: 1400 }) : Icon("brain", { size: 14 }))
     .child(Text(t(it.streaming ? "assistant.thought.streaming" : "assistant.thought"), { size: "sm", weight: "medium", tone: "secondary", nowrap: true }))
     .child(Text(open ? "" : first, { size: "sm", tone: "tertiary", truncate: true }).flex_1())
@@ -264,7 +265,7 @@ const STATUS = {
  *  its changes (its own diff content, and an edit approval's diff, K5 rule 3) and its output (A5, AT-09). */
 export function ToolCard(view, chat, id, it, now) {
   const k = tokens();
-  const open = view.expanded.has(id);
+  const open = view.isOpen(chat.key, id);
   const waits = toolWaits(chat, it, now);
   const [icon, tone, label] = STATUS[waits ? "waiting" : it.status] ?? STATUS.pending;
   const ms = typeof it.duration === "number" ? it.duration : null;
@@ -287,7 +288,7 @@ export function ToolCard(view, chat, id, it, now) {
     .role("button")
     .tab_index(0)
     .accessibility_label(`${it.title ?? ""} · ${t(label)} · ${t(open ? "assistant.item.hide" : "assistant.item.show")}`)
-    .on_click((_e, cx) => view.toggle(cx, id))
+    .on_click((_e, cx) => view.toggle(cx, chat.key, id))
     .child(Icon(KIND_ICON[it.kind] ?? "wrench", { size: 14, color: k.text.secondary }))
     .child(Text(it.title ?? "", { size: "sm", truncate: true, mono: it.kind === "execute" }).flex_1())
     .child(status)
@@ -386,14 +387,15 @@ export function ApprovalCard(view, chat, p, now) {
   const others = split.more;
   const actions = [...buttons];
   if (others.length) {
-    const open = live && view.more === id;
+    const moreKey = `${chat.key}:${id}`;
+    const open = live && view.more === moreKey;
     const more = live
       ? MenuPopover(`${cardId}-more-menu`, {
           trigger: MenuButton(`${cardId}-more`, t("assistant.approval.more"), { open }),
           open,
           anchor: "top_right",
           onOpen: (value) => {
-            view.more = value ? id : null;
+            view.more = value ? moreKey : null;
           },
           menu: () =>
             Menu({
@@ -489,14 +491,14 @@ export function noticeBody(it, open = false) {
 
 /** A notice line (K5 `notice{code, vars}`): its icon and lazuli's words for the code; a short detail beside them in
  *  code font, a long one (an agent's error) wrapped below, clamped with Show all; rule 11's NO_REPLY in words. */
-export function NoticeItem(view, id, it) {
+export function NoticeItem(view, chat, id, it) {
   const k = tokens();
   const known = Object.prototype.hasOwnProperty.call(EVENT_ICON, it.code);
   const [icon, tone] = known ? EVENT_ICON[it.code] : ["info", "secondary"];
   const vars = it.vars ?? {};
   const title = t(known ? `assistant.event.${it.code}` : "assistant.event.other", vars);
   const key = `notice:${it.seq}`;
-  const open = view.expanded.has(key);
+  const open = view.isOpen(chat.key, key);
   const body = noticeBody(it, open);
   const head = h_flex()
     .flex_none()
@@ -521,7 +523,7 @@ export function NoticeItem(view, id, it) {
           Button(`${id}-more`, t(open ? "assistant.event.showLess" : "assistant.event.showAll"), {
             variant: "ghost",
             size: "sm",
-            onClick: (_e, cx) => view.toggle(cx, key),
+            onClick: (_e, cx) => view.toggle(cx, chat.key, key),
           }).ml(-8),
         ),
       ),

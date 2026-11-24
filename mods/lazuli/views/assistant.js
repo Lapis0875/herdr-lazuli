@@ -46,9 +46,10 @@ export default class Assistant {
     this.props = props() ?? p ?? {};
     this.mode = copyMode(this.props);
     this.svc = callsOf(this.mode);
-    // What this copy shows of a session: expanded items (`tool:<id>`, `thought:<index>`), the plan dock, the open More
-    // and model menus, and each session's scroll.
-    this.expanded = new Set();
+    // What this copy shows of each session: its expanded items (`tool:<id>`, `thought:<seq>`, `notice:<seq>`, numbered
+    // per session, so each session keeps its own set) and its scroll; then the plan dock and the open More (its
+    // `<session key>:<request id>`) and model menus.
+    this.expanded = new Map();
     this.planOpen = true;
     this.more = null;
     this.modelMenu = false;
@@ -107,9 +108,10 @@ export default class Assistant {
     if (!this.mode.preview || sample.revision() === this.seen) return;
     this.seen = sample.revision();
     const s = sample.viewSeed(this.mode.pinned ?? undefined);
-    this.expanded = new Set(s.expand ?? []);
+    const shown = selectedChat(viewState(this.mode));
+    this.expanded = new Map(shown ? [[shown.key, new Set(s.expand ?? [])]] : []);
     this.planOpen = s.planOpen ?? true;
-    this.more = s.more ?? null;
+    this.more = s.more && shown ? `${shown.key}:${s.more}` : null;
     this.modelMenu = false;
     this.scrolls = new Scrolls();
     this.composer.set(s.text ?? "", s.attachments ?? []);
@@ -134,9 +136,16 @@ export default class Assistant {
     });
   }
 
-  toggle(cx, id) {
-    if (this.expanded.has(id)) this.expanded.delete(id);
-    else this.expanded.add(id);
+  /** Whether item `id` (`tool:<id>`, `thought:<seq>`, `notice:<seq>`) of session `key` shows expanded. */
+  isOpen(key, id) {
+    return this.expanded.get(key)?.has(id) ?? false;
+  }
+
+  toggle(cx, key, id) {
+    let open = this.expanded.get(key);
+    if (!open) this.expanded.set(key, (open = new Set()));
+    if (open.has(id)) open.delete(id);
+    else open.add(id);
     cx.notify();
   }
 

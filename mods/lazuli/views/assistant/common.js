@@ -45,10 +45,12 @@ export function viewState(mode) {
 /** Whether the state shows chats (no gate in front). */
 export const open = (s) => s?.gate === "ok";
 
-/** `assistant:<verb>[:<arg>]` (or the part after the prefix) → `{verb, arg}`; null for anything else. */
+/** `assistant:<verb>[:<arg>]` (what sys/bus.js hands every copy for `lazuli.assistant:<verb>`) → `{verb, arg}`; null
+ *  for anything else, so another view's command (`lazuli.allow`, `lazuli.stop`, `lazuli.send:…`) never acts on a
+ *  chat. */
 export function verbOf(command) {
-  if (typeof command !== "string" || !command) return null;
-  const c = command.startsWith("assistant:") ? command.slice("assistant:".length) : command;
+  if (typeof command !== "string" || !command.startsWith("assistant:")) return null;
+  const c = command.slice("assistant:".length);
   const i = c.indexOf(":");
   return i < 0 ? { verb: c, arg: "" } : { verb: c.slice(0, i), arg: c.slice(i + 1) };
 }

@@ -468,6 +468,7 @@ function done(state, e, now) {
   delete inflight[id];
   let next = { ...state, inflight };
   if (isPlain(e.usage)) next.usage = { ...next.usage, lastTurn: e.usage };
+  let failedTurn = false;
   if (e.stopReason === "cancelled") next = notice(next, "cancelled");
   else if (typeof e.stopReason === "string" && e.stopReason !== "end_turn") next = notice(next, "stopped", { detail: e.stopReason });
   else if (next.turn && !next.turn.reply && !isRunning(next)) {
@@ -476,7 +477,11 @@ function done(state, e, now) {
     const item = { type: "notice", code: "failed", vars: { detail } };
     if (!next.turn.error) item.noReply = now; // when, for an error line that comes just after
     next = push({ ...next, lastError: { code: null, message: detail } }, item);
+    failedTurn = true;
   }
+  // A turn that ended otherwise did not fail: an error of a request inside it (a refused steer) does not outlive it,
+  // so the service raises `done` for it (sys/assistant.js onAnswer reads lastError once nothing runs).
+  if (!failedTurn && !isRunning(next) && next.lastError) next = { ...next, lastError: null };
   return settleTurn(next, now);
 }
 

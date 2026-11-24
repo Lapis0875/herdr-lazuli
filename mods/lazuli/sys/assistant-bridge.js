@@ -262,7 +262,9 @@ export async function reap(profiles) {
   return n;
 }
 
-/** Kills an agent process group a dead bridge left (K3): only when `argv` shows the agent of that profile. */
+/** Kills an agent process group a dead bridge left (K3): only when its command line (`ps -o command=`, the argv joined
+ *  with spaces) is that profile's agent: an `acp` word and `-p` followed by exactly the profile (`-p dev` is not
+ *  `-p dev2`). */
 async function killOrphanAgent(profile, agentPid) {
   if (!(await pidAlive(agentPid))) return;
   let command = "";
@@ -271,7 +273,9 @@ async function killOrphanAgent(profile, agentPid) {
   } catch {
     return;
   }
-  if (!/(^|\s)acp(\s|$)/.test(command) || !command.includes(`-p ${profile}`)) {
+  const words = command.split(/\s+/);
+  const ofProfile = words.some((w, i) => w === "-p" && words[i + 1] === profile);
+  if (!words.includes("acp") || !ofProfile) {
     log(`not killing pid ${agentPid}: "${command.slice(0, 120)}" is not ${profile}'s agent`);
     return;
   }
