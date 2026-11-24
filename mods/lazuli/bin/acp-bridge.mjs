@@ -171,7 +171,7 @@ try {
 function removeDiscovery() {
   try {
     const d = JSON.parse(fs.readFileSync(DISCOVERY, "utf8"));
-    if (d?.pid !== process.pid) return;
+    if (d?.pid !== process.pid || d.token !== TOKEN) return;
     fs.unlinkSync(DISCOVERY);
     log("discovery deleted");
   } catch {}
@@ -263,6 +263,8 @@ async function finish(deadline) {
     s.end();
     await Promise.race([flushed, sleep(Math.max(0, deadline - Date.now()))]);
   }
+  // Keep ready discovery available during shutdown so Retry can still find this instance.
+  removeDiscovery();
   log(`exit ${stopping.code} (${stopping.reason}), ${Date.now() - stopping.at} ms after the stop began`);
   try {
     if (logFd !== null) fs.closeSync(logFd);
@@ -277,13 +279,12 @@ async function waitUntil(test, ms) {
   return test();
 }
 
-/** Starts stopping once: discovery deleted, no new clients, running prompts cancelled. */
+/** Starts stopping once: no new clients, running prompts cancelled. */
 function beginStop(why, code) {
   if (stopping) return false;
   stopping = { reason: why, code, at: Date.now() };
   const sessions = tracker.runningSessions();
   log(`stop (${why}); running ${tracker.running().length}, pending ${tracker.pending().length}`);
-  removeDiscovery();
   closeServer();
   for (const sessionId of sessions) if (writeAgent(wire.sessionCancel(sessionId))) log(`session/cancel ${sessionId}`);
   stopping.cancelled = sessions.length > 0;
@@ -348,7 +349,6 @@ for (const sig of ["SIGHUP", "SIGTERM", "SIGINT"])
     if (!initDone && !stopping) {
       stopping = { reason: "signal", code: 0, at: Date.now() };
       signalAgent("SIGKILL");
-      removeDiscovery();
       finish(Date.now());
       return;
     }

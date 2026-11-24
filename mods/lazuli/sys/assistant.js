@@ -98,6 +98,7 @@ let checked = null; // {key, result} of this start's agent check
 let hermesBin = null; // the hermes program this start checked or looked up (never debugAgent's): the bridges' argv
 const clients = new Map(); // profile → AcpClient
 const launches = new Map(); // profile → {promise, launch}: the connect (or reopen) in flight, and whether it may launch
+const pendingStops = new Map(); // profile → discovery whose shutdown is unconfirmed (older bridges may unlink early)
 const loads = new Map(); // key → Promise of a session/load
 const promptKeys = new Map(); // request id → {key, kind, resync}
 const listeners = new Set();
@@ -612,31 +613,34 @@ async function connectBridge(cx, profile, { launch = true } = {}) {
     failChats(cx, profile, "disconnected");
   }
   const argv = await expectedArgv(profile);
-  const d = await bridge.readDiscovery(profile);
-  const ours = d.state === "ready" && d.profile === profile && d.cwd === folder && d.herdrPid === pid && (await bridge.pidAlive(d.pid));
-  let retired = false;
-  if (ours && argv && wire.discoveryMatches(d, { profile, cwd: folder, herdrPid: pid, argv })) {
-    const from = resume.get(profile);
-    const r = await attach(cx, profile, d, from?.pid === d.pid ? from.seq : null);
-    if (r.ok) {
-      log(`reusing the ${profile} bridge pid ${d.pid}`);
+  const found = await bridge.readDiscovery(profile);
+  const pending = pendingStops.get(profile);
+  const d = found.state === "absent" && pending ? pending : found;
+  const ours = d.state === "ready" && d.profile === profile && d.cwd === folder && d.herdrPid === pid;
+  if (ours && argv && (await bridge.pidState(d.pid)) !== "gone") {
+    if (wire.discoveryMatches(d, { profile, cwd: folder, herdrPid: pid, argv })) {
+      const from = resume.get(profile);
+      const r = await attach(cx, profile, d, from?.pid === d.pid ? from.seq : null);
+      if (r.ok) {
+        pendingStops.delete(profile);
+        log(`reusing the ${profile} bridge pid ${d.pid}`);
+        return r;
+      }
+      if (!launch) return r;
+      log(`the ${profile} bridge pid ${d.pid} gave no hello (${r.error}): requesting shutdown`);
+    } else {
+      if (!launch) return { error: "disconnected" };
+      log(`the ${profile} bridge pid ${d.pid} runs another agent: requesting shutdown`);
+    }
+    const stopped = await shutdownBridge(cx, d);
+    if (!(await bridge.awaitExit(cx, profile, d.pid))) {
+      pendingStops.set(profile, d);
+      const r = { error: "bridge-timeout", detail: stopped.ok ? "The previous bridge has not exited" : "The previous bridge could not be confirmed stopped" };
+      setBridge(cx, profile, { state: "error", ...r });
       return r;
     }
-    log(`the ${profile} bridge pid ${d.pid} gave no hello (${r.error}): replacing it`);
-  } else if (ours && argv) {
-    // A bridge of this folder and Herdr that runs another agent is not reused (K3): it is shut down (running prompts
-    // cancelled first) and a new one starts.
-    log(`the ${profile} bridge pid ${d.pid} runs ${d.argv ? `"${d.argv.join(" ").slice(0, 160)}"` : "an unknown agent"}: shutting it down`);
-    const r = await shutdownBridge(cx, d);
-    if (r.ok) await bridge.awaitExit(cx, profile, d.pid);
-    await bridge.retire(profile, d);
-    retired = true;
   }
-  if (!launch) {
-    if (retired) setBridge(cx, profile, { state: "off" });
-    return { error: "disconnected" };
-  }
-  if (d.state !== "absent" && !retired) await bridge.retire(profile, d);
+  if (!launch) return { error: "disconnected" };
   // A new bridge starts only once open() passed the gates (K4).
   if (S.gate !== "ok" || S.folder !== folder) {
     setBridge(cx, profile, { state: "off" });
@@ -646,6 +650,12 @@ async function connectBridge(cx, profile, { launch = true } = {}) {
     setBridge(cx, profile, { state: "error", error: "hermes-missing" });
     return { error: "hermes-missing" };
   }
+  if (!(await bridge.retire(profile, d))) {
+    const r = { error: "disconnected", detail: "The previous bridge discovery changed or could not be retired" };
+    setBridge(cx, profile, { state: "error", ...r });
+    return r;
+  }
+  pendingStops.delete(profile);
   const L = await bridge.launch(cx, { profile, folder, herdrPid: pid, argv });
   if (L.error) {
     setBridge(cx, profile, { state: "error", error: L.error, detail: L.detail ?? null });

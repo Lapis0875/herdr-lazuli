@@ -879,18 +879,21 @@ Every reply ends its connection, and the bridge destroys it 1 s later (no half-o
   flight that `hello.running` does not list fails and its chat turns stale (the selected one loads again). `start(cx)`
   is a no-op on a herdr-relay device; elsewhere, after reconnecting, the chats of a profile with no bridge that still
   hold requests fail them (stale). `ensureBridge(cx, profile, {launch})`: a launch-wanting caller never gets the
-  answer of a reuse-only connect (a reopen) in flight; it waits for it and launches when it found no bridge. An
-  approval gets one answer per request id (a second click during the send shares the first's result). The folder's
-  files are never walked twice at once.
+  answer of a reuse-only connect in flight; it waits for it. Replacing a same-folder, same-Herdr bridge after a
+  missing `hello` or an argv change requires authenticated shutdown and confirmed exit (or confirmed prior exit).
+  When exit is uncertain, keep discovery and return retryable `bridge-timeout` without launching. Reuse-only never
+  shuts down a bridge. An approval gets one answer per request id (a second click during the send shares the first's
+  result). The folder's files are never walked twice at once.
 - `sys/assistant-bridge.js`: `runtimeDir()`, `nodePath()`, `hermesPath()`, `hermesLooked()`, `folderExists(path)`,
-  `herdrPid()`, `pidAlive(pid)`, `checkAgent(debugAgent)` → `{ok, bin}` or `{gate, detail}`, `readDiscovery(profile)`,
+  `herdrPid()`, `pidAlive(pid)`, `pidState(pid)` (`present`, `gone`, or `unknown` on lookup failure),
+  `checkAgent(debugAgent)` → `{ok, bin}` or `{gate, detail}`, `readDiscovery(profile)`,
   `discoveredProfiles()`, `bridgeTerminals(profile)` (async: `hc ls --all --json --label lazuli.assistant=<profile>`,
   finished terminals included, since that JSON carries no labels or pids; a live one gets its pid from `terminals()`;
   the live `terminals()` of that label when hc cannot be read), `reap(profiles)` (removes those profiles' ended bridge
   terminals; the service passes `default`, Hermes's profile folders and the listed, connected and discovered profiles
-  every 60 s), `retire(profile, d)` (discards the stale discovery without signalling a live process or terminal)
-  and `awaitExit(cx, profile, pid)` (waits for an authenticated shutdown; no PID-based fallback kill). Both remove
-  the profile's finished terminals for a known bridge. Only the bridge signals its own agent group, and not after its
+  every 60 s), `retire(profile, d)` (true when the stale discovery was removed or is already absent; false when it
+  changed or removal failed) and `awaitExit(cx, profile, pid)` (true only on confirmed absence, false on timeout or
+  an unavailable probe). No PID-based fallback kill. Only the bridge signals its own agent group, and not after its
   child exits. A hard-killed bridge or exited agent can leave processes running when no safe group target remains.
   `launch(cx, {profile, folder, herdrPid, argv})` → `{discovery, address}` (a discovery that matches with that `argv`)
   or `{error, detail}` (`bridge-launch-failed`, `bridge-timeout`, `agent-exit`). Callers check `checking()` first.

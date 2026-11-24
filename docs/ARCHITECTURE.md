@@ -577,12 +577,13 @@ snapshot or `shared.json`.
   (protocol 1, client `fs` and `terminal` capabilities off, `clientInfo`
   lazuli) and keeps the answer for every `hello`. No answer in 40 s is `init-timeout`. The mod polls the discovery file
   every 100 ms for up to 45 s (S9: cold start 0.6–1.6 s; `initialize` may refresh the provider login over the network).
-- **Reuse.** A discovery is reused when its pid lives, its `profile`, `cwd`, `herdrPid` and agent `argv` match, and
-  `hello` arrives within 5 s. A running bridge of this folder and Herdr that runs another argv (`assistant.debugAgent`
-  set or cleared, another `hermes` path) gets `{op:"shutdown"}` and is replaced, also when a connected one no longer
-  matches. Other discoveries that cannot be reused are discarded and finished terminals are reaped, without
-  signalling any live terminal from a saved PID. A mod reload or layout switch keeps the same bridge; a new folder,
-  a new Herdr or another agent gets a new one. Only a launch still in progress can fall back to `hc kill` by the
+- **Reuse.** A discovery is reused when its `profile`, `cwd`, `herdrPid` and agent `argv` match and an authenticated
+  `hello` arrives within 5 s. A launch that cannot reuse a bridge of this folder, profile and Herdr (no `hello` or
+  a different agent argv) requests authenticated shutdown unless the process is already confirmed gone. An ACK is
+  not exit: only confirmed absence permits retirement and replacement. An inconclusive result leaves discovery alone
+  and shows a retryable error; the mod also remembers the discovery if an older bridge unlinks it early. A reuse-only
+  connection never shuts down the bridge. Other stale discoveries are discarded and finished terminals are reaped,
+  without signalling any live terminal from a saved PID. Only a launch still in progress can fall back to `hc kill` by the
   terminal address returned by its own `hc run`. Neither an argv match nor checking a PID with `ps` can bind a later
   signal to the same process group. Discovery cleanup deliberately leaves any orphan after an ungraceful bridge death.
 - **Ends.** Idle: 30 minutes with no `send` and no agent line, no prompt in flight and no agent request open (pings and
@@ -592,6 +593,7 @@ snapshot or `shared.json`.
   `{op:"shutdown"}` (an authenticated folder or agent change) cancels running sessions and waits up to 3 s, then
   SIGTERM and, if the child has not exited, SIGKILL 2 s later (5 s after a cancel): out within 3 s with nothing
   running, 11 s with a turn. An unexpected agent exit sends `agent-exit` and `bye`, then exit 1; nothing respawns it.
+  Ready discovery stays readable until the bridge is about to exit, even after it stops accepting connections.
   Once the agent child exits, the bridge stops signalling its group even if descendants remain: the child no longer
   pins that group ID, and no process-instance-bound group signal is available.
 - **Reaper.** A bridge that ended leaves its terminal behind until `hc rm` (S5). Herdr's `terminals()` lists live

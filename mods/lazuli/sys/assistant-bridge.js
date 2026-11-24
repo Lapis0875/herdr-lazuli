@@ -136,6 +136,17 @@ export async function pidAlive(pid) {
   }
 }
 
+/** Read-only liveness: an explicit no-match from ps establishes absence, a failed lookup does not. */
+export async function pidState(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return "unknown";
+  try {
+    const r = await exec("/bin/ps", ["-p", String(pid), "-o", "pid="], { timeout: 5000 });
+    if (r.code === 0 && r.stdout.trim() === String(pid)) return "present";
+    if (r.code === 1 && r.stdout.trim() === "" && r.stderr.trim() === "") return "gone";
+  } catch {}
+  return "unknown";
+}
+
 /**
  * The once-per-start check (K4): `hermes acp --check`, or `debugAgent ++ ["acp", "--check"]` (D30). Resolves
  * `{ok: true, bin}` (`bin` the agent program: the absolute hermes, or debugAgent[0]), or a gate:
@@ -192,15 +203,17 @@ export async function discoveredProfiles() {
   }
 }
 
-/** Removes a profile's discovery file when it still names `pid` (a newer bridge may have written its own). */
-async function removeDiscovery(profile, pid) {
+/** Discards only the discovery we read; a newer bridge may have written its own. */
+async function removeDiscovery(profile, previous) {
   const d = await readDiscovery(profile);
-  if (d.state === "absent" || (Number.isInteger(pid) && d.pid !== pid)) return;
+  if (d.state === "absent") return true;
+  if (d.state !== previous.state || d.pid !== previous.pid || d.token !== previous.token) return false;
   try {
-    await exec("/bin/rm", ["-f", bridgePaths(profile).discovery], { timeout: 5000 });
+    return (await exec("/bin/rm", ["-f", bridgePaths(profile).discovery], { timeout: 5000 })).code === 0;
   } catch (e) {
     log(`stale discovery of ${profile} not removed: ${errText(e)}`);
   }
+  return false;
 }
 
 // ---- terminals ---------------------------------------------------------------------------------------------------
@@ -269,17 +282,21 @@ export async function reap(profiles) {
  */
 export async function retire(profile, d) {
   if (d.state === "ready" || d.state === "failed") await reap([profile]);
-  if (d.state !== "absent") await removeDiscovery(profile, d.pid ?? null);
+  return d.state === "absent" || removeDiscovery(profile, d);
 }
 
-/** Waits for an authenticated shutdown, then reaps finished terminals. A recycled PID can delay the reaping,
- *  but cannot authorize a signal to a live terminal. */
+/** Resolves true only when the old PID is confirmed gone. An ACK or a failed probe is not proof of exit. */
 export async function awaitExit(cx, profile, pid) {
-  for (let waited = 0; waited < SHUTDOWN_WAIT_MS; waited += 200) {
-    if (!(await pidAlive(pid))) break;
-    await cx.sleep(200);
+  for (let waited = 0; waited <= SHUTDOWN_WAIT_MS; waited += 200) {
+    const state = await pidState(pid);
+    if (state === "gone") {
+      await reap([profile]);
+      return true;
+    }
+    if (state === "unknown") return false;
+    if (waited < SHUTDOWN_WAIT_MS) await cx.sleep(200);
   }
-  await reap([profile]);
+  return false;
 }
 
 // ---- launch -----------------------------------------------------------------------------------------------------

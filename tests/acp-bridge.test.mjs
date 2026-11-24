@@ -18,11 +18,25 @@ const groupAlive=pgid=>{try{process.kill(-pgid,0);return true;}catch(e){return e
 // output (logging them to stderr the way Hermes does), answers session/cancel, and on request writes many
 // lines, a 5 MiB burst, a line over 16 MiB, non-JSON lines or an agent request. RAW_MODE=ignore-term
 // survives SIGTERM.
+// RAW_MODE=descendant starts a same-group fixture that survives SIGTERM and exits on a file handshake.
 const RAW_AGENT=String.raw`
-import readline from 'node:readline'; import {once} from 'node:events';
+import readline from 'node:readline'; import {once} from 'node:events'; import {spawn} from 'node:child_process';
 const mode=process.env.RAW_MODE||''; if(mode==='exit-before-init'){process.stderr.write('raw: no profile\n');process.exit(3);}
 const out=o=>process.stdout.write(JSON.stringify(o)+'\n'); const held=new Map();
 process.on('SIGTERM',()=>{if(mode!=='ignore-term')process.exit(0);}); process.on('SIGHUP',()=>{});
+const descendantReady=mode==='descendant'?new Promise((resolve,reject)=>{
+ const source=[
+  "const fs=require('node:fs'),base=process.argv[1];",
+  "const mark=(suffix,body)=>{fs.writeFileSync(base+suffix+'.tmp',body);fs.renameSync(base+suffix+'.tmp',base+suffix);};",
+  "process.on('SIGTERM',()=>mark('.term','received'));",
+  "const poll=setInterval(()=>{if(fs.existsSync(base+'.release')){clearInterval(poll);mark('.exit','self-exit');process.exit(0);}},10);",
+  "setTimeout(()=>process.exit(2),8000);",
+  "process.stdout.write('ready\\n');",
+ ].join('\n');
+ const child=spawn(process.execPath,['-e',source,process.env.RAW_DESCENDANT],{stdio:['ignore','pipe','inherit']});
+ child.on('error',reject); child.once('exit',code=>reject(new Error('descendant exited before ready: '+code)));
+ child.stdout.once('data',resolve);
+}):null;
 const UNIT=Array.from('한글😀abc-'); const sizeOf=n=>n%1000===999?1048576:n%100===99?32768:n%10===9?2048:60+((n*37)%400);
 async function write(s){if(!process.stdout.write(s))await once(process.stdout,'drain');}
 async function burst(total){let n=0,written=0;while(written<total){const want=sizeOf(n);const cps=[];let bytes=0;for(let k=n%UNIT.length;bytes<want;k++){const c=UNIT[k%UNIT.length];cps.push(c);bytes+=Buffer.byteLength(c);}
@@ -31,6 +45,7 @@ async function burst(total){let n=0,written=0;while(written<total){const want=si
  out({jsonrpc:'2.0',method:'raw/burst-end',params:{count:n,bytes:written}});}
 readline.createInterface({input:process.stdin}).on('line',async l=>{const m=JSON.parse(l);
  if(m.method==='initialize'){if(mode==='init-error')return out({jsonrpc:'2.0',id:m.id,error:{code:-32000,message:'no provider configured'}});
+  if(descendantReady)await descendantReady;
   return out({jsonrpc:'2.0',id:m.id,result:{protocolVersion:1,agentInfo:{name:'raw',version:'0'},agentCapabilities:{loadSession:true}}});}
  if(m.method==='session/prompt'){const text=m.params.prompt.filter(b=>b.type==='text').map(b=>b.text).join('\n');
   process.stderr.write('2026-11-23 07:20:40 [INFO] acp_adapter.server: Prompt on session '+m.params.sessionId+': '+text.slice(0,100)+'\n');held.set(m.id,m.params.sessionId);return;}
@@ -97,7 +112,14 @@ async function startBridge({agent,profile='default',idleMin=30,herdrPid=process.
   if(Date.now()>end) throw new Error(`no discovery in 20 s; stderr: ${stderr}`);
   await sleep(20);
  }
- b.cleanup=async()=>{if(b.proc.exitCode===null&&b.proc.signalCode===null)b.proc.kill('SIGKILL'); if(b.d?.agentPid&&groupAlive(b.d.agentPid)){try{process.kill(-b.d.agentPid,'SIGKILL');}catch{}} await rm(dir,{recursive:true,force:true});};
+ b.cleanup=async()=>{
+  if(b.proc.exitCode===null&&b.proc.signalCode===null){
+   b.proc.kill('SIGTERM');
+   const timer=setTimeout(()=>{if(b.proc.exitCode===null&&b.proc.signalCode===null)b.proc.kill('SIGKILL');},1000);
+   try{await b.exited;}finally{clearTimeout(timer);}
+  }
+  await rm(dir,{recursive:true,force:true});
+ };
  return b;
 }
 
@@ -315,6 +337,28 @@ describe('acp-bridge',{concurrency:8},()=>{
    assert.ok(!existsSync(b.discovery)); assert.ok(!groupAlive(b.d.agentPid));
    const log=await readLog(b); assert.ok(log.includes(`SIGTERM to agent group ${b.d.agentPid}`)); assert.ok(!log.includes('SIGKILL to agent group'));
   }finally{await b.cleanup();}
+ });
+
+ it('owned shutdown never escalates after the agent exits, even with a same-group descendant',async()=>{
+  const marker=join(shared,'shutdown-descendant');
+  const b=await startBridge({agent:rawArgv(),env:{RAW_MODE:'descendant',RAW_DESCENDANT:marker}});
+  try{
+   const [s]=await hello(b);
+   const c=open(b.d.port,w.shutdownLine(b.d.token)); assert.deepEqual(await c.next(),{ok:true});
+   assert.equal((await s.until(v=>v.ev==='bye')).reason,'shutdown');
+   const x=await waitExit(b,4000); assert.equal(x?.code,0); assert.equal(x.signal,null);
+   const log=await readLog(b);
+   assert.ok(log.includes(`SIGTERM to agent group ${b.d.agentPid}`));
+   assert.doesNotMatch(log,/SIGKILL to agent group/); assert.ok(!existsSync(b.discovery));
+   const termUntil=Date.now()+1000;
+   while(!existsSync(`${marker}.term`)&&Date.now()<termUntil)await sleep(10);
+   assert.equal(await readFile(`${marker}.term`,'utf8'),'received');
+   assert.ok(!existsSync(`${marker}.exit`),'only the test can release the descendant');
+   await writeFile(`${marker}.release`,'');
+   const until=Date.now()+2000;
+   while(!existsSync(`${marker}.exit`)&&Date.now()<until)await sleep(10);
+   assert.equal(await readFile(`${marker}.exit`,'utf8'),'self-exit');
+  }finally{await writeFile(`${marker}.release`,'');await b.cleanup();}
  });
 
  it('shutdown with a K9 prompt running: session/cancel, its answer before bye, exit 0 within 11 s',async()=>{
