@@ -890,7 +890,9 @@ Every reply ends its connection, and the bridge destroys it 1 s later (no half-o
   When exit is uncertain, keep discovery and return retryable `bridge-timeout` without launching. Reuse-only never
   shuts down a bridge. Attach, recovery, callbacks and `open(cx)` are scoped to the current folder generation.
   A delayed `hello` cannot replace the active client; recovery preserves an identity mismatch as `auth`. A
-  `replaced` subscriber relinquishes shutdown authority. An approval gets one answer
+  `replaced` subscriber relinquishes shutdown authority, settles its in-flight turns locally as disconnected,
+  and marks its transcripts stale without sending anything to the bridge. Opening again while that instance
+  may still be alive returns `disconnected` with the bridge state `off`. An approval gets one answer
   per request id in that folder generation (a second click during the send shares the first's
   result). The folder's files are never walked twice at once.
 - `sys/assistant-bridge.js`: `runtimeDir()`, `nodePath()`, `hermesPath()`, `hermesLooked()`, `folderExists(path)`,

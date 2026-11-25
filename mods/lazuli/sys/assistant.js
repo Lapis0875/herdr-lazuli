@@ -499,6 +499,7 @@ async function onEnd(cx, profile, client, why) {
     releasedStreams.set(profile, client.d.token);
     if (pendingStops.get(profile)?.token === client.d.token) pendingStops.delete(profile);
     setBridge(cx, profile, { state: "off" });
+    failChats(cx, profile, "disconnected");
     return;
   }
   const crashed = Boolean(why.agentExit) || why.bye === "agent-exit";
@@ -663,9 +664,13 @@ async function connectBridge(cx, profile, scope, launch) {
   const pending = pendingStops.get(profile);
   const d = found.state === "absent" && pending ? pending : found;
   const ours = d.state === "ready" && d.profile === profile && d.cwd === folder && d.herdrPid === pid;
-  if (ours && argv && (await bridge.pidState(d.pid)) !== "gone") {
+  const released = ours && releasedStreams.get(profile) === d.token;
+  if (ours && (released || argv) && (await bridge.pidState(d.pid)) !== "gone") {
     if (!valid()) return { error: "disconnected" };
-    if (releasedStreams.get(profile) === d.token) return { error: "disconnected" };
+    if (releasedStreams.get(profile) === d.token) {
+      setBridge(cx, profile, { state: "off" });
+      return { error: "disconnected" };
+    }
     if (wire.discoveryMatches(d, { profile, cwd: folder, herdrPid: pid, argv })) {
       const from = resume.get(profile);
       const r = await attach(cx, profile, d, scope, from?.pid === d.pid ? from.seq : null);

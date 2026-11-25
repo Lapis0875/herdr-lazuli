@@ -44,8 +44,8 @@ const host = `data:text/javascript,${encodeURIComponent(`
       state.clients?.push(this);
       if (state.pauseHello && since !== null) await state.pauseHello();
       this.open = true;
-      ready({ bridge: { ...this.d, ...state.helloOverride }, running: this.d.token === state.lateToken && since !== null
-        ? [{ id: 'old:1', sessionId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', prompt: [] }] : [] });
+      ready({ bridge: { ...this.d, ...state.helloOverride }, running: state.helloRunning ?? (this.d.token === state.lateToken && since !== null
+        ? [{ id: 'old:1', sessionId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', prompt: [] }] : []) });
       return { ok: true };
     }
     close() { this.open = false; }
@@ -432,26 +432,65 @@ test('a replaced subscriber relinquishes shutdown authority; its successor keeps
   const former = await import('../mods/lazuli/sys/assistant.js?formerly-owned');
   const successor = await import('../mods/lazuli/sys/assistant.js?new-subscriber');
   assert.deepEqual(await former.open(cx), { ok: true });
+  const chat = await former.newSession(cx);
+  assert.equal(chat.ok, true);
+  assert.deepEqual(await former.send(cx, chat.key, { text: 'turn started before replacement' }), { ok: true });
+  const active = Object.keys(former.session(chat.key).inflight);
+  assert.equal(active.length, 1);
+  assert.equal(former.session(chat.key).stale, false);
+  const [, , , prompt] = host.requests.at(-1);
+  host.helloRunning = [{ id: active[0], sessionId: prompt.sessionId, prompt: prompt.prompt }];
   assert.deepEqual(await successor.open(cx), { ok: true });
+  assert.deepEqual(Object.keys(successor.session(chat.key).inflight), active);
   const [oldClient, newClient] = host.clients;
   oldClient.close();
   await oldClient.callbacks.onEnd({ reason: 'replaced' }, cx);
   assert.equal(former.snapshot().bridges.default.state, 'off');
-  const chat = await successor.newSession(cx);
-  assert.equal(chat.ok, true);
-  assert.deepEqual(await successor.send(cx, chat.key, { text: 'successor turn' }), { ok: true });
-  const active = Object.keys(successor.session(chat.key).inflight);
-  assert.equal(active.length, 1);
+  assert.deepEqual(Object.keys(former.session(chat.key).inflight), []);
+  assert.equal(former.session(chat.key).stale, true);
+  assert.equal(former.session(chat.key).lastError?.message, 'disconnected');
+  assert.deepEqual(Object.keys(successor.session(chat.key).inflight), active);
+  const requests = host.requests.slice();
   host.replacement = null;
   host.address = 't-lock-refusal';
   host.finished = [{ state: 'finished', address: host.address, reason: 'exited' }];
+  const completion = { seq: 3, c: { kind: 'result', id: active[0], result: { stopReason: 'end_turn' } } };
+  oldClient.callbacks.onRecord(completion, cx);
+  assert.equal(former.session(chat.key).lastError?.message, 'disconnected');
+  assert.deepEqual(Object.keys(successor.session(chat.key).inflight), active);
   await former.setFolder(cx, '/other');
+  assert.equal(former.snapshot().folder, '/other', 'the locally settled turn does not block switching');
   assert.ok(host.steps.every(([op]) => op !== 'shutdown'));
   assert.equal(JSON.parse(host.discovery).token, newClient.d.token);
   assert.equal(newClient.open, true);
   assert.deepEqual(Object.keys(successor.session(chat.key).inflight), active);
-  newClient.callbacks.onRecord({ seq: 2, c: { kind: 'result', id: active[0], result: { stopReason: 'end_turn' } } }, cx);
+  const sessionId = prompt.sessionId;
+  newClient.callbacks.onRecord({ seq: 2, c: { kind: 'update', sessionId,
+    update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'successor received the reply' } } } }, cx);
+  newClient.callbacks.onRecord(completion, cx);
   assert.deepEqual(Object.keys(successor.session(chat.key).inflight), []);
+  assert.equal(successor.session(chat.key).stale, false);
+  assert.equal(successor.session(chat.key).lastError, null);
+  assert.deepEqual(host.requests, requests, 'no cancel or other write to the successor');
+});
+
+test('opening again with a relinquished live discovery returns disconnected and leaves the bridge off', async () => {
+  const host = defaultFixture();
+  host.oldToken = null;
+  const former = await import('../mods/lazuli/sys/assistant.js?released-open');
+  assert.deepEqual(await former.open(cx), { ok: true });
+  const client = host.clients[0];
+  client.close();
+  await client.callbacks.onEnd({ reason: 'replaced' }, cx);
+  const discovery = host.discovery;
+  const activity = host.steps.length;
+
+  assert.deepEqual(await former.open(cx), { error: 'disconnected' });
+  assert.deepEqual(former.snapshot().bridges.default, { state: 'off' });
+  assert.deepEqual(host.steps.slice(activity), [['probe', 'present']]);
+  assert.deepEqual(host.hc, []);
+  assert.deepEqual(host.requests, []);
+  assert.equal(host.discovery, discovery);
 });
 
 test('a late replaced callback does not remove a newer client for the same profile', async () => {
