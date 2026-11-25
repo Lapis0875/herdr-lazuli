@@ -123,10 +123,13 @@ class Reader {
 }
 
 /** Opens a connection to the bridge and writes its first line, in pieces of at most 1 MiB (S8). */
-async function openLine(port, value) {
+async function openLine(port, value, valid) {
   const sock = await net.connect("127.0.0.1", port);
   try {
-    for (const piece of wire.writeChunks(wire.encodeLine(value))) await sock.write(piece);
+    for (const piece of wire.writeChunks(wire.encodeLine(value))) {
+      if (valid && !valid()) throw new Error("Bridge scope changed");
+      await sock.write(piece);
+    }
   } catch (e) {
     try {
       sock.close();
@@ -153,9 +156,10 @@ function sendError(code) {
  *   `bye` (the bridge said why in `bye`), `eof` or `lost` (read failures). Pending requests resolve `{error}` first.
  */
 export class AcpClient {
-  constructor({ profile, discovery, nonce, onRecord, onEvent, onEnd }) {
+  constructor({ profile, discovery, nonce, valid = () => true, onRecord, onEvent, onEnd }) {
     this.profile = profile;
     this.d = discovery;
+    this.valid = valid;
     this.ids = wire.createIds(nonce);
     this.onRecord = onRecord ?? (() => {});
     this.onEvent = onEvent ?? (() => {});
@@ -185,16 +189,25 @@ export class AcpClient {
   async connect(cx, since = null, { turns = false, ready = null } = {}) {
     let sock;
     try {
-      sock = await openLine(this.d.port, wire.streamLine(this.d.token, since, "lazuli", turns));
+      sock = await openLine(this.d.port, wire.streamLine(this.d.token, since, "lazuli", turns), this.valid);
     } catch (e) {
       return { error: "disconnected", detail: errText(e) };
     }
+    if (!this.valid() || this.ended) {
+      sock.close();
+      return { error: "disconnected" };
+    }
+    this.sock = sock; // close() also interrupts an in-flight hello
     const reader = new Reader(sock);
     let first;
     try {
       first = await Promise.race([reader.next(), cx.sleep(wire.HELLO_MS).then(() => TIMEOUT)]);
     } catch (e) {
       first = { failed: errText(e) };
+    }
+    if (!this.valid() || this.ended) {
+      this.close();
+      return { error: "disconnected" };
     }
     const r = first === TIMEOUT || first === null ? null : wire.parseRecord(first);
     if (!r || r.kind !== "event" || r.ev !== "hello") {
@@ -204,7 +217,6 @@ export class AcpClient {
       if (r?.kind === "reply" && r.error?.code === "auth") return { error: "auth" };
       return { error: first === TIMEOUT ? "bridge-timeout" : "disconnected", detail: first?.failed ?? null };
     }
-    this.sock = sock;
     this.hello = first;
     this.seq = Number.isInteger(first.seq) ? first.seq : this.seq;
     // A stream opened `since` an older seq replays up to hello's seq first (caughtUp()).
@@ -347,11 +359,12 @@ export class AcpClient {
   }
 
   /** One short connection: its first line, the bridge's one-line reply, close. Resolves the reply or `{error}`. */
-  async exchange(cx, line, ms) {
+  async exchange(cx, line, ms, valid) {
     await this.slot();
     let sock = null;
     try {
-      sock = await openLine(this.d.port, line);
+      if (valid && !valid()) return { error: "disconnected" };
+      sock = await openLine(this.d.port, line, valid);
       const reply = await Promise.race([new Reader(sock).next(), cx.sleep(ms).then(() => TIMEOUT)]);
       if (reply === TIMEOUT || reply === null) return { error: "disconnected" };
       const r = wire.parseRecord(reply);
@@ -371,7 +384,7 @@ export class AcpClient {
   /** Writes one message to the agent. Resolves `{ok}` or `{error}`. */
   send(cx, msg) {
     if (this.ended && !this.open) return Promise.resolve({ error: this.agentExit ? "agent-exit" : "disconnected" });
-    return this.exchange(cx, wire.sendLine(this.d.token, msg), SEND_REPLY_MS);
+    return this.exchange(cx, wire.sendLine(this.d.token, msg), SEND_REPLY_MS, () => this.open && this.valid());
   }
 
   /** A new request id (`<nonce>:<n>`). */

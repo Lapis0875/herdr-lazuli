@@ -866,7 +866,7 @@ Every reply ends its connection, and the bridge destroys it 1 s later (no half-o
   the agent exits or the start fails (the discovery file then holds the error); 2 for bad arguments.
 
 ### sys/ modules
-- `sys/acp-client.js`: `new AcpClient({profile, discovery, nonce, onRecord, onEvent, onEnd})`; `connect(cx, since,
+- `sys/acp-client.js`: `new AcpClient({profile, discovery, nonce, valid?, onRecord, onEvent, onEnd})`; `connect(cx, since,
   {turns, ready})` → `{ok, hello}` or `{error: auth|disconnected|bridge-timeout}` (no `hello` within 5 s); `ready(hello)`
   runs before the first record is handled (a running turn's records follow its hello at once); a record below the seq
   held does not move it back. `send(cx, msg)` → `{ok}` or `{error}`; `request(cx, method, params, {timeoutMs})` →
@@ -876,7 +876,8 @@ Every reply ends its connection, and the bridge destroys it 1 s later (no half-o
   or after `ms`). The read loop sleeps 1 ms after every 64 lines or 20 ms of work (Herdr's promise-job drain cap,
   ARCHITECTURE 13.3). `onEvent(ev)` gets `gap`, `dropped`, `agent-error`, `agent-exit`, `bye`; `onEnd({reason,
   detail?, bye, agentExit})` runs once when the stream ends; `shutdownBridge(cx, discovery)` stops a bridge without a
-  client.
+  client. `valid()` gates stream setup and ordinary writes just before sending; explicit authenticated shutdown
+  can still use the departing discovery after its generation has been invalidated.
 - `sys/assistant.js` (K4) bounds: `session/list` 30 s, `session/load` 45 s, `session/new`/`fork`/`set_model` 60 s. A
   stream with no line for 30 s, or an unanswered list or load, is reopened from the last record held; the load then
   tries once more after the replay (no launch); a failed list keeps the rows it had. On each `hello`, a request held in
@@ -886,7 +887,9 @@ Every reply ends its connection, and the bridge destroys it 1 s later (no half-o
   answer of a reuse-only connect in flight; it waits for it. Replacing a same-folder, same-Herdr bridge after a
   missing `hello` or an argv change requires authenticated shutdown and confirmed exit (or confirmed prior exit).
   When exit is uncertain, keep discovery and return retryable `bridge-timeout` without launching. Reuse-only never
-  shuts down a bridge. An approval gets one answer per request id (a second click during the send shares the first's
+  shuts down a bridge. Attach, recovery, callbacks and `open(cx)` are scoped to the current folder generation.
+  A delayed `hello` cannot replace the active client; an identity mismatch is `auth`. An approval gets one answer
+  per request id in that folder generation (a second click during the send shares the first's
   result). The folder's files are never walked twice at once.
 - `sys/assistant-bridge.js`: `runtimeDir()`, `nodePath()`, `hermesPath()`, `hermesLooked()`, `folderExists(path)`,
   `herdrPid()`, `pidAlive(pid)`, `pidState(pid)` (`present`, `gone`, or `unknown` on lookup failure),
@@ -900,7 +903,8 @@ Every reply ends its connection, and the bridge destroys it 1 s later (no half-o
   `launch(cx, {profile, folder, herdrPid, argv, snapshot, valid})` → `{discovery, address}` for its own publication,
   or `{error, detail}`. `valid` identifies the folder generation and is checked immediately before `hc run`
   and again after awaits; `cancelLaunch(address)` uses only the address returned by that `hc run`. The manager
-  never removes discovery. The bridge takes a stable exclusive lock before starting the agent and, while holding
+  never removes discovery. A fast launch failure is confirmed by an exact finished terminal receipt; a missing
+  live terminal or a failed listing alone cannot confirm exit. The bridge takes a stable exclusive lock before starting the agent and, while holding
   it, replaces only a matching or absent current file and removes only its own ready publication. Unknown reads
   or reservation failures do not permit launch. Only the bridge signals its agent group, and not after its child
   exits. Callers check `checking()` first. See ARCHITECTURE §13 for legacy migration assumptions.

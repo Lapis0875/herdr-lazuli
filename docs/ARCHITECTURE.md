@@ -589,6 +589,8 @@ snapshot or `shared.json`.
   (protocol 1, client `fs` and `terminal` capabilities off, `clientInfo`
   lazuli) and keeps the answer for every `hello`. No answer in 40 s is `init-timeout`. The mod polls the discovery file
   every 100 ms for up to 45 s (S9: cold start 0.6–1.6 s; `initialize` may refresh the provider login over the network).
+  A fast refusal can finish before it appears in the live terminal list. The manager checks the finished inventory
+  for its exact `hc run` address; an unavailable listing or a missing row is not proof of exit.
 - **Reuse.** A discovery is reused when its `profile`, `cwd`, `herdrPid` and agent `argv` match and an authenticated
   `hello` arrives within 5 s. A launch that cannot reuse a bridge of this folder, profile and Herdr (no `hello` or
   a different agent argv) requests authenticated shutdown unless the process is already confirmed gone. An ACK is
@@ -597,6 +599,10 @@ snapshot or `shared.json`.
   connection never shuts down the bridge. The read helper distinguishes ENOENT from an unreadable file; an uncertain
   or invalid discovery cannot authorize replacement. Finished terminals are reaped without signalling any live
   terminal from a saved PID. An orphan after ungraceful bridge death is deliberately not signalled.
+  Every attachment, queued transport write and stream callback belongs to one folder generation. `hello` must
+  identify the discovery's profile, folder, PID and start time. Switching folders invalidates the old generation
+  before cleanup and retains a recovering bridge's discovery for authenticated shutdown. The new folder has its
+  own open promise, including after A→B→A; it never inherits the old generation's result or stream.
 - **Ends.** Idle: 30 minutes with no `send` and no agent line, no prompt in flight and no agent request open (pings and
   stream connects do not count). Herdr: `process.kill(herdrPid, 0)` every second. SIGHUP (`hc kill`), SIGTERM, SIGINT
   or Herdr gone take the fast path: `session/cancel` for running sessions without waiting, SIGTERM to the owned agent

@@ -217,6 +217,13 @@ const labelled = (profile, label) => (t) => isObj(t?.labels) && t.labels[label] 
  *  JSON has no labels or pids, so hc filters), each with the pid `terminals()` gives a live one (null for a finished
  *  one). The live ones `terminals()` lists when hc cannot be read. */
 export async function bridgeTerminals(profile, label = LABEL) {
+  const list = await listBridgeTerminals(profile, label);
+  const live = terminals() ?? [];
+  if (!list) return live.filter(labelled(profile, label));
+  return list.map((t) => ({ ...t, pid: live.find((x) => x?.address === t.address)?.pid ?? null }));
+}
+
+async function listBridgeTerminals(profile, label = LABEL) {
   let list = null;
   try {
     const r = await hc(["ls", "--all", "--json", "--label", `${label}=${profile}`]);
@@ -227,11 +234,7 @@ export async function bridgeTerminals(profile, label = LABEL) {
   } catch (e) {
     log(`hc ls --all --label ${label}=${profile} failed: ${errText(e)}`);
   }
-  const live = terminals() ?? [];
-  if (!list) return live.filter(labelled(profile, label));
-  return list
-    .filter((t) => isObj(t) && typeof t.address === "string")
-    .map((t) => ({ ...t, pid: live.find((x) => x?.address === t.address)?.pid ?? null }));
+  return list?.filter((t) => isObj(t) && typeof t.address === "string") ?? null;
 }
 
 async function hcQuiet(args) {
@@ -337,32 +340,36 @@ export async function launch(cx, { profile, folder, herdrPid: pid, argv, snapsho
     return { error: "bridge-launch-failed", detail: errText(e) };
   }
   log(`launched the ${profile} bridge as terminal ${address ?? "?"} in ${folder}`);
-  // `terminals()` lists live terminals only: a launched terminal that is no longer listed (or listed as finished)
-  // ended. A failed start is also read from its discovery file.
-  const term = () => (address ? (terminals() ?? []).find((t) => t?.address === address) ?? null : null);
-  let seen = null;
+  // A lock loser can finish before appearing in Herdr's live snapshot. Only the exact finished
+  // receipt proves exit; missing rows and listing failures do not.
+  let nextListing = 0;
   for (let waited = 0; waited < LAUNCH_WAIT_MS; waited += POLL_MS) {
     await cx.sleep(POLL_MS);
     if (!valid()) return cancelled();
     const text = await readTextFile(p.discovery).catch(() => null);
     if (!valid()) return cancelled();
     const d = typeof text === "string" ? wire.parseDiscovery(text) : { state: "unreadable" };
-    const t = term();
-    if (t) seen = t;
     const mine = d.launchId === launchId;
     if (d.state === "ready" && mine && wire.discoveryMatches(d, { profile, cwd: folder, herdrPid: pid, argv })) {
       log(`${profile} bridge pid ${d.pid} ready on port ${d.port} after ${Date.now() - at} ms`);
       return { discovery: d, address };
     }
-    const gone = (seen !== null && (!t || t.state !== "live")) || (d.state === "failed" && mine);
-    if (gone && !(await pidAlive(seen?.pid ?? d.pid))) {
+    const listed = address ? (terminals() ?? []).find((t) => t?.address === address) : null;
+    let finished = listed?.state === "finished" ? listed : null;
+    if (!listed && address && waited >= nextListing) {
+      nextListing = waited + 1000;
+      const inventory = await listBridgeTerminals(profile);
+      if (!valid()) return cancelled();
+      finished = inventory?.find((t) => t.address === address && t.state === "finished") ?? null;
+    }
+    if (finished || (d.state === "failed" && mine && (await pidState(d.pid)) === "gone")) {
       if (!valid()) return cancelled();
       if (address) await hcQuiet(["rm", address]);
       if (d.state === "failed" && mine) {
         log(`${profile} bridge failed to start: ${d.code} ${d.detail}`);
         return { error: START_ERROR[d.code] ?? "bridge-launch-failed", detail: d.detail };
       }
-      return { error: "bridge-launch-failed", detail: `the bridge ended (${t?.reason ?? t?.state ?? "finished"})` };
+      return { error: "bridge-launch-failed", detail: `the bridge ended (${finished.reason ?? finished.state})` };
     }
   }
   await cancelLaunch(address);

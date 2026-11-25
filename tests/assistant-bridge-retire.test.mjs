@@ -10,6 +10,7 @@ const host = `data:text/javascript,${encodeURIComponent(`
   export const appHome = () => '/herdr/test';
   export const readTextFile = async () => state.discovery;
   export const terminals = () => state.live;
+  export default { connect: (...args) => state.connect(...args) };
   export const checking = () => false;
   export const shared = () => null;
   export const setShared = () => {};
@@ -28,15 +29,34 @@ const host = `data:text/javascript,${encodeURIComponent(`
   export const listFolderFiles = async () => [];
   export const resolvePaths = async () => ({});
   export class AcpClient {
-    constructor({ discovery }) { this.d = discovery; this.pid = discovery.pid; }
+    constructor({ profile, discovery, ...callbacks }) {
+      this.profile = profile;
+      this.d = discovery;
+      this.pid = discovery.pid;
+      this.seq = 1;
+      this.callbacks = callbacks;
+    }
     async connect(cx, since, { ready }) {
       state.steps.push(['attach', this.d.token]);
       if (this.d.token === state.oldToken) return { error: 'bridge-timeout' };
+      state.clients?.push(this);
+      if (state.pauseHello && since !== null) await state.pauseHello();
       this.open = true;
-      ready({});
+      ready({ bridge: { ...this.d, ...state.helloOverride }, running: this.d.token === state.lateToken && since !== null
+        ? [{ id: 'old:1', sessionId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', prompt: [] }] : [] });
       return { ok: true };
     }
     close() { this.open = false; }
+    shutdown(cx) { return shutdownBridge(cx, this.d); }
+    nextId() { return this.d.token.slice(0, 1) + ':' + (++state.id); }
+    async request(cx, method, params) {
+      state.requests.push([this.d.cwd, this.d.token, method, params]);
+      return { ok: true, result: { sessionId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', models: {} } };
+    }
+    async send(cx, msg) {
+      state.requests.push([this.d.cwd, this.d.token, msg.method, msg.params]);
+      return { ok: true };
+    }
   }
   export async function shutdownBridge(cx, d) {
     state.steps.push(['shutdown', d.token]);
@@ -48,16 +68,19 @@ const host = `data:text/javascript,${encodeURIComponent(`
     state.hc.push(args);
     if (args[0] === 'ls') {
       if (state.pauseReap) { const pause = state.pauseReap; state.pauseReap = null; await pause(); }
+      if (state.listingReplies?.length) return state.listingReplies.shift();
       return { code: 0, stdout: JSON.stringify([...state.live.filter(t => t.labels?.[args.at(-1).split('=')[0]]), ...state.finished]) };
     }
     if (args[0] === 'run') {
-      if (state.pauseRun) await state.pauseRun();
+      const address = state.addresses?.shift() ?? state.address ?? state.live[0].address;
+      if (state.pauseRun) { const pause = state.pauseRun; state.pauseRun = null; await pause(); }
       if (state.replaceOnExit) return { code: 1, stderr: 'discovery changed before reservation', stdout: '' };
       if (state.replacement) {
         state.steps.push(['launch']);
-        state.discovery = JSON.stringify({ ...state.replacement, startedAt: Date.now(), launchId: args[args.indexOf('--launch-id') + 1] });
+        state.discovery = JSON.stringify({ ...state.replacement, cwd: args[args.indexOf('--cwd') + 1],
+          startedAt: Date.now(), launchId: args[args.indexOf('--launch-id') + 1] });
       }
-      return { code: 0, stdout: JSON.stringify({ address: state.address ?? state.live[0].address }) };
+      return { code: 0, stdout: JSON.stringify({ address }) };
     }
     return { code: 0, stdout: '' };
   }
@@ -91,6 +114,9 @@ const host = `data:text/javascript,${encodeURIComponent(`
 register(`data:text/javascript,${encodeURIComponent(`
   export function resolve(specifier, context, next) {
     const service = context.parentURL?.includes('/sys/assistant.js?');
+    if (specifier === 'net' && context.parentURL?.includes('/sys/acp-client.js?')) {
+      return { url: ${JSON.stringify(host)}, shortCircuit: true };
+    }
     if (specifier === 'herdr' || (service && [
       '../core/i18n.js', './store.js', './state.js', './bus.js', '../views/panels/common.js',
       './acp-client.js', './assistant-sessions.js',
@@ -174,6 +200,9 @@ const defaultFixture = () => {
   host.discovery = JSON.stringify({ ...defaultReady, startedAt: 1 });
   host.replacement = { ...defaultReady, pid: 102, agentPid: 103, token: 'b'.repeat(64) };
   host.steps = [];
+  host.clients = [];
+  host.requests = [];
+  host.id = 0;
   return host;
 };
 
@@ -248,30 +277,140 @@ async function untilFolder(service, folder) {
   assert.fail(`folder did not change to ${folder}`);
 }
 
-for (const phase of ['Reap', 'Run']) {
-  test(`folder changes A→B→A while ${phase.toLowerCase()} is pending invalidate that launch`, async () => {
+for (const phase of ['Reap', 'Run']) for (const returnToA of [false, true]) {
+  test(`a ${phase.toLowerCase()} in flight cannot swallow the new open (${returnToA ? 'A→B→A' : 'A→B'})`, async () => {
     const host = defaultFixture();
     host.discovery = JSON.stringify({ version: 1, pid: 100, error: { code: 'init-failed' } });
     host.live.unshift({ state: 'live', address: 't-unrelated', pid: 104, labels: { 'lazuli.assistant.v2': 'default' } });
-    host.address = 't-new';
+    host.addresses = phase === 'Run' ? ['t-stale', 't-new'] : ['t-new'];
     const blocked = barrier();
     host[`pause${phase}`] = blocked.pause;
-    const service = await import(`../mods/lazuli/sys/assistant.js?generation-${phase}`);
+    const service = await import(`../mods/lazuli/sys/assistant.js?generation-${phase}-${returnToA}`);
     const opening = service.open(cx);
     await blocked.reached;
     const toB = service.setFolder(cx, '/other');
     await untilFolder(service, '/other');
-    const backToA = service.setFolder(cx, '/project');
-    await untilFolder(service, '/project');
+    let latest = toB;
+    const folder = returnToA ? '/project' : '/other';
+    if (returnToA) {
+      latest = service.setFolder(cx, folder);
+      await untilFolder(service, folder);
+    }
     blocked.leave();
     assert.equal((await opening).error, 'disconnected');
-    await Promise.all([toB, backToA]);
+    assert.deepEqual(await latest, { ok: true, path: folder });
+    await toB;
+    assert.equal(service.snapshot().bridges.default.state, 'ready');
+    assert.equal(JSON.parse(host.discovery).cwd, folder);
     const mutations = host.hc.filter(([op]) => op !== 'ls');
-    if (phase === 'Reap') assert.deepEqual(mutations, []);
+    if (phase === 'Reap') assert.deepEqual(mutations.map(([op]) => op), ['run']);
     else {
-      assert.deepEqual(mutations.map(([op]) => op), ['run', 'kill', 'rm']);
-      assert.deepEqual(mutations.slice(1), [['kill', 't-new'], ['rm', 't-new']]);
+      assert.deepEqual(mutations.map(([op]) => op), ['run', 'kill', 'rm', 'run']);
+      assert.deepEqual(mutations.slice(1, 3), [['kill', 't-stale'], ['rm', 't-stale']]);
     }
-    assert.ok(host.steps.every(([op]) => op !== 'attach'));
+    assert.deepEqual(host.steps.filter(([op]) => op === 'attach'), [['attach', host.replacement.token]]);
   });
 }
+
+for (const returnToA of [false, true]) {
+  test(`late recovery hello and callbacks cannot route a prompt to the old bridge (${returnToA ? 'A→B→A' : 'A→B'})`, async () => {
+    const host = defaultFixture();
+    host.lateToken = host.oldToken;
+    host.oldToken = null; // first attach succeeds
+    host.shutdownReply = { ok: true };
+    host.exitState = 'gone';
+    host.unlinkEarly = true;
+    const service = await import(`../mods/lazuli/sys/assistant.js?late-hello-${returnToA}`);
+    assert.deepEqual(await service.open(cx), { ok: true });
+    const original = host.clients[0];
+    const blocked = barrier();
+    host.pauseHello = blocked.pause;
+    original.close();
+    const recovering = original.callbacks.onEnd({ reason: 'eof' }, cx);
+    await blocked.reached;
+    const oldRecovery = host.clients[1];
+
+    assert.deepEqual(await service.setFolder(cx, '/other'), { ok: true, path: '/other' });
+    assert.deepEqual(host.steps.filter(([op]) => op === 'shutdown'), [['shutdown', original.d.token]]);
+    const b = await service.newSession(cx);
+    assert.deepEqual(b, { ok: true, key: 'default/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' });
+    assert.deepEqual(await service.send(cx, b.key, { text: 'B prompt while old hello is blocked' }), { ok: true });
+
+    let key = b.key;
+    if (returnToA) {
+      host.commands.delete(host.oldPid);
+      host.replacement = { ...host.replacement, pid: 106, token: 'c'.repeat(64) };
+      assert.deepEqual(await service.setFolder(cx, '/project', { confirmed: true }), { ok: true, path: '/project' });
+      const a = await service.newSession(cx);
+      assert.equal(a.ok, true);
+      key = a.key;
+    }
+    blocked.leave();
+    await recovering;
+    oldRecovery.callbacks.onRecord({ seq: 2, c: { kind: 'request', method: 'unsupported', id: 8 } }, cx);
+    oldRecovery.callbacks.onEvent({ seq: 3, ev: 'gap' }, cx);
+    await oldRecovery.callbacks.onEnd({ reason: 'eof' }, cx);
+    assert.equal(service.snapshot().bridges.default.state, 'ready');
+    assert.equal(service.session('default/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'), null);
+    assert.deepEqual(await service.send(cx, key, { text: 'Current prompt after old hello' }), { ok: true });
+    const sent = host.requests.filter(([, , method]) => method === 'session/prompt');
+    assert.deepEqual(sent.map(([cwd, token]) => [cwd, token]), [
+      ['/other', 'b'.repeat(64)], [returnToA ? '/project' : '/other', (returnToA ? 'c' : 'b').repeat(64)],
+    ]);
+    assert.ok(host.requests.every(([, token]) => token !== original.d.token));
+  });
+}
+
+for (const ambiguousFirst of [false, true]) {
+  test(`launch recognizes the exact finished receipt${ambiguousFirst ? ' after ambiguous listings' : ' on the first poll'}`, async () => {
+    const host = fixture();
+    host.address = 't-finished-own';
+    const unrelated = { state: 'finished', address: 't-unrelated', reason: 'killed' };
+    const exact = { state: 'finished', address: host.address, reason: 'exited' };
+    const listed = (...terms) => ({ code: 0, stdout: JSON.stringify(terms) });
+    host.listingReplies = [...(ambiguousFirst ? [{ code: 1, stdout: '', stderr: 'unavailable' }, listed(unrelated)] : []),
+      listed(unrelated, exact)];
+    let sleeps = 0;
+    const result = await bridge.launch({ sleep: async () => { sleeps++; } }, {
+      profile, folder: ready.cwd, herdrPid: ready.herdrPid, argv, snapshot: await bridge.readDiscovery(profile), valid: () => true,
+    });
+    assert.deepEqual(result, { error: 'bridge-launch-failed', detail: 'the bridge ended (exited)' });
+    assert.equal(sleeps, ambiguousFirst ? 21 : 1);
+    assert.deepEqual(host.hc.filter(([op]) => op === 'rm' || op === 'kill'), [['rm', host.address]]);
+  });
+}
+
+test('a hello identifying another folder cannot authorize attachment or shutdown', async () => {
+  const host = defaultFixture();
+  host.oldToken = null;
+  host.helloOverride = { cwd: '/another' };
+  const service = await import('../mods/lazuli/sys/assistant.js?mismatched-hello');
+  assert.deepEqual(await service.open(cx), { error: 'auth' });
+  assert.equal(host.clients[0].open, false);
+  assert.ok(host.steps.every(([op]) => op !== 'shutdown' && op !== 'launch'));
+});
+
+test('the real ACP client does not write an ordinary request after its connection outlives the folder', async () => {
+  const host = fixture();
+  const blocked = barrier();
+  const writes = [];
+  let closed = 0;
+  let online = true;
+  const sock = { write: async piece => { writes.push(piece); }, close: () => { closed++; },
+    read: async () => Buffer.from('{"ok":true}\n') };
+  host.connect = async () => { await blocked.pause(); return sock; };
+  const { AcpClient } = await import('../mods/lazuli/sys/acp-client.js?scoped-write');
+  const client = new AcpClient({ profile, discovery: ready, nonce: 'scope', valid: () => online });
+  client.open = true;
+  const tcx = { sleep: () => new Promise(() => {}) };
+  const send = client.send(tcx, { jsonrpc: '2.0', id: 1, method: 'session/prompt' });
+  await blocked.reached;
+  online = false;
+  client.close();
+  blocked.leave();
+  assert.deepEqual(await send, { error: 'disconnected' });
+  assert.deepEqual(writes, []);
+  assert.equal(closed, 1);
+  assert.deepEqual(await client.shutdown(tcx), { ok: true });
+  assert.deepEqual(writes.map(piece => JSON.parse(piece)), [{ op: 'shutdown', token: ready.token }]);
+});

@@ -94,9 +94,9 @@ let version = 0;
 let built = { version: -1, value: null };
 let flushing = false;
 let service = null; // {stopped} while started
-let checked = null; // {key, result} of this start's agent check
+let checked = null; // {key, promise} of this start's agent check
 let hermesBin = null; // the hermes program this start checked or looked up (never debugAgent's): the bridges' argv
-const clients = new Map(); // profile → AcpClient
+const clients = new Map(); // profile → last scoped AcpClient (also retained during stream recovery for shutdown)
 const launches = new Map(); // profile → {promise, launch}: the connect (or reopen) in flight, and whether it may launch
 const pendingStops = new Map(); // profile → discovery whose shutdown is unconfirmed (older bridges may unlink early)
 const loads = new Map(); // key → Promise of a session/load
@@ -106,6 +106,14 @@ let opening = null;
 let listing = null;
 let switching = null;
 let folderGeneration = 0;
+const folderScope = () => ({ folder: S.folder, generation: folderGeneration });
+const scopeActive = (scope) => !switching && scope.generation === folderGeneration && scope.folder === S.folder;
+const clientCurrent = (profile, client) => Boolean(client && clients.get(profile) === client
+  && scopeActive(client.scope) && client.d.profile === profile && client.d.cwd === client.scope.folder);
+function activeClient(profile) {
+  const client = clients.get(profile);
+  return client?.open && clientCurrent(profile, client) ? client : null;
+}
 let filesAt = 0;
 let filesBusy = false; // a walk of the folder's files runs
 let filesAgain = false; // a forced refresh came while it ran: one more walk after it
@@ -482,18 +490,17 @@ function failChats(cx, profile, code) {
 /** The stream of a profile's bridge ended. A drop with the bridge still running reconnects and replays what was
  *  missed; otherwise the bridge is gone: its chats' requests fail, the chats turn stale and the group shows why. */
 async function onEnd(cx, profile, client, why) {
+  if (!clientCurrent(profile, client)) return;
   if (Number.isInteger(client.seq)) resume.set(profile, { pid: client.pid, seq: client.seq });
-  if (clients.get(profile) !== client) return;
-  clients.delete(profile);
   log(`${profile} stream ended: ${why.reason}${why.bye ? ` (bye ${why.bye})` : ""}${why.detail ? `: ${why.detail}` : ""}`);
   if (why.reason === "replaced") {
     setBridge(cx, profile, { state: "off" });
     return;
   }
   const crashed = Boolean(why.agentExit) || why.bye === "agent-exit";
-  if (!why.bye && !crashed && (await bridge.pidAlive(client.pid))) {
-    const again = await attach(cx, profile, client.d, client.seq);
-    if (again.ok) return;
+  if (!why.bye && !crashed) {
+    await reopenStream(cx, profile, client, why.reason);
+    return;
   }
   const code = crashed ? "agent-exit" : "disconnected";
   failChats(cx, profile, code);
@@ -558,29 +565,44 @@ function onHello(cx, profile, hello) {
 /** A client on a bridge's discovery: its stream, then its hello. Resolves `{ok, client}` or `{error}`. `since` null
  *  (a bridge this run holds no record of) asks also for the turns still running there (K3 `turns`), so a turn that
  *  began before a reload shows whole; its hello (the prompts running) is applied before those records. */
-async function attach(cx, profile, d, since = null, valid = () => true) {
+async function attach(cx, profile, d, scope, since = null) {
+  if (!scopeActive(scope) || d.profile !== profile || d.cwd !== scope.folder) return { error: "disconnected" };
+  const current = () => clientCurrent(profile, client);
   const client = new AcpClient({
     profile,
     discovery: d,
     nonce: `${NONCE}${++clientSeq}`,
-    onRecord: (rec, tcx) => onRecord(tcx, profile, client, rec),
-    onEvent: (ev, tcx) => onEvent(tcx, profile, client, ev),
+    valid: current,
+    onRecord: (rec, tcx) => { if (current()) onRecord(tcx, profile, client, rec); },
+    onEvent: (ev, tcx) => { if (current()) onEvent(tcx, profile, client, ev); },
     onEnd: (why, tcx) => onEnd(tcx, profile, client, why),
   });
+  client.scope = scope;
+  clients.get(profile)?.close();
+  clients.set(profile, client);
+  let accepted = false;
+  let mismatch = false;
   const ready = (hello) => {
-    if (!valid()) {
+    const target = hello?.bridge;
+    if (!current()) {
       client.close();
       return;
     }
-    const old = clients.get(profile);
-    clients.set(profile, client);
-    if (old && old !== client) old.close();
+    if (target?.profile !== profile || target.cwd !== scope.folder || target.pid !== d.pid || target.startedAt !== d.startedAt) {
+      mismatch = true;
+      clients.delete(profile);
+      client.close();
+      return;
+    }
+    accepted = true;
     setBridge(cx, profile, { state: "ready" });
     onHello(cx, profile, hello);
   };
   const h = await client.connect(cx, since, { turns: since === null, ready });
-  if (!valid()) return { error: "disconnected" };
-  return h.error ? h : { ok: true, client };
+  if (!scopeActive(scope)) return { error: "disconnected" };
+  if (mismatch) return { error: "auth" };
+  if (!current()) return { error: "disconnected" };
+  return h.error ? h : accepted && client.open ? { ok: true, client } : { error: "disconnected" };
 }
 
 /** The argv a profile's bridge runs (K3): `<hermes> -p <profile> acp`, or debugAgent's. */
@@ -602,12 +624,11 @@ function sameAgent(client, profile) {
   return !argv || wire.discoveryMatches(client.d, { profile: client.d.profile, cwd: client.d.cwd, herdrPid: client.d.herdrPid, argv });
 }
 
-async function connectBridge(cx, profile, { launch = true } = {}) {
-  if (switching) return { error: "disconnected" };
-  if (!S.folder) return { error: "no-folder" };
-  const folder = S.folder;
-  const generation = folderGeneration;
-  const valid = () => generation === folderGeneration && !switching;
+async function connectBridge(cx, profile, scope, launch) {
+  const valid = () => scopeActive(scope);
+  if (!valid()) return { error: "disconnected" };
+  const { folder } = scope;
+  if (!folder) return { error: "no-folder" };
   const pid = await bridge.herdrPid();
   if (!valid()) return { error: "disconnected" };
   if (!pid) {
@@ -618,7 +639,6 @@ async function connectBridge(cx, profile, { launch = true } = {}) {
   const connected = clients.get(profile);
   if (connected && !sameAgent(connected, profile)) {
     // The agent changed under a connected bridge: its requests end here, the bridge is shut down below.
-    clients.delete(profile);
     connected.close();
     failChats(cx, profile, "disconnected");
   }
@@ -637,11 +657,15 @@ async function connectBridge(cx, profile, { launch = true } = {}) {
     if (!valid()) return { error: "disconnected" };
     if (wire.discoveryMatches(d, { profile, cwd: folder, herdrPid: pid, argv })) {
       const from = resume.get(profile);
-      const r = await attach(cx, profile, d, from?.pid === d.pid ? from.seq : null, valid);
+      const r = await attach(cx, profile, d, scope, from?.pid === d.pid ? from.seq : null);
       if (!valid()) return { error: "disconnected" };
       if (r.ok) {
         pendingStops.delete(profile);
         log(`reusing the ${profile} bridge pid ${d.pid}`);
+        return r;
+      }
+      if (r.error === "auth") {
+        if (launch) setBridge(cx, profile, { state: "error", error: "auth" });
         return r;
       }
       if (!launch) return r;
@@ -687,7 +711,7 @@ async function connectBridge(cx, profile, { launch = true } = {}) {
     return { error: L.error, detail: L.detail ?? null };
   }
   pendingStops.delete(profile);
-  const r = await attach(cx, profile, L.discovery, null, valid);
+  const r = await attach(cx, profile, L.discovery, scope);
   if (!valid()) {
     await bridge.cancelLaunch(L.address);
     return { error: "disconnected" };
@@ -697,8 +721,8 @@ async function connectBridge(cx, profile, { launch = true } = {}) {
 }
 
 /** Registers a connect in flight for a profile until it settles. */
-function inFlight(profile, promise, launch) {
-  const entry = { promise, launch, generation: folderGeneration };
+function inFlight(profile, promise, launch, scope) {
+  const entry = { promise, launch, scope };
   launches.set(profile, entry);
   promise.then(() => {
     if (launches.get(profile) === entry) launches.delete(profile);
@@ -711,16 +735,24 @@ function inFlight(profile, promise, launch) {
  *  when it found no bridge. A connected bridge that runs another agent than the one this profile starts now is
  *  replaced. */
 function ensureBridge(cx, profile, options) {
-  const c = clients.get(profile);
-  if (c?.open && sameAgent(c, profile)) return Promise.resolve({ ok: true, client: c });
+  const scope = folderScope();
+  if (!scopeActive(scope)) return Promise.resolve({ error: "disconnected" });
+  const c = activeClient(profile);
+  if (c && sameAgent(c, profile)) return Promise.resolve({ ok: true, client: c });
   const launch = options?.launch !== false;
   const running = launches.get(profile);
   if (running) {
-    if (running.generation !== folderGeneration) return running.promise.then(() => ensureBridge(cx, profile, options));
-    if (running.launch || !launch) return running.promise;
-    return running.promise.then((r) => (r?.ok ? r : ensureBridge(cx, profile, options)));
+    const same = running.scope.generation === scope.generation;
+    if (!same && !running.launch) {
+      return inFlight(profile, owned(cx, (tcx) => connectBridge(tcx, profile, scope, launch)), launch, scope);
+    }
+    if (same && (running.launch || !launch)) return running.promise;
+    return running.promise.then((r) => {
+      if (!scopeActive(scope)) return { error: "disconnected" };
+      return same && r?.ok ? r : ensureBridge(cx, profile, options);
+    });
   }
-  return inFlight(profile, owned(cx, (tcx) => connectBridge(tcx, profile, { launch })), launch);
+  return inFlight(profile, owned(cx, (tcx) => connectBridge(tcx, profile, scope, launch)), launch, scope);
 }
 
 /**
@@ -731,33 +763,37 @@ function ensureBridge(cx, profile, options) {
  * longer answers turns the group's state to `error` (the banner's Retry).
  */
 function reopenStream(cx, profile, client, why) {
-  if (clients.get(profile) !== client || !client.open) return Promise.resolve({ ok: false });
-  if (launches.has(profile)) return launches.get(profile).promise;
+  if (!clientCurrent(profile, client)) return Promise.resolve({ error: "disconnected" });
+  const running = launches.get(profile);
+  if (running) return running.promise.then(() => reopenStream(cx, profile, client, why));
+  const { scope } = client;
   log(`${profile}: the stream stopped (${why}); reopening it from seq ${client.seq}`);
-  clients.delete(profile);
   if (Number.isInteger(client.seq)) resume.set(profile, { pid: client.pid, seq: client.seq });
   client.close();
   const p = owned(cx, async (tcx) => {
-    const r = await attach(tcx, profile, client.d, client.seq);
-    if (r.error) {
+    if (!clientCurrent(profile, client)) return { error: "disconnected" };
+    const r = await attach(tcx, profile, client.d, scope, client.seq);
+    if (r.error && scopeActive(scope)) {
       log(`${profile}: the stream did not reopen (${r.error})`);
       failChats(tcx, profile, "disconnected");
       setBridge(tcx, profile, { state: "error", error: "disconnected" });
     }
     return r;
   });
-  return inFlight(profile, p, false);
+  return inFlight(profile, p, false, scope);
 }
 
 /** Reconnects to the bridges of this folder and Herdr that still run (start; K3 reuse rule). Launches nothing. */
 async function reconnectAll(cx) {
   if (!S.folder) return;
+  const scope = folderScope();
   for (const profile of await bridge.discoveredProfiles()) {
-    if (!isProfileName(profile) || clients.get(profile)?.open) continue;
+    if (!scopeActive(scope)) return;
+    if (!isProfileName(profile) || activeClient(profile)) continue;
     const r = await ensureBridge(cx, profile, { launch: false });
     if (r.ok) log(`reconnected to the ${profile} bridge`);
   }
-  if (clients.size) await refreshList(cx);
+  if (scopeActive(scope) && clients.size) await refreshList(cx);
 }
 
 // ---- gates and opening ------------------------------------------------------------------------------------------
@@ -765,25 +801,28 @@ async function reconnectAll(cx) {
 async function ensureChecked() {
   const debug = debugAgent();
   const key = JSON.stringify(debug ?? "hermes");
-  if (checked?.key !== key) checked = { key, result: await bridge.checkAgent(debug) };
-  return checked.result;
+  if (checked?.key !== key) checked = { key, promise: bridge.checkAgent(debug) };
+  return checked.promise;
 }
 
 /** `retry`: the gates' Retry asked, so a `default` bridge in error starts again; a plain open leaves it to the
  *  banner's Retry (retryBridge). */
-async function doOpen(cx, retry = false) {
-  const folder = settingsFolder();
-  if (folder !== S.folder) await switchFolder(cx, folder);
-  if (!S.folder) {
+async function doOpen(cx, scope, retry) {
+  if (!scopeActive(scope)) return { error: "disconnected" };
+  const { folder } = scope;
+  if (!folder) {
     setGate(cx, "no-folder");
     return { error: "no-folder" };
   }
-  if (!(await bridge.folderExists(S.folder))) {
+  const exists = await bridge.folderExists(folder);
+  if (!scopeActive(scope)) return { error: "disconnected" };
+  if (!exists) {
     setGate(cx, "folder-missing");
     return { error: "no-folder" };
   }
   if (S.gate !== "ok" && !checked) setGate(cx, "checking");
   const agent = await ensureChecked();
+  if (!scopeActive(scope)) return { error: "disconnected" };
   if (!agent.ok) {
     setGate(cx, agent.gate, agent.detail);
     return { error: agent.gate };
@@ -792,41 +831,44 @@ async function doOpen(cx, retry = false) {
   if (!debugAgent()) hermesBin = agent.bin;
   setGate(cx, "ok");
   await refreshList(cx);
+  if (!scopeActive(scope)) return { error: "disconnected" };
   const failed = S.bridges.default?.state === "error" && !retry ? { error: S.bridges.default.error } : null;
   const b = failed ?? (await ensureBridge(cx, "default"));
+  if (!scopeActive(scope)) return { error: "disconnected" };
   if (debugAgent() && b.ok) await refreshList(cx, "default");
+  if (!scopeActive(scope)) return { error: "disconnected" };
   restoreSelection(cx);
   refreshFiles(cx, { force: true });
   return b.error ? { error: b.error } : { ok: true };
 }
 
-/** Opens the screen's data (K4 order): the folder gate, the agent check (once per start), the profiles and list, the
- *  `default` bridge, the remembered selection. Idempotent: every show of the screen may call it. */
-export function open(cx) {
-  if (checking()) return Promise.resolve({ error: "disconnected" });
-  if (!opening) {
-    const p = owned(cx, (tcx) => doOpen(tcx, false));
-    opening = p;
-    p.then(() => {
-      if (opening === p) opening = null;
-    });
+async function openFolder(cx, retry) {
+  if (checking()) return { error: "disconnected" };
+  const folder = settingsFolder();
+  if (switching || folder !== S.folder) await owned(cx, (tcx) => switchFolder(tcx, folder));
+  const scope = folderScope();
+  if (!scopeActive(scope) || scope.folder !== folder || settingsFolder() !== folder) return { error: "disconnected" };
+  const previous = opening;
+  if (previous?.scope.generation === scope.generation) {
+    if (!retry) return previous.promise;
+    await previous.promise;
+    if (!scopeActive(scope)) return { error: "disconnected" };
   }
-  return opening;
+  if (retry) {
+    checked = null;
+    setGate(cx, "checking");
+  }
+  const entry = { scope, promise: owned(cx, (tcx) => doOpen(tcx, scope, retry)) };
+  opening = entry;
+  entry.promise.then(() => {
+    if (opening === entry) opening = null;
+  });
+  return entry.promise;
 }
 
-/** The gates' Retry: the folder and the agent are checked again, then the screen opens as open() does. */
-export async function recheck(cx) {
-  if (checking()) return { error: "disconnected" };
-  if (opening) await opening;
-  checked = null;
-  setGate(cx, "checking");
-  const p = owned(cx, (tcx) => doOpen(tcx, true));
-  opening = p;
-  p.then(() => {
-    if (opening === p) opening = null;
-  });
-  return p;
-}
+/** Opens the screen's data once per folder generation. The gates' Retry rechecks the agent. */
+export const open = (cx) => openFolder(cx, false);
+export const recheck = (cx) => openFolder(cx, true);
 
 /** The selection remembered in `lazuli.assistant.ui` is loaded once the screen opens (D25). A profile whose bridge
  *  shows an error waits for the banner's Retry. */
@@ -843,13 +885,15 @@ function restoreSelection(cx) {
  *  debugAgent is set (K6). An unanswered list reopens the stream (reopenStream) and keeps the rows read before, so a
  *  passing failure neither empties the group nor drops the selection. */
 async function listViaAgent(cx, profile) {
-  const client = clients.get(profile);
+  const client = activeClient(profile);
   // No bridge yet: the group is still loading (a remembered selection stays, core/assistant-list.js pruneUi).
   if (!client?.open) return { profile, rows: null };
   const rows = [];
   let cursor;
   for (let page = 0; page < 10; page++) {
-    const r = await client.request(cx, wire.METHOD.sessionList, cursor ? { cwd: S.folder, cursor } : { cwd: S.folder }, { timeoutMs: LIST_MS });
+    const cwd = client.scope.folder;
+    const r = await client.request(cx, wire.METHOD.sessionList, cursor ? { cwd, cursor } : { cwd }, { timeoutMs: LIST_MS });
+    if (!scopeActive(client.scope)) return { profile, rows: null };
     if (r.error) {
       if (r.error === "bridge-timeout") reopenStream(cx, profile, client, "session/list unanswered");
       if (rows.length) return { profile, rows };
@@ -865,10 +909,11 @@ async function listViaAgent(cx, profile) {
 
 async function listProfile(cx, profile) {
   if (debugAgent()) return listViaAgent(cx, profile);
+  const scope = folderScope();
   const r = await disk.profileSessions(run, home(), profile);
   if (!r.error) return { profile, rows: r.rows };
   log(`${profile}: sessions not read (${r.error}: ${r.detail ?? ""})`);
-  if (clients.get(profile)?.open) {
+  if (scopeActive(scope) && activeClient(profile)) {
     const via = await listViaAgent(cx, profile);
     if (!via.error) return via;
   }
@@ -890,21 +935,22 @@ function syncRows(cx) {
   }
 }
 
-async function doList(cx, only) {
-  if (!S.folder) return { error: "no-folder" };
-  const folder = S.folder;
+async function doList(cx, only, scope) {
+  if (!scopeActive(scope)) return { error: "disconnected" };
+  if (!scope.folder) return { error: "no-folder" };
   const names = await disk.listProfiles(run, home());
+  if (!scopeActive(scope)) return { error: "disconnected" };
   for (const p of clients.keys()) if (!names.includes(p)) names.push(p);
   const targets = only ? [only] : names;
   for (const profile of targets) {
     const src = await listProfile(cx, profile);
-    if (S.folder !== folder) return { error: "disconnected" };
+    if (!scopeActive(scope)) return { error: "disconnected" };
     const at = S.profiles.findIndex((p) => p.profile === profile);
     if (at < 0) S.profiles = [...S.profiles, src];
     else S.profiles = S.profiles.map((p, i) => (i === at ? src : p));
   }
   await resolveCwds();
-  if (S.folder !== folder) return { error: "disconnected" };
+  if (!scopeActive(scope)) return { error: "disconnected" };
   if (!only) {
     S.profiles = S.profiles.filter((p) => names.includes(p.profile));
     // Every profile is listed: a remembered selection that no longer exists is cleared (K2).
@@ -928,16 +974,15 @@ async function resolveCwds() {
 export function refreshList(cx, profile) {
   if (checking()) return Promise.resolve({ error: "disconnected" });
   if (profile !== undefined && profile !== null && !isProfileName(profile)) return Promise.resolve({ error: "not-found" });
-  if (!profile) {
-    if (!listing) {
-      listing = owned(cx, (tcx) => doList(tcx, null));
-      listing.then(() => {
-        listing = null;
-      });
-    }
-    return listing;
-  }
-  return owned(cx, (tcx) => doList(tcx, profile));
+  const scope = folderScope();
+  if (profile) return owned(cx, (tcx) => doList(tcx, profile, scope));
+  if (listing?.scope.generation === scope.generation) return listing.promise;
+  const entry = { scope, promise: owned(cx, (tcx) => doList(tcx, null, scope)) };
+  listing = entry;
+  entry.promise.then(() => {
+    if (listing === entry) listing = null;
+  });
+  return entry.promise;
 }
 
 /** The list once more soon after a turn (several ends close together read it once). */
@@ -993,7 +1038,8 @@ function refreshFiles(cx, { force = false } = {}) {
 
 /** Stops this folder's bridges (`shutdown`: running prompts cancelled first, K3) and starts over in `folder`. */
 async function switchFolder(cx, folder) {
-  if (switching) await switching;
+  while (switching) await switching;
+  if (settingsFolder() !== folder) return;
   if (folder === S.folder) return;
   folderGeneration++;
   const job = (async () => {
@@ -1001,9 +1047,9 @@ async function switchFolder(cx, folder) {
     clients.clear();
     await Promise.all(
       leaving.map(async (client) => {
-        const r = await client.shutdown(cx);
         client.close();
-        if (r.ok) await bridge.awaitExit(cx, client.profile, client.pid);
+        await client.shutdown(cx); // uses the exact departing discovery token, even during stream recovery
+        if (!(await bridge.awaitExit(cx, client.profile, client.pid))) pendingStops.set(client.profile, client.d);
       }),
     );
     for (const id of promptKeys.keys()) promptKeys.delete(id);
@@ -1039,6 +1085,7 @@ export async function setFolder(cx, path, { confirmed = false } = {}) {
   return owned(cx, async (tcx) => {
     await store.updateSettings((s) => ({ ...s, assistant: { ...(isObj(s.assistant) ? s.assistant : {}), folder } }));
     await switchFolder(tcx, folder);
+    if (S.folder !== folder || settingsFolder() !== folder) return { error: "disconnected" };
     setUi(tcx, normalizeUi(null, folder));
     setGate(tcx, "checking");
     await open(tcx);
@@ -1071,12 +1118,15 @@ export async function pickFolder(cx) {
  *  `models` is Hermes's answer for an unknown id (S9): `not-found`. */
 function reload(cx, key) {
   if (loads.has(key)) return loads.get(key);
+  const scope = folderScope();
   const p = owned(cx, async (tcx) => {
     const k = parseKey(key);
     let pass = 0;
     let retried = false;
     for (;;) {
+      if (!scopeActive(scope)) return { error: "disconnected" };
       const b = await ensureBridge(tcx, k.profile, retried ? { launch: false } : undefined);
+      if (!scopeActive(scope)) return { error: "disconnected" };
       if (b.error) {
         if (retried) apply(tcx, key, { type: "loaded" }, { type: "disconnected" });
         return b;
@@ -1084,16 +1134,18 @@ function reload(cx, key) {
       // A reopened stream first replays what the stopped one missed (an earlier load's history among it): the load
       // starts after that, so the two never mix.
       if (retried) await b.client.caughtUp(tcx, LOAD_MS);
+      if (!scopeActive(scope)) return { error: "disconnected" };
       if (!S.sessions[key]) ensureChat(key);
       endedInLoad.delete(key);
       loadingKeys.add(key);
       apply(tcx, key, { type: "load-start" });
       let r;
       try {
-        r = await b.client.request(tcx, wire.METHOD.sessionLoad, { sessionId: k.sessionId, cwd: S.folder, mcpServers: [] }, { timeoutMs: LOAD_MS });
+        r = await b.client.request(tcx, wire.METHOD.sessionLoad, { sessionId: k.sessionId, cwd: scope.folder, mcpServers: [] }, { timeoutMs: LOAD_MS });
       } finally {
-        loadingKeys.delete(key);
+        if (scopeActive(scope)) loadingKeys.delete(key);
       }
+      if (!scopeActive(scope)) return { error: "disconnected" };
       if (r.error) {
         const lost = r.error === "bridge-timeout" || r.error === "disconnected";
         if (lost && !retried && S.bridges[k.profile]?.state !== "error") {
@@ -1122,21 +1174,26 @@ function reload(cx, key) {
     return { ok: true };
   });
   loads.set(key, p);
-  p.then(() => loads.delete(key));
+  p.then(() => {
+    if (loads.get(key) === p) loads.delete(key);
+  });
   return p;
 }
 
 /** A chat ready for a request: its bridge connected and its history loaded once there. */
 async function ready(cx, key) {
   const k = parseKey(key);
+  const scope = folderScope();
   const b = await ensureBridge(cx, k.profile);
+  if (!scopeActive(scope)) return { error: "disconnected" };
   if (b.error) return b;
   const chat = S.sessions[key];
   if (chat && (!chat.loaded || chat.stale)) {
     const r = await reload(cx, key);
     if (r.error) return r;
   }
-  return { ok: true, client: clients.get(k.profile) ?? b.client };
+  const client = scopeActive(scope) && activeClient(k.profile);
+  return client ? { ok: true, client } : { error: "disconnected" };
 }
 
 /** Selects a session (remembered in `lazuli.assistant.ui`) and loads its history when it is not loaded. */
@@ -1188,7 +1245,9 @@ async function doNewSession(cx, profile = "default") {
   }
   const b = await ensureBridge(cx, profile);
   if (b.error) return b;
-  const r = await b.client.request(cx, wire.METHOD.sessionNew, { cwd: S.folder, mcpServers: [] }, { timeoutMs: NEW_MS });
+  if (!scopeActive(b.client.scope)) return { error: "disconnected" };
+  const r = await b.client.request(cx, wire.METHOD.sessionNew, { cwd: b.client.scope.folder, mcpServers: [] }, { timeoutMs: NEW_MS });
+  if (!scopeActive(b.client.scope)) return { error: "disconnected" };
   if (r.error) return r;
   const sessionId = r.result?.sessionId;
   const key = sessionKey(profile, sessionId);
@@ -1211,7 +1270,9 @@ async function doFork(cx, key) {
   if (S.gate !== "ok") return { error: gateError() };
   const b = await ready(cx, key);
   if (b.error) return b;
-  const r = await b.client.request(cx, wire.METHOD.sessionFork, { sessionId: k.sessionId, cwd: S.folder, mcpServers: [] }, { timeoutMs: NEW_MS });
+  if (!scopeActive(b.client.scope)) return { error: "disconnected" };
+  const r = await b.client.request(cx, wire.METHOD.sessionFork, { sessionId: k.sessionId, cwd: b.client.scope.folder, mcpServers: [] }, { timeoutMs: NEW_MS });
+  if (!scopeActive(b.client.scope)) return { error: "disconnected" };
   if (r.error) return r;
   const next = sessionKey(k.profile, r.result?.sessionId);
   if (!next) return { error: "not-found" };
@@ -1228,9 +1289,11 @@ const absolute = (rel) => (String(rel).startsWith("/") ? String(rel) : `${S.fold
 
 /** Sends one session/prompt request; its answer arrives as a record (onAnswer). */
 async function prompt(cx, key, client, id, blocks, entry) {
+  if (!scopeActive(client.scope)) return { error: "disconnected" };
   promptKeys.set(id, entry);
   const chat = S.sessions[key];
   const r = await client.send(cx, wire.sessionPrompt(id, chat.sessionId, blocks));
+  if (!scopeActive(client.scope)) return { error: "disconnected" };
   if (r.error) {
     promptKeys.delete(id);
     apply(cx, key, { type: "prompt-failed", requestId: id, error: r.error });
@@ -1244,7 +1307,7 @@ function flushQueue(cx, key) {
   const chat = S.sessions[key];
   const head = chat ? queueHead(chat) : null;
   if (!head) return;
-  const client = clients.get(chat.profile);
+  const client = activeClient(chat.profile);
   if (!client?.open) return;
   const id = client.nextId();
   // The turn log holds the chip as the prompt it becomes (a load mid-turn shows it again).
@@ -1270,6 +1333,7 @@ async function doSend(cx, key, { text, attachments = [] } = {}) {
   if (route.route === "model") return doSetModel(cx, key, route.model);
   const b = await ready(cx, key);
   if (b.error) return b;
+  if (!scopeActive(b.client.scope)) return { error: "disconnected" };
   const chat = S.sessions[key];
   const running = isRunning(chat);
   let kind;
@@ -1314,6 +1378,7 @@ async function goNow(cx, key) {
   if (!queueHead(S.sessions[key])) return { ok: true };
   const b = await ready(cx, key);
   if (b.error) return b;
+  if (!scopeActive(b.client.scope)) return { error: "disconnected" };
   flushQueue(cx, key);
   return { ok: true };
 }
@@ -1336,7 +1401,7 @@ async function doStop(cx, key) {
   if (!chat) return { error: "not-found" };
   if (!Object.keys(chat.inflight).length) return { ok: true };
   if (chat.queue.length) apply(cx, key, { type: "queue-paused" });
-  const client = clients.get(chat.profile);
+  const client = activeClient(chat.profile);
   if (!client?.open) return { error: "disconnected" };
   const r = await client.send(cx, wire.sessionCancel(chat.sessionId));
   return r.error ? r : { ok: true };
@@ -1347,7 +1412,7 @@ const answering = new Map(); // `${key} ${requestId}` → the answer being sent 
 /** An approval's answer, by option id (D29). Past its deadline (K5 rule 4) it is refused with `too-late`. One answer
  *  per request: a second click while the first is being sent gets the first's result and sends nothing. */
 function doAnswer(cx, key, requestId, optionId) {
-  const id = `${key} ${String(requestId)}`;
+  const id = `${folderGeneration} ${key} ${String(requestId)}`;
   if (answering.has(id)) return answering.get(id);
   const p = sendAnswer(cx, key, requestId, optionId);
   answering.set(id, p);
@@ -1366,9 +1431,10 @@ async function sendAnswer(cx, key, requestId, optionId) {
     apply(cx, key, { type: "tick" }, { type: "permission-answered", requestId, optionId });
     return can;
   }
-  const client = clients.get(chat.profile);
+  const client = activeClient(chat.profile);
   if (!client?.open) return { error: "disconnected" };
   const r = await client.send(cx, wire.permissionSelected(can.permission.requestId, optionId));
+  if (!scopeActive(client.scope)) return { error: "disconnected" };
   if (r.error) return r;
   apply(cx, key, { type: "permission-answered", requestId, optionId });
   return { ok: true };
@@ -1385,7 +1451,9 @@ async function doSetModel(cx, key, modelId) {
   }
   const b = await ready(cx, key);
   if (b.error) return b;
+  if (!scopeActive(b.client.scope)) return { error: "disconnected" };
   const r = await b.client.request(cx, wire.METHOD.sessionSetModel, { sessionId: chat.sessionId, modelId }, { timeoutMs: NEW_MS });
+  if (!scopeActive(b.client.scope)) return { error: "disconnected" };
   if (r.error) return r;
   apply(cx, key, { type: "model-set", modelId });
   return { ok: true };
@@ -1405,11 +1473,11 @@ async function doRetry(cx, profile) {
   if (S.gate !== "ok") return recheck(cx);
   const old = clients.get(profile);
   if (old) {
-    clients.delete(profile);
     old.close();
   }
   const r = await ensureBridge(cx, profile);
   if (r.error) return r;
+  if (!scopeActive(r.client.scope)) return { error: "disconnected" };
   const key = selectedKey();
   if (key && parseKey(key)?.profile === profile && S.sessions[key]) await reload(cx, key);
   refreshList(cx, profile);
@@ -1443,7 +1511,7 @@ function tick(cx, n) {
   if (shown && n % FILES_EVERY === 0) refreshFiles(cx);
   if (shown && n % LIST_EVERY === 0 && S.gate === "ok") refreshList(cx);
   const folder = settingsFolder();
-  if (folder !== S.folder && !switching && !opening) {
+  if (folder !== S.folder && !switching) {
     if (shown) open(cx);
     else switchFolder(cx, folder).then(undefined, () => {});
   }
@@ -1484,14 +1552,12 @@ export function start(cx) {
         // The folder comes from settings.json, read once per source version.
         await store.loadSettings();
         if (service !== me) return;
-        if (!switching && S.folder !== settingsFolder()) {
-          folderGeneration++;
-          S.folder = settingsFolder();
-        }
+        if (switching || S.folder !== settingsFolder()) await switchFolder(tcx, settingsFolder());
+        if (service !== me) return;
         await reconnectAll(tcx);
         if (service !== me) return;
         for (const profile of new Set(Object.values(S.sessions).map((c) => c.profile))) {
-          if (!clients.get(profile)?.open && chatsOf(profile).some((c) => isRunning(c) || Object.keys(c.inflight).length)) failChats(tcx, profile, "disconnected");
+          if (!activeClient(profile) && chatsOf(profile).some((c) => isRunning(c) || Object.keys(c.inflight).length)) failChats(tcx, profile, "disconnected");
         }
       } catch (e) {
         log(`reconnect failed: ${errText(e)}`);
@@ -1518,6 +1584,7 @@ export function stop() {
   if (!service) return;
   service.stopped = true;
   service = null;
+  folderGeneration++;
   for (const client of clients.values()) {
     if (Number.isInteger(client.seq)) resume.set(client.profile, { pid: client.pid, seq: client.seq });
     client.close();
@@ -1534,8 +1601,11 @@ export function stop() {
 /** A view's call runs in a task no view owns: it finishes even when the asking copy closes meanwhile. */
 const act =
   (fn) =>
-  (cx, ...args) =>
-    checking() ? Promise.resolve({ error: "disconnected" }) : owned(cx, (tcx) => fn(tcx, ...args));
+  (cx, ...args) => {
+    if (checking()) return Promise.resolve({ error: "disconnected" });
+    const scope = folderScope();
+    return owned(cx, (tcx) => scopeActive(scope) ? fn(tcx, ...args) : { error: "disconnected" });
+  };
 
 export const select = act(doSelect);
 export const newSession = act(doNewSession);
