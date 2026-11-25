@@ -96,7 +96,8 @@ const host = `data:text/javascript,${encodeURIComponent(`
       return { code: 0, stdout: JSON.stringify({ current: state.discovery ?? null, legacy: state.legacy ?? null }) };
     }
     if (command === '/bin/ps' && args[0] === '-p') {
-      let status = state.commands.has(Number(args[1])) ? 'present' : 'gone';
+      const pid = Number(args[1]);
+      let status = state.pidStates?.get(pid) ?? (state.commands.has(pid) ? 'present' : 'gone');
       if (state.shutdownRequested && Number(args[1]) === state.oldPid) {
         status = state.exitState ?? status;
         if (state.replaceOnExit) state.discovery = state.replaceOnExit;
@@ -444,13 +445,14 @@ test('a replaced subscriber relinquishes shutdown authority; its successor keeps
   assert.deepEqual(Object.keys(successor.session(chat.key).inflight), active);
   const [oldClient, newClient] = host.clients;
   oldClient.close();
+  const requests = host.requests.slice();
   await oldClient.callbacks.onEnd({ reason: 'replaced' }, cx);
+  assert.deepEqual(host.requests, requests, 'replacement settles locally without sending a cancel');
   assert.equal(former.snapshot().bridges.default.state, 'off');
   assert.deepEqual(Object.keys(former.session(chat.key).inflight), []);
   assert.equal(former.session(chat.key).stale, true);
   assert.equal(former.session(chat.key).lastError?.message, 'disconnected');
   assert.deepEqual(Object.keys(successor.session(chat.key).inflight), active);
-  const requests = host.requests.slice();
   host.replacement = null;
   host.address = 't-lock-refusal';
   host.finished = [{ state: 'finished', address: host.address, reason: 'exited' }];
@@ -491,6 +493,58 @@ test('opening again with a relinquished live discovery returns disconnected and 
   assert.deepEqual(host.hc, []);
   assert.deepEqual(host.requests, []);
   assert.equal(host.discovery, discovery);
+});
+
+test('an absent discovery does not release the old folder until the PID is confirmed gone', async () => {
+  const host = defaultFixture();
+  host.oldToken = null;
+  const former = await import('../mods/lazuli/sys/assistant.js?released-absent');
+  assert.deepEqual(await former.open(cx), { ok: true });
+  const old = host.clients[0];
+  old.close();
+  await old.callbacks.onEnd({ reason: 'replaced' }, cx);
+  host.discovery = null;
+  host.pidStates = new Map();
+
+  for (const state of ['present', 'unknown']) {
+    host.pidStates.set(old.pid, state);
+    host.steps.length = 0;
+    assert.deepEqual(await former.open(cx), { error: 'disconnected' });
+    assert.deepEqual(former.snapshot().bridges.default, { state: 'off' });
+    assert.deepEqual(host.steps, [['probe', state]]);
+    assert.deepEqual(host.hc, []);
+    assert.deepEqual(host.requests, []);
+    assert.equal(host.discovery, null);
+  }
+
+  host.pidStates.set(old.pid, 'gone');
+  host.steps.length = 0;
+  assert.deepEqual(await former.open(cx), { ok: true });
+  assert.deepEqual(former.snapshot().bridges.default, { state: 'ready' });
+  assert.deepEqual(host.steps, [['probe', 'gone'], ['launch'], ['attach', host.replacement.token]]);
+  assert.deepEqual(host.hc.map(([op]) => op), ['run']);
+});
+
+test('a released PID does not veto opening another folder or lose its guard after that open', async () => {
+  const host = defaultFixture();
+  host.oldToken = null;
+  const former = await import('../mods/lazuli/sys/assistant.js?released-other-folder');
+  assert.deepEqual(await former.open(cx), { ok: true });
+  const old = host.clients[0];
+  old.close();
+  await old.callbacks.onEnd({ reason: 'replaced' }, cx);
+  host.discovery = null;
+  host.steps.length = 0;
+  assert.deepEqual(await former.setFolder(cx, '/other'), { ok: true, path: '/other' });
+  assert.deepEqual(former.snapshot().bridges.default, { state: 'ready' });
+  assert.deepEqual(host.steps, [['launch'], ['attach', host.replacement.token]]);
+
+  host.unlinkEarly = true;
+  host.steps.length = 0;
+  await former.setFolder(cx, '/project');
+  assert.deepEqual(former.snapshot().bridges.default, { state: 'off' });
+  assert.deepEqual(host.steps, [['shutdown', host.replacement.token], ['probe', 'gone'], ['probe', 'present']]);
+  assert.equal(host.discovery, null);
 });
 
 test('a late replaced callback does not remove a newer client for the same profile', async () => {

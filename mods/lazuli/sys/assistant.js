@@ -99,7 +99,8 @@ let hermesBin = null; // the hermes program this start checked or looked up (nev
 const clients = new Map(); // profile → last scoped AcpClient (also retained during stream recovery for shutdown)
 const launches = new Map(); // profile → {promise, launch}: the connect (or reopen) in flight, and whether it may launch
 const pendingStops = new Map(); // profile → discovery whose shutdown is unconfirmed (older bridges may unlink early)
-const releasedStreams = new Map(); // profile → token relinquished to a successor subscriber
+const releasedStreams = new Map(); // profile/folder → { token, pid } relinquished to a successor
+const releaseKey = (profile, folder) => `${profile}/${folder}`;
 const loads = new Map(); // key → Promise of a session/load
 const promptKeys = new Map(); // request id → {key, kind, resync}
 const listeners = new Set();
@@ -496,7 +497,7 @@ async function onEnd(cx, profile, client, why) {
   log(`${profile} stream ended: ${why.reason}${why.bye ? ` (bye ${why.bye})` : ""}${why.detail ? `: ${why.detail}` : ""}`);
   if (why.reason === "replaced") {
     clients.delete(profile); // clientCurrent above makes this identity-scoped
-    releasedStreams.set(profile, client.d.token);
+    releasedStreams.set(releaseKey(profile, client.d.cwd), { token: client.d.token, pid: client.pid });
     if (pendingStops.get(profile)?.token === client.d.token) pendingStops.delete(profile);
     setBridge(cx, profile, { state: "off" });
     failChats(cx, profile, "disconnected");
@@ -656,6 +657,17 @@ async function connectBridge(cx, profile, scope, launch) {
   const argv = await expectedArgv(profile);
   const found = await bridge.readDiscovery(profile);
   if (!valid()) return { error: "disconnected" };
+  const key = releaseKey(profile, folder);
+  const released = releasedStreams.get(key);
+  if (released) {
+    const state = await bridge.pidState(released.pid);
+    if (!valid()) return { error: "disconnected" };
+    if (state !== "gone" || releasedStreams.get(key) !== released) {
+      setBridge(cx, profile, { state: "off" });
+      return { error: "disconnected" };
+    }
+    releasedStreams.delete(key);
+  }
   if (found.state === "unreadable" || found.state === "invalid") {
     const r = { error: "disconnected", detail: "Bridge discovery could not be read safely" };
     if (launch) setBridge(cx, profile, { state: "error", ...r });
@@ -664,13 +676,10 @@ async function connectBridge(cx, profile, scope, launch) {
   const pending = pendingStops.get(profile);
   const d = found.state === "absent" && pending ? pending : found;
   const ours = d.state === "ready" && d.profile === profile && d.cwd === folder && d.herdrPid === pid;
-  const released = ours && releasedStreams.get(profile) === d.token;
-  if (ours && (released || argv) && (await bridge.pidState(d.pid)) !== "gone") {
+  // Even if the released PID has since been reused, don't reconnect to its old discovery snapshot.
+  if (ours && argv && released?.token !== d.token && (await bridge.pidState(d.pid)) !== "gone") {
     if (!valid()) return { error: "disconnected" };
-    if (releasedStreams.get(profile) === d.token) {
-      setBridge(cx, profile, { state: "off" });
-      return { error: "disconnected" };
-    }
+    if (releasedStreams.get(key)?.token === d.token) return { error: "disconnected" };
     if (wire.discoveryMatches(d, { profile, cwd: folder, herdrPid: pid, argv })) {
       const from = resume.get(profile);
       const r = await attach(cx, profile, d, scope, from?.pid === d.pid ? from.seq : null);
@@ -680,7 +689,7 @@ async function connectBridge(cx, profile, scope, launch) {
         log(`reusing the ${profile} bridge pid ${d.pid}`);
         return r;
       }
-      if (releasedStreams.get(profile) === d.token) return { error: "disconnected" };
+      if (releasedStreams.get(key)?.token === d.token) return { error: "disconnected" };
       if (r.error === "auth") {
         if (launch) setBridge(cx, profile, { state: "error", error: "auth" });
         return r;
@@ -728,7 +737,6 @@ async function connectBridge(cx, profile, scope, launch) {
     return { error: L.error, detail: L.detail ?? null };
   }
   pendingStops.delete(profile);
-  releasedStreams.delete(profile);
   const r = await attach(cx, profile, L.discovery, scope);
   if (!valid()) {
     await bridge.cancelLaunch(L.address);

@@ -892,7 +892,8 @@ Every reply ends its connection, and the bridge destroys it 1 s later (no half-o
   A delayed `hello` cannot replace the active client; recovery preserves an identity mismatch as `auth`. A
   `replaced` subscriber relinquishes shutdown authority, settles its in-flight turns locally as disconnected,
   and marks its transcripts stale without sending anything to the bridge. Opening again while that instance
-  may still be alive returns `disconnected` with the bridge state `off`. An approval gets one answer
+  may still be alive returns `disconnected` with the bridge state `off`, even if discovery is absent. Only confirmed
+  PID absence clears this veto for that profile and folder; the remembered PID never authorizes a signal. An approval gets one answer
   per request id in that folder generation (a second click during the send shares the first's
   result). The folder's files are never walked twice at once.
 - `sys/assistant-bridge.js`: `runtimeDir()`, `nodePath()`, `hermesPath()`, `hermesLooked()`, `folderExists(path)`,
