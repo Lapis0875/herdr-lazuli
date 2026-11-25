@@ -133,10 +133,10 @@ export async function pidAlive(pid) {
 }
 
 /** Read-only liveness: an explicit no-match from ps establishes absence, a failed lookup does not. */
-export async function pidState(pid) {
+export async function pidState(pid, timeout = 5000) {
   if (!Number.isInteger(pid) || pid <= 0) return "unknown";
   try {
-    const r = await exec("/bin/ps", ["-p", String(pid), "-o", "pid="], { timeout: 5000 });
+    const r = await exec("/bin/ps", ["-p", String(pid), "-o", "pid="], { timeout });
     if (r.code === 0 && r.stdout.trim() === String(pid)) return "present";
     if (r.code === 1 && r.stdout.trim() === "" && r.stderr.trim() === "") return "gone";
   } catch {}
@@ -283,6 +283,18 @@ export async function awaitExit(cx, profile, pid) {
 
 /** A failed start's code (discovery `error.code`) → the service's error (K4). */
 const START_ERROR = Object.freeze({ "agent-exit": "agent-exit", "init-failed": "bridge-launch-failed", "init-timeout": "bridge-timeout" });
+const LAUNCH_EXPIRED = Symbol("launch deadline");
+
+function terminalAddress(stdout) {
+  let address = null;
+  for (const line of stdout.split("\n")) {
+    try {
+      const value = JSON.parse(line);
+      if (isObj(value) && typeof value.address === "string") address = value.address;
+    } catch {}
+  }
+  return address;
+}
 
 /** Stop only a terminal returned by this launch, never one found by profile or PID. */
 export async function cancelLaunch(address) {
@@ -298,80 +310,95 @@ export async function cancelLaunch(address) {
  */
 export async function launch(cx, { profile, folder, herdrPid: pid, argv, snapshot, valid }) {
   if (!valid()) return { error: "disconnected" };
-  const node = await nodePath();
-  if (!node) return { error: "bridge-launch-failed", detail: "node not found" };
-  // Legacy binaries cannot touch the versioned path. Do not overlap a known or ambiguous legacy bridge,
-  // including one still initializing before it has written its unversioned discovery.
-  const old = snapshot.legacyRecord;
-  if (!old || old.state === "invalid" || (old.state !== "absent" && (await pidState(old.pid)) !== "gone")) {
-    return { error: "bridge-timeout", detail: "The legacy bridge could not be confirmed stopped" };
-  }
-  const live = terminals();
-  if (!Array.isArray(live) || live.some(labelled(profile, LEGACY_LABEL))) {
-    return { error: "bridge-timeout", detail: "A legacy bridge may still be running" };
-  }
-  const p = bridgePaths(profile);
-  const launchId = randomBytes(16).toString("hex");
   const at = Date.now();
+  const remaining = () => Math.max(0, at + LAUNCH_WAIT_MS - Date.now());
+  let expired = false;
   let address = null;
+  const deadline = cx.sleep(LAUNCH_WAIT_MS).then(() => LAUNCH_EXPIRED);
+  const bounded = async (operation) => {
+    const ms = remaining();
+    if (expired || ms === 0) throw LAUNCH_EXPIRED;
+    const result = await Promise.race([operation(ms), deadline]);
+    if (result === LAUNCH_EXPIRED || remaining() === 0) throw LAUNCH_EXPIRED;
+    return result;
+  };
+  let cleaning;
+  const cleanup = () => {
+    if (address && !cleaning) cleaning = cancelLaunch(address);
+    return cleaning;
+  };
   const cancelled = async () => {
-    await cancelLaunch(address);
+    await bounded(cleanup);
     return { error: "disconnected" };
   };
   try {
+    const node = await bounded(() => nodePath());
+    if (!node) return { error: "bridge-launch-failed", detail: "node not found" };
+    // A legacy writer cannot touch v2, but don't start another agent while it may still be running.
+    const old = snapshot.legacyRecord;
+    if (!old || old.state === "invalid"
+        || (old.state !== "absent" && await bounded((ms) => pidState(old.pid, Math.min(ms, 5000))) !== "gone")) {
+      return { error: "bridge-timeout", detail: "The legacy bridge could not be confirmed stopped" };
+    }
+    const live = terminals();
+    if (!Array.isArray(live) || live.some(labelled(profile, LEGACY_LABEL))) {
+      return { error: "bridge-timeout", detail: "A legacy bridge may still be running" };
+    }
+    const p = bridgePaths(profile);
+    const launchId = randomBytes(16).toString("hex");
     if (!valid()) return { error: "disconnected" };
-    const r = await hc([
+    const r = await bounded(() => hc([
       "run", "--bg", "--json", "--no-parent", "--no-notify", "--cwd", folder, "--label", `${LABEL}=${profile}`, "--",
       node, bridgeScript(), "--profile", profile, "--cwd", folder, "--discovery", p.discovery, "--log", p.log,
       "--herdr-pid", String(pid), "--idle-min", String(wire.IDLE_MIN), "--launch-id", launchId,
       "--previous", snapshot.previous, "--legacy", p.legacy, "--legacy-previous", snapshot.legacyPrevious, "--agent", "--", ...argv,
-    ]);
-    for (const line of r.stdout.split("\n")) {
-      try {
-        const v = JSON.parse(line);
-        if (isObj(v) && typeof v.address === "string") address = v.address;
-      } catch {
-        // Not the JSON line.
-      }
-    }
-    if (!valid()) return cancelled();
+    ]).then((reply) => {
+      address = terminalAddress(reply.stdout);
+      if (expired) void cleanup();
+      return reply;
+    }));
+    if (!valid()) return await cancelled();
     if (r.code !== 0) return { error: "bridge-launch-failed", detail: (r.stderr || r.stdout).trim() };
-  } catch (e) {
-    return { error: "bridge-launch-failed", detail: errText(e) };
-  }
-  log(`launched the ${profile} bridge as terminal ${address ?? "?"} in ${folder}`);
-  // A lock loser can finish before appearing in Herdr's live snapshot. Only the exact finished
-  // receipt proves exit; missing rows and listing failures do not.
-  let nextListing = 0;
-  for (let waited = 0; waited < LAUNCH_WAIT_MS; waited += POLL_MS) {
-    await cx.sleep(POLL_MS);
-    if (!valid()) return cancelled();
-    const text = await readTextFile(p.discovery).catch(() => null);
-    if (!valid()) return cancelled();
-    const d = typeof text === "string" ? wire.parseDiscovery(text) : { state: "unreadable" };
-    const mine = d.launchId === launchId;
-    if (d.state === "ready" && mine && wire.discoveryMatches(d, { profile, cwd: folder, herdrPid: pid, argv })) {
-      log(`${profile} bridge pid ${d.pid} ready on port ${d.port} after ${Date.now() - at} ms`);
-      return { discovery: d, address };
-    }
-    const listed = address ? (terminals() ?? []).find((t) => t?.address === address) : null;
-    let finished = listed?.state === "finished" ? listed : null;
-    if (!listed && address && waited >= nextListing) {
-      nextListing = waited + 1000;
-      const inventory = await listBridgeTerminals(profile);
-      if (!valid()) return cancelled();
-      finished = inventory?.find((t) => t.address === address && t.state === "finished") ?? null;
-    }
-    if (finished || (d.state === "failed" && mine && (await pidState(d.pid)) === "gone")) {
-      if (!valid()) return cancelled();
-      if (address) await hcQuiet(["rm", address]);
-      if (d.state === "failed" && mine) {
-        log(`${profile} bridge failed to start: ${d.code} ${d.detail}`);
-        return { error: START_ERROR[d.code] ?? "bridge-launch-failed", detail: d.detail };
+    log(`launched the ${profile} bridge as terminal ${address ?? "?"} in ${folder}`);
+    // Lock losers may not appear in the live list. Only an exact finished row proves exit.
+    let nextListing = 0;
+    for (;;) {
+      await bounded((ms) => cx.sleep(Math.min(POLL_MS, ms)));
+      if (!valid()) return await cancelled();
+      const text = await bounded(() => readTextFile(p.discovery).catch(() => null));
+      if (!valid()) return await cancelled();
+      const d = typeof text === "string" ? wire.parseDiscovery(text) : { state: "unreadable" };
+      const mine = d.launchId === launchId;
+      if (d.state === "ready" && mine && wire.discoveryMatches(d, { profile, cwd: folder, herdrPid: pid, argv })) {
+        log(`${profile} bridge pid ${d.pid} ready on port ${d.port} after ${Date.now() - at} ms`);
+        return { discovery: d, address };
       }
-      return { error: "bridge-launch-failed", detail: `the bridge ended (${finished.reason ?? finished.state})` };
+      const listed = address ? (terminals() ?? []).find((t) => t?.address === address) : null;
+      let finished = listed?.state === "finished" ? listed : null;
+      if (!listed && address && Date.now() >= nextListing) {
+        const inventory = await bounded(() => listBridgeTerminals(profile));
+        if (!valid()) return await cancelled();
+        nextListing = Date.now() + 1000;
+        finished = inventory?.find((t) => t.address === address && t.state === "finished") ?? null;
+      }
+      if (finished || (d.state === "failed" && mine && await bounded((ms) => pidState(d.pid, Math.min(ms, 5000))) === "gone")) {
+        if (!valid()) return await cancelled();
+        if (address) {
+          const finishedAddress = address;
+          address = null;
+          await bounded(() => hcQuiet(["rm", finishedAddress]));
+        }
+        if (d.state === "failed" && mine) {
+          log(`${profile} bridge failed to start: ${d.code} ${d.detail}`);
+          return { error: START_ERROR[d.code] ?? "bridge-launch-failed", detail: d.detail };
+        }
+        return { error: "bridge-launch-failed", detail: `the bridge ended (${finished.reason ?? finished.state})` };
+      }
     }
+  } catch (e) {
+    if (e !== LAUNCH_EXPIRED) return { error: "bridge-launch-failed", detail: errText(e) };
+    expired = true;
+    void cleanup();
+    return valid() ? { error: "bridge-timeout", detail: `bridge did not start in ${LAUNCH_WAIT_MS / 1000} s` } : { error: "disconnected" };
   }
-  await cancelLaunch(address);
-  return { error: "bridge-timeout", detail: `no discovery file in ${LAUNCH_WAIT_MS / 1000} s` };
 }

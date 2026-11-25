@@ -11,7 +11,7 @@
 //                                         `again` = the user item only (a running turn applied again after a load)
 //   prompt-done {requestId, stopReason, usage}      prompt-failed {requestId, error}
 //   queued {text, chipId?}  unqueued {chipId}  queue-paused  queue-resumed  queue-flush {requestId, chipId?}
-//   load-start  loaded {models, modes}  model-set {modelId}  stats {stats}  gap  disconnected  tick
+//   load-start  load-aborted  loaded {models, modes}  model-set {modelId}  stats {stats}  gap  disconnected  tick
 //   agent-error {text}                    an error line the agent wrote to stderr (the bridge's `agent-error`)
 //   notice {code, vars?}                  a notice of the service's own (e.g. `busy`)
 //
@@ -563,6 +563,8 @@ export function reduce(state, event, now) {
       for (const [k, p] of Object.entries(state.permissions)) if (p.state === "pending") permissions[k] = { ...p, after: null };
       return { ...state, items: [], plan: null, loaded: false, loading: true, dropped: 0, permissions };
     }
+    case "load-aborted":
+      return { ...state, loading: false, stale: true, items: settle(state.items) };
     case "loaded":
       return {
         ...state,

@@ -769,7 +769,7 @@ Events: `update {update}` (agent and thought chunks, user chunks on replay, `too
 kind: prompt|steer|command, text?, attachments?, via?, again?}` (`again`: only the user item, for a running turn
 applied again after its history loaded), `prompt-done {requestId, stopReason, usage}`, `prompt-failed {requestId,
 error}`, `queued {text}`, `unqueued {chipId}`, `queue-paused`, `queue-resumed`, `queue-flush {requestId, chipId?}`,
-`load-start`, `loaded {models, modes}`, `model-set {modelId}`, `stats {stats}`, `gap`, `disconnected`, `tick`,
+`load-start`, `load-aborted`, `loaded {models, modes}`, `model-set {modelId}`, `stats {stats}`, `gap`, `disconnected`, `tick`,
 `agent-error {text}` (the bridge's record), `notice {code, vars?}`. Notice codes (catalog `assistant.event.<code>`):
 `steer-ack`, `steer-queued`, `steer-failed`, `cancelled`, `stopped`, `failed`, `too-late`, `dropped`, `model-set`, `gap`,
 `busy`.
@@ -789,6 +789,7 @@ Rules, one test each (`tests/assistant-chat.test.mjs`):
 6. Running = any in-flight request not yet acknowledged; `queueHead` is the first chip once nothing is in flight and the
    queue is not paused.
 7. `load-start` clears the items and the plan (open approval cards stay); items are `replayed` until `loaded`.
+   `load-aborted` leaves the chat stale and clears `loading` without marking a partial history as loaded.
 8. `gap` and `disconnected` set `stale` and end streaming.
 9. At most 2,000 items (the oldest dropped behind one `dropped` notice), 400,000 characters a message, 20,000 a tool
    text; diffs are kept whole.
@@ -888,7 +889,8 @@ Every reply ends its connection, and the bridge destroys it 1 s later (no half-o
   missing `hello` or an argv change requires authenticated shutdown and confirmed exit (or confirmed prior exit).
   When exit is uncertain, keep discovery and return retryable `bridge-timeout` without launching. Reuse-only never
   shuts down a bridge. Attach, recovery, callbacks and `open(cx)` are scoped to the current folder generation.
-  A delayed `hello` cannot replace the active client; an identity mismatch is `auth`. An approval gets one answer
+  A delayed `hello` cannot replace the active client; recovery preserves an identity mismatch as `auth`. A
+  `replaced` subscriber relinquishes shutdown authority. An approval gets one answer
   per request id in that folder generation (a second click during the send shares the first's
   result). The folder's files are never walked twice at once.
 - `sys/assistant-bridge.js`: `runtimeDir()`, `nodePath()`, `hermesPath()`, `hermesLooked()`, `folderExists(path)`,
@@ -903,9 +905,10 @@ Every reply ends its connection, and the bridge destroys it 1 s later (no half-o
   `launch(cx, {profile, folder, herdrPid, argv, snapshot, valid})` → `{discovery, address}` for its own publication,
   or `{error, detail}`. `valid` identifies the folder generation and is checked immediately before `hc run`
   and again after awaits; `cancelLaunch(address)` uses only the address returned by that `hc run`. The manager
-  never removes discovery. A fast launch failure is confirmed by an exact finished terminal receipt; a missing
-  live terminal or a failed listing alone cannot confirm exit. The bridge takes a stable exclusive lock before starting the agent and, while holding
-  it, replaces only a matching or absent current file and removes only its own ready publication. Unknown reads
+  never removes discovery. The elapsed 45-second budget includes host calls; a late `hc run` receipt is
+  cleanup-only. A fast launch failure is confirmed by an exact finished terminal receipt; a missing live terminal
+  or a failed listing alone cannot confirm exit. The bridge takes a stable exclusive lock before starting the agent
+  and, while holding it, replaces only a matching or absent current file and removes only its own ready publication. Unknown reads
   or reservation failures do not permit launch. Only the bridge signals its agent group, and not after its child
   exits. Callers check `checking()` first. See ARCHITECTURE §13 for legacy migration assumptions.
 - `sys/assistant-sessions.js` (takes `run(command, args, options)`, so tests run it on real sqlite3 files):

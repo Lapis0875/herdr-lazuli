@@ -99,6 +99,7 @@ let hermesBin = null; // the hermes program this start checked or looked up (nev
 const clients = new Map(); // profile → last scoped AcpClient (also retained during stream recovery for shutdown)
 const launches = new Map(); // profile → {promise, launch}: the connect (or reopen) in flight, and whether it may launch
 const pendingStops = new Map(); // profile → discovery whose shutdown is unconfirmed (older bridges may unlink early)
+const releasedStreams = new Map(); // profile → token relinquished to a successor subscriber
 const loads = new Map(); // key → Promise of a session/load
 const promptKeys = new Map(); // request id → {key, kind, resync}
 const listeners = new Set();
@@ -494,6 +495,9 @@ async function onEnd(cx, profile, client, why) {
   if (Number.isInteger(client.seq)) resume.set(profile, { pid: client.pid, seq: client.seq });
   log(`${profile} stream ended: ${why.reason}${why.bye ? ` (bye ${why.bye})` : ""}${why.detail ? `: ${why.detail}` : ""}`);
   if (why.reason === "replaced") {
+    clients.delete(profile); // clientCurrent above makes this identity-scoped
+    releasedStreams.set(profile, client.d.token);
+    if (pendingStops.get(profile)?.token === client.d.token) pendingStops.delete(profile);
     setBridge(cx, profile, { state: "off" });
     return;
   }
@@ -502,6 +506,7 @@ async function onEnd(cx, profile, client, why) {
     await reopenStream(cx, profile, client, why.reason);
     return;
   }
+  clients.delete(profile);
   const code = crashed ? "agent-exit" : "disconnected";
   failChats(cx, profile, code);
   const quiet = why.bye === "idle" || why.bye === "shutdown";
@@ -602,6 +607,11 @@ async function attach(cx, profile, d, scope, since = null) {
   if (!scopeActive(scope)) return { error: "disconnected" };
   if (mismatch) return { error: "auth" };
   if (!current()) return { error: "disconnected" };
+  if (h.error === "auth") {
+    clients.delete(profile);
+    client.close();
+    return h;
+  }
   return h.error ? h : accepted && client.open ? { ok: true, client } : { error: "disconnected" };
 }
 
@@ -655,6 +665,7 @@ async function connectBridge(cx, profile, scope, launch) {
   const ours = d.state === "ready" && d.profile === profile && d.cwd === folder && d.herdrPid === pid;
   if (ours && argv && (await bridge.pidState(d.pid)) !== "gone") {
     if (!valid()) return { error: "disconnected" };
+    if (releasedStreams.get(profile) === d.token) return { error: "disconnected" };
     if (wire.discoveryMatches(d, { profile, cwd: folder, herdrPid: pid, argv })) {
       const from = resume.get(profile);
       const r = await attach(cx, profile, d, scope, from?.pid === d.pid ? from.seq : null);
@@ -664,6 +675,7 @@ async function connectBridge(cx, profile, scope, launch) {
         log(`reusing the ${profile} bridge pid ${d.pid}`);
         return r;
       }
+      if (releasedStreams.get(profile) === d.token) return { error: "disconnected" };
       if (r.error === "auth") {
         if (launch) setBridge(cx, profile, { state: "error", error: "auth" });
         return r;
@@ -711,6 +723,7 @@ async function connectBridge(cx, profile, scope, launch) {
     return { error: L.error, detail: L.detail ?? null };
   }
   pendingStops.delete(profile);
+  releasedStreams.delete(profile);
   const r = await attach(cx, profile, L.discovery, scope);
   if (!valid()) {
     await bridge.cancelLaunch(L.address);
@@ -775,8 +788,8 @@ function reopenStream(cx, profile, client, why) {
     const r = await attach(tcx, profile, client.d, scope, client.seq);
     if (r.error && scopeActive(scope)) {
       log(`${profile}: the stream did not reopen (${r.error})`);
-      failChats(tcx, profile, "disconnected");
-      setBridge(tcx, profile, { state: "error", error: "disconnected" });
+      failChats(tcx, profile, r.error);
+      setBridge(tcx, profile, { state: "error", error: r.error });
     }
     return r;
   });
@@ -1585,6 +1598,10 @@ export function stop() {
   service.stopped = true;
   service = null;
   folderGeneration++;
+  loadingKeys.clear();
+  endedInLoad.clear();
+  for (const key of loads.keys()) apply(null, key, { type: "load-aborted" });
+  loads.clear();
   for (const client of clients.values()) {
     if (Number.isInteger(client.seq)) resume.set(client.profile, { pid: client.pid, seq: client.seq });
     client.close();

@@ -19,6 +19,8 @@ const host = `data:text/javascript,${encodeURIComponent(`
   export const t = key => key;
   export const settings = () => state.settings;
   export const updateSettings = async fn => { state.settings = fn(state.settings); };
+  export const loadSettings = async () => {};
+  export const profileSessions = async () => ({ rows: [] });
   export const shortFolder = async (run, path) => path;
   export const debugLog = () => {};
   export const set = () => {};
@@ -51,6 +53,7 @@ const host = `data:text/javascript,${encodeURIComponent(`
     nextId() { return this.d.token.slice(0, 1) + ':' + (++state.id); }
     async request(cx, method, params) {
       state.requests.push([this.d.cwd, this.d.token, method, params]);
+      if (method === 'session/load' && state.loadReplies?.length) return state.loadReplies.shift()();
       return { ok: true, result: { sessionId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', models: {} } };
     }
     async send(cx, msg) {
@@ -68,6 +71,7 @@ const host = `data:text/javascript,${encodeURIComponent(`
     state.hc.push(args);
     if (args[0] === 'ls') {
       if (state.pauseReap) { const pause = state.pauseReap; state.pauseReap = null; await pause(); }
+      if (state.pauseListing) await state.pauseListing();
       if (state.listingReplies?.length) return state.listingReplies.shift();
       return { code: 0, stdout: JSON.stringify([...state.live.filter(t => t.labels?.[args.at(-1).split('=')[0]]), ...state.finished]) };
     }
@@ -101,6 +105,7 @@ const host = `data:text/javascript,${encodeURIComponent(`
       if (status === 'present') return { code: 0, stdout: args[1], stderr: '' };
       return { code: 1, stdout: '', stderr: status === 'unknown' ? 'lookup failed' : '' };
     }
+    if (command === '/bin/ls') return { code: 0, stdout: state.discovered ?? '' };
     if (command === '/bin/ps') return { code: 0, stdout: state.commands.get(Number(args.at(-1))) ?? '' };
     if (command === '/bin/kill' && args[0] === '-0') return { code: state.commands.has(Number(args[1])) ? 0 : 1 };
     if (command === '/bin/sh' && args[2] === 'lazuli-lookup') {
@@ -148,7 +153,7 @@ test('retirement does not inspect or signal a different bridge with the real lau
   const host = fixture();
   host.replacement = { ...ready, pid: 101, agentPid: 102 };
   host.steps = [];
-  const launched = await bridge.launch({ sleep: async () => {} }, {
+  const launched = await bridge.launch(cx, {
     profile, folder: ready.cwd, herdrPid: ready.herdrPid, argv, snapshot: await bridge.readDiscovery(profile), valid: () => true,
   });
   assert.equal(launched.address, 't-live');
@@ -187,7 +192,7 @@ test('a legacy record and a recycled bridge PID do not authorize terminal kill',
 });
 
 const cx = {
-  sleep: async () => {},
+  sleep: ms => ms === 45000 ? new Promise(() => {}) : Promise.resolve(),
   spawn(fn) { void fn(this); },
 };
 const defaultReady = { ...ready, profile: 'default', argv: ['/usr/bin/hermes', '-p', 'default', 'acp'] };
@@ -362,7 +367,8 @@ for (const returnToA of [false, true]) {
 }
 
 for (const ambiguousFirst of [false, true]) {
-  test(`launch recognizes the exact finished receipt${ambiguousFirst ? ' after ambiguous listings' : ' on the first poll'}`, async () => {
+  test(`launch recognizes the exact finished receipt${ambiguousFirst ? ' after ambiguous listings' : ' on the first poll'}`, async (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: 1000 });
     const host = fixture();
     host.address = 't-finished-own';
     const unrelated = { state: 'finished', address: 't-unrelated', reason: 'killed' };
@@ -371,7 +377,12 @@ for (const ambiguousFirst of [false, true]) {
     host.listingReplies = [...(ambiguousFirst ? [{ code: 1, stdout: '', stderr: 'unavailable' }, listed(unrelated)] : []),
       listed(unrelated, exact)];
     let sleeps = 0;
-    const result = await bridge.launch({ sleep: async () => { sleeps++; } }, {
+    const result = await bridge.launch({ sleep: ms => {
+      if (ms === 45000) return new Promise(() => {});
+      sleeps++;
+      t.mock.timers.tick(ms);
+      return Promise.resolve();
+    } }, {
       profile, folder: ready.cwd, herdrPid: ready.herdrPid, argv, snapshot: await bridge.readDiscovery(profile), valid: () => true,
     });
     assert.deepEqual(result, { error: 'bridge-launch-failed', detail: 'the bridge ended (exited)' });
@@ -413,4 +424,142 @@ test('the real ACP client does not write an ordinary request after its connectio
   assert.equal(closed, 1);
   assert.deepEqual(await client.shutdown(tcx), { ok: true });
   assert.deepEqual(writes.map(piece => JSON.parse(piece)), [{ op: 'shutdown', token: ready.token }]);
+});
+
+test('a replaced subscriber relinquishes shutdown authority; its successor keeps the active turn', async () => {
+  const host = defaultFixture();
+  host.oldToken = null;
+  const former = await import('../mods/lazuli/sys/assistant.js?formerly-owned');
+  const successor = await import('../mods/lazuli/sys/assistant.js?new-subscriber');
+  assert.deepEqual(await former.open(cx), { ok: true });
+  assert.deepEqual(await successor.open(cx), { ok: true });
+  const [oldClient, newClient] = host.clients;
+  oldClient.close();
+  await oldClient.callbacks.onEnd({ reason: 'replaced' }, cx);
+  assert.equal(former.snapshot().bridges.default.state, 'off');
+  const chat = await successor.newSession(cx);
+  assert.equal(chat.ok, true);
+  assert.deepEqual(await successor.send(cx, chat.key, { text: 'successor turn' }), { ok: true });
+  const active = Object.keys(successor.session(chat.key).inflight);
+  assert.equal(active.length, 1);
+  host.replacement = null;
+  host.address = 't-lock-refusal';
+  host.finished = [{ state: 'finished', address: host.address, reason: 'exited' }];
+  await former.setFolder(cx, '/other');
+  assert.ok(host.steps.every(([op]) => op !== 'shutdown'));
+  assert.equal(JSON.parse(host.discovery).token, newClient.d.token);
+  assert.equal(newClient.open, true);
+  assert.deepEqual(Object.keys(successor.session(chat.key).inflight), active);
+  newClient.callbacks.onRecord({ seq: 2, c: { kind: 'result', id: active[0], result: { stopReason: 'end_turn' } } }, cx);
+  assert.deepEqual(Object.keys(successor.session(chat.key).inflight), []);
+});
+
+test('a late replaced callback does not remove a newer client for the same profile', async () => {
+  const host = defaultFixture();
+  host.oldToken = null;
+  const service = await import('../mods/lazuli/sys/assistant.js?late-replaced');
+  assert.deepEqual(await service.open(cx), { ok: true });
+  const old = host.clients[0];
+  assert.deepEqual(await service.retryBridge(cx, 'default'), { ok: true });
+  await old.callbacks.onEnd({ reason: 'replaced' }, cx);
+  assert.equal(service.snapshot().bridges.default.state, 'ready');
+  assert.equal((await service.newSession(cx)).ok, true);
+  assert.equal(host.clients.length, 2, 'the fast path still uses the newer client');
+});
+
+test('recovery preserves auth when hello identifies a different instance', async () => {
+  const host = defaultFixture();
+  host.oldToken = null;
+  const service = await import('../mods/lazuli/sys/assistant.js?recovery-auth');
+  assert.deepEqual(await service.open(cx), { ok: true });
+  const original = host.clients[0];
+  host.helloOverride = { startedAt: 42 };
+  original.close();
+  await original.callbacks.onEnd({ reason: 'lost' }, cx);
+  assert.deepEqual(service.snapshot().bridges.default, { state: 'error', error: 'auth' });
+  assert.equal(host.clients[1].open, false);
+  assert.ok(host.steps.every(([op]) => op !== 'shutdown' && op !== 'launch'));
+});
+
+test('stop retires a pending load; its late completion cannot clear a restarted load', async () => {
+  const host = defaultFixture();
+  host.oldToken = null;
+  const old = barrier(), fresh = barrier();
+  const service = await import('../mods/lazuli/sys/assistant.js?stop-load');
+  const statusCx = { ...cx, sleep: ms => ms === 1000 ? new Promise(() => {}) : cx.sleep(ms) };
+  service.start(statusCx);
+  assert.deepEqual(await service.open(cx), { ok: true });
+  const key = 'default/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  void host.clients[0].callbacks.onRecord({ seq: 2, c: { kind: 'update', sessionId: key.split('/')[1],
+    update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'partial history' } } } }, cx);
+  host.loadReplies = [
+    async () => { await old.pause(); return { ok: true, result: { models: { currentModelId: 'old' } } }; },
+    async () => { await fresh.pause(); return { ok: true, result: { models: { currentModelId: 'new' } } }; },
+  ];
+  const loading = service.select(cx, key);
+  await old.reached;
+  assert.equal(service.session(key).loading, true);
+  service.stop();
+  assert.equal(service.session(key).loading, false);
+  assert.equal(service.session(key).stale, true);
+  service.start(statusCx);
+  assert.deepEqual(await service.open(cx), { ok: true });
+  const reloaded = service.select(cx, key);
+  await fresh.reached;
+  old.leave();
+  assert.deepEqual(await loading, { error: 'disconnected' });
+  assert.equal(service.session(key).loading, true);
+  const sameLoad = service.select(cx, key);
+  fresh.leave();
+  assert.deepEqual(await reloaded, { ok: true });
+  assert.deepEqual(await sameLoad, { ok: true });
+  assert.equal(service.session(key).loading, false);
+  assert.equal(service.session(key).stale, false);
+  assert.equal(service.session(key).models.currentModelId, 'new');
+  assert.equal(host.requests.filter(([, , method]) => method === 'session/load').length, 2);
+  service.stop();
+});
+
+test('a hung finished-terminal listing cannot extend the elapsed launch deadline or spend a late row', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: 0 });
+  const host = fixture();
+  host.address = 't-deadline-own';
+  const listing = barrier(), deadline = barrier();
+  host.pauseListing = listing.pause;
+  host.finished = [{ address: host.address, state: 'finished', reason: 'exited' }];
+  const launch = bridge.launch({ sleep: ms => {
+    if (ms === 45000) return deadline.pause();
+    t.mock.timers.tick(ms);
+    return Promise.resolve();
+  } }, {
+    profile, folder: ready.cwd, herdrPid: ready.herdrPid, argv, snapshot: await bridge.readDiscovery(profile), valid: () => true,
+  });
+  await listing.reached;
+  assert.equal(Date.now(), 100);
+  t.mock.timers.tick(44900);
+  deadline.leave();
+  assert.deepEqual(await launch, { error: 'bridge-timeout', detail: 'bridge did not start in 45 s' });
+  assert.equal(Date.now(), 45000);
+  await new Promise(setImmediate); // receipt cleanup is outside the launch deadline
+  assert.deepEqual(host.hc.filter(([op]) => op === 'kill' || op === 'rm'), [['kill', host.address], ['rm', host.address]]);
+  listing.leave();
+  await new Promise(setImmediate);
+  assert.deepEqual(host.hc.filter(([op]) => op === 'kill' || op === 'rm'), [['kill', host.address], ['rm', host.address]]);
+});
+
+test('an hc run receipt returned after the deadline is the only terminal cleaned up', async () => {
+  const host = fixture();
+  host.address = 't-late-own';
+  const run = barrier(), deadline = barrier();
+  host.pauseRun = run.pause;
+  const launch = bridge.launch({ sleep: () => deadline.pause() }, {
+    profile, folder: ready.cwd, herdrPid: ready.herdrPid, argv, snapshot: await bridge.readDiscovery(profile), valid: () => true,
+  });
+  await run.reached;
+  deadline.leave();
+  assert.equal((await launch).error, 'bridge-timeout');
+  assert.deepEqual(host.hc.map(([op]) => op), ['run']);
+  run.leave();
+  await new Promise(setImmediate);
+  assert.deepEqual(host.hc.slice(1), [['kill', host.address], ['rm', host.address]]);
 });
