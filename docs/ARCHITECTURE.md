@@ -812,7 +812,7 @@ snapshot or `shared.json`.
 | send while idle | `session/prompt` with a `text` block and one `resource_link` (`file://…`) per attachment | |
 | Enter while a turn runs | `session/prompt` with `/steer <text>` | attachments become `@path` text: Hermes drops a running prompt's attachments, and they turn slash handling off |
 | ⌥Enter or ⌘Enter, typed `/queue x` | none until the turn ends, then `session/prompt` | chips are lazuli's: Hermes's own `/queue` cannot remove or pause |
-| other advertised `/command` | `session/prompt` with the text | Hermes answers `help`, `model`, `tools`, `context`, `reset`, `compact`, `version` itself; after `/reset` or `/compact` the chat reloads |
+| other advertised `/command` | `session/prompt` with the text | Hermes answers `help`, `model`, `tools`, `context`, `reset`, `compact`, `version` itself; after `/reset` or `/compact` the chat reloads, then the queue head goes (unless paused) and the list is read again |
 | Stop | `session/cancel` | the turn ends `cancelled`; chips pause |
 | approval card | answer to `session/request_permission` | buttons by option id: `allow_once`, `allow_always`, `deny`; the rest (`allow_session`, `deny_always`) under More |
 | list fallback | `session/list {cwd, cursor}` | |

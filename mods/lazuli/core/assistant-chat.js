@@ -5,7 +5,8 @@
 // Events (`{type, ...}`):
 //   update {update}                       a `session/update` body (`params.update`)
 //   permission {requestId, toolCall, options, at}   `session/request_permission`; `at` = bridge receive time
-//   permission-answered {requestId, optionId}       optionId null/absent = cancelled by lazuli
+//   permission-answered {requestId, optionId, sent?}   optionId null/absent = cancelled by lazuli; `sent`: that answer
+//                                         went to the agent while the card was open (its reply may come after the deadline)
 //   prompt-sent {requestId, kind: prompt|steer|command, text?, attachments?, via?, again?}
 //                                         no text and no attachments = restore an in-flight entry only;
 //                                         `again` = the user item only (a running turn applied again after a load)
@@ -402,6 +403,10 @@ function answered(state, e, now) {
   if (!p || p.state === "answered") return state;
   const set = (q) => ({ ...state, permissions: { ...state.permissions, [key]: q } });
   const pick = typeof e.optionId === "string" ? e.optionId : null;
+  // Rule 4: an answer sent while the card was open is its answer, though the send's reply came at or after the
+  // deadline (a tick, or its turn's end near the deadline, may have expired the card meanwhile); a card its turn's end
+  // cancelled stays cancelled, with no refusal.
+  if (e.sent === true && pick) return p.state === "pending" || p.state === "expired" ? set({ ...p, state: "answered", optionId: pick }) : state;
   if (p.state === "pending" && now < p.deadline) return set(pick ? { ...p, state: "answered", optionId: pick } : { ...p, state: "cancelled" });
   const closed = p.state === "pending" ? set({ ...p, state: "expired" }) : state;
   // Rule 4: an answer after expiry (or after the turn ended) is refused; a cancel by lazuli says nothing.

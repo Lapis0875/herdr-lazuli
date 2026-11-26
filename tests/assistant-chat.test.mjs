@@ -209,6 +209,30 @@ test('rule 4: an approval the agent gives up at its own 60 s ends expired, and a
   assert.deepEqual(canAnswer(early, 'b:9', 1000, 'deny'), { error: 'not-found' });
 });
 
+test('rule 4: an answer sent while the card was open stays its answer when the send\'s reply comes after the deadline', () => {
+  const s = reduce(live(), ask('b:1', 1000), 1000);
+  const sent = (requestId, optionId = 'allow_once') => ({ type: 'permission-answered', requestId, optionId, sent: true });
+  const tooLate = (st) => st.items.some((i) => i.type === 'notice' && i.code === 'too-late');
+  // The reply returns at or after the deadline, with or without a tick having expired the card meanwhile.
+  for (const [before, now] of [[[], 61000], [[{ type: 'tick' }], 61500]]) {
+    const r = run(s, [...before, sent('b:1')], now);
+    assert.deepEqual([r.permissions['b:1'].state, r.permissions['b:1'].optionId, tooLate(r)], ['answered', 'allow_once', false]);
+    assert.equal(reduce(r, sent('b:1', 'deny'), now), r, 'answered once');
+  }
+  // Its turn ended meanwhile: near the deadline (expired) the sent answer is the card's; earlier (cancelled) the card
+  // stays cancelled, with no refusal.
+  const turn = (requestId) => run(live(), [{ type: 'prompt-sent', requestId: 'c:1', kind: 'prompt', text: 'approve' }, ask(requestId, 0)], 0);
+  const nearEnd = reduce(turn('b:2'), { type: 'prompt-done', requestId: 'c:1', stopReason: 'end_turn' }, 59000);
+  assert.equal(nearEnd.permissions['b:2'].state, 'expired');
+  assert.equal(reduce(nearEnd, sent('b:2'), 60100).permissions['b:2'].state, 'answered');
+  const early = reduce(turn('b:3'), { type: 'prompt-done', requestId: 'c:1', stopReason: 'end_turn' }, 1000);
+  assert.equal(early.permissions['b:3'].state, 'cancelled');
+  assert.equal(reduce(early, sent('b:3'), 1200), early);
+  // Not sent (refused before sending): still too late.
+  const late = run(s, [{ type: 'tick' }, { type: 'permission-answered', requestId: 'b:1', optionId: 'allow_once' }], 61500);
+  assert.deepEqual([late.permissions['b:1'].state, tooLate(late)], ['expired', true]);
+});
+
 test('approval buttons are chosen by option id (D29)', () => {
   let b = approvalButtons(FIVE);
   assert.deepEqual(ids(b.buttons), ['allow_once', 'allow_always', 'deny']);

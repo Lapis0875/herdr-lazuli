@@ -481,19 +481,28 @@ function onAnswer(cx, id, c) {
   afterTurn(cx, key, entry);
 }
 
-/** After a request ends: a command that rewrote the history reloads the session, the queue head goes, a stale chat
- *  reloads once idle, as does a gateway chat whose load waited for this answer (reload), and the list is read again
- *  (message counts, titles, cost). */
+/** After a request ends: a command that rewrote the history (`resync`) reloads the session first, then the rest runs
+ *  on the history it loaded; the queue head goes (K5 rule 6), a stale chat reloads once idle, as does a gateway chat
+ *  whose load waited for this answer (reload), and the list is read again (message counts, titles, cost). */
 function afterTurn(cx, key, entry) {
   const chat = S.sessions[key];
   if (!chat) return;
   if (entry?.resync && !isRunning(chat)) {
-    reload(cx, key);
+    const scope = folderScope();
+    reload(cx, key).then(() => {
+      if (scopeActive(scope)) nextTurn(cx, key, { reloaded: true });
+    });
     return;
   }
+  nextTurn(cx, key, { reloaded: false });
+}
+
+/** afterTurn once the chat is settled: the queue head, a load still owed (not after one just made), the list, files. */
+function nextTurn(cx, key, { reloaded }) {
+  if (!S.sessions[key]) return;
   flushQueue(cx, key);
   const after = S.sessions[key];
-  if (!isRunning(after) && (deferredLoads.has(key) || (after?.stale && selectedKey() === key))) reload(cx, key);
+  if (!reloaded && !isRunning(after) && (deferredLoads.has(key) || (after?.stale && selectedKey() === key))) reload(cx, key);
   if (!isRunning(after)) scheduleList(cx, after.profile);
   refreshFiles(cx);
 }
@@ -1530,7 +1539,8 @@ async function sendAnswer(cx, key, requestId, optionId) {
   const r = await client.send(cx, wire.permissionSelected(can.permission.requestId, optionId));
   if (!scopeActive(client.scope)) return { error: "disconnected" };
   if (r.error) return r;
-  apply(cx, key, { type: "permission-answered", requestId, optionId });
+  // Decided and sent while the card was open: its answer even when this reply comes after the deadline (K5 rule 4).
+  apply(cx, key, { type: "permission-answered", requestId, optionId, sent: true });
   return { ok: true };
 }
 

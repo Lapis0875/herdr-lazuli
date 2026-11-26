@@ -766,7 +766,7 @@ Permission {toolCallId, title, kind, content, options[{optionId, name, kind}], a
 ```
 Events: `update {update}` (agent and thought chunks, user chunks on replay, `tool_call`, `tool_call_update`, `plan`,
 `available_commands_update`, `usage_update`, `current_mode_update`, `session_info_update`, `config_option_update`),
-`permission {requestId, toolCall, options, at}`, `permission-answered {requestId, optionId}`, `prompt-sent {requestId,
+`permission {requestId, toolCall, options, at}`, `permission-answered {requestId, optionId, sent?}`, `prompt-sent {requestId,
 kind: prompt|steer|command, text?, attachments?, via?, again?}` (`again`: only the user item, for a running turn
 applied again after its history loaded), `prompt-done {requestId, stopReason, usage}`, `prompt-failed {requestId,
 error}`, `queued {text}`, `unqueued {chipId}`, `queue-paused`, `queue-resumed`, `queue-flush {requestId, chipId?}`,
@@ -784,7 +784,9 @@ Rules, one test each (`tests/assistant-chat.test.mjs`):
    or for a card no longer pending, is `too-late`, an unknown request or option `not-found`. When a turn ends
    (`prompt-done`, `prompt-failed`) with nothing else running, a card still pending closes as `expired` when
    `now >= deadline - EXPIRY_GRACE_MS` (the agent gave up at its own 60 s, whose clock starts a moment before the
-   bridge's receive time), else as `cancelled`.
+   bridge's receive time), else as `cancelled`. An answer the service checked and sent while the card was open
+   (`sent: true`) is the card's answer even when its send's reply comes at or after the deadline (the card may have
+   expired meanwhile): `answered` with that option, no `too-late`; a card its turn's end cancelled stays as it is.
 5. While a steer is not acknowledged, a chunk that is one of the adapter's steer answers becomes a notice and
    acknowledges it; it never joins an assistant message.
 6. Running = any in-flight request not yet acknowledged; `queueHead` is the first chip once nothing is in flight and the

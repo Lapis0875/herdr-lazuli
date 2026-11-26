@@ -437,3 +437,41 @@ test('an ACP session (in-process Hermes) still loads mid-turn: its history, then
   assert.deepEqual(loads(state).length, 1);
   assert.deepEqual(said(s.session(key)), [['user', 'Earlier?'], ['assistant', 'Earlier.'], ['user', PROMPT], ['assistant', 'Partial ']]);
 });
+
+// K5 rule 6 after a history-rewriting command: `/compact` reloads the chat, then the queue head goes (once), unless
+// the queue is paused.
+const promptTexts = state => state.requests.filter(([, method]) => method === 'session/prompt').map(([, , p]) => p.prompt.map(b => b.text).join(''));
+for (const [kind, session] of [['an ACP chat', OLD], ['a gateway chat', OWN]]) {
+  for (const paused of [false, true]) {
+    test(`after /compact in ${kind} the chat reloads, then ${paused ? 'a paused queue stays unsent' : 'the queued chip goes once'}`, async () => {
+      const state = fixture();
+      state.newSessionId = session;
+      const s = await service();
+      assert.deepEqual(await s.open(cx), { ok: true });
+      const { key } = await s.newSession(cx);
+      assert.deepEqual(await s.send(cx, key, { text: '/compact' }), { ok: true });
+      const [command] = Object.keys(s.session(key).inflight);
+      assert.deepEqual(await s.queue(cx, key, 'after compact'), { ok: true });
+      assert.equal(s.session(key).queue.length, 1, 'queued while the command runs');
+      if (paused) assert.deepEqual(await s.stopTurn(cx, key), { ok: true });
+      state.history = { [session]: pair(session, 'Write a toy train story', 'Compacted.') };
+      emit(state, { kind: 'result', id: command, result: { stopReason: paused ? 'cancelled' : 'end_turn' } });
+      await until(() => loads(state).length === 1 && historyLoaded(s.session(key)), 'the chat reloads after the command');
+      for (let i = 0; i < 20; i++) await new Promise(setImmediate);
+      const chat = s.session(key);
+      if (paused) {
+        assert.deepEqual(promptTexts(state), ['/compact']);
+        assert.deepEqual([chat.queue.map(c => c.text), chat.queuePaused], [['after compact'], true]);
+        assert.deepEqual(chat.inflight, {});
+      } else {
+        assert.deepEqual(promptTexts(state), ['/compact', 'after compact'], 'the chip, once');
+        const at = method => state.requests.findIndex(([, m, p]) => m === method && (method !== 'session/prompt' || p.prompt[0].text === 'after compact'));
+        assert.ok(at('session/load') < at('session/prompt'), 'after the reload');
+        assert.deepEqual(chat.queue, []);
+        assert.deepEqual(said(chat), [['user', 'Write a toy train story'], ['assistant', 'Compacted.'], ['user', 'after compact']]);
+        assert.equal(Object.keys(chat.inflight).length, 1, 'the chip runs as the next turn');
+      }
+      assert.equal(loads(state).length, 1, 'one reload');
+    });
+  }
+}

@@ -194,7 +194,7 @@ export default {
   "assistant.banner.bridge-timeout": "Hermes didn't answer in time",
   "assistant.banner.bridge-timeout.body": "Hermes wasn't ready within 45 seconds. Retry waits once more.",
   "assistant.banner.auth": "Couldn't verify the connection to Hermes",
-  "assistant.banner.auth.body": "The bridge refused the connection token. Retry starts the bridge again.",
+  "assistant.banner.auth.body": "The running bridge for this folder didn't accept this connection. Retry checks again; it doesn't stop or replace that bridge.",
 
   // A service call's error (K4 codes), shown briefly over the chat.
   "assistant.error.no-folder": "No folder chosen",

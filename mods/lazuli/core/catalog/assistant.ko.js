@@ -194,7 +194,7 @@ export default {
   "assistant.banner.bridge-timeout": "Hermes가 제때 응답하지 않았습니다",
   "assistant.banner.bridge-timeout.body": "45초 안에 Hermes가 준비되지 않았습니다. 다시 시도하면 한 번 더 기다립니다.",
   "assistant.banner.auth": "Hermes 연결을 확인하지 못했습니다",
-  "assistant.banner.auth.body": "브리지가 연결 토큰을 받지 않았습니다. 다시 시도하면 브리지를 새로 시작합니다.",
+  "assistant.banner.auth.body": "이 폴더에서 실행 중인 브리지가 이 연결을 받지 않았습니다. 다시 시도하면 다시 확인하며, 그 브리지를 멈추거나 바꾸지는 않습니다.",
 
   // A service call's error (K4 codes), shown briefly over the chat.
   "assistant.error.no-folder": "폴더가 정해지지 않았습니다",
