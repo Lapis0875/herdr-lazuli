@@ -644,7 +644,8 @@ and `palette`, `layouts/lazuli.json`, `keys.json`, `relay/lazuli.profile.json`.
 
 ### Wiring (K2, K7)
 - `state.js`: `CENTER` ends with `"assistant"`; `COMMANDS["go:assistant"] = status`; `PREFIXED["assistant:"] = self`
-  (parsed as `{name:"assistant", arg}`); `KEY.assistantUi = "lazuli.assistant.ui"`; `DEFAULT_PINS` ends with
+  (parsed as `{name:"assistant", arg}`); `KEY.assistantUi = "lazuli.assistant.ui"`; `KEY.assistantOwned =
+  "lazuli.assistant.owned"` (the Hermes local sessions the Assistant made, K6 `normalizeOwned`); `DEFAULT_PINS` ends with
   `"assistant"`; `SETTINGS_VERSION = 2`; settings gain `assistant: {folder: string|null, debugAgent: string[]|null}`
   (`folder`: absolute, trailing slashes dropped, else null; `debugAgent`: a non-empty array of non-empty strings as it
   is, else null: one element of another kind or an empty one makes it null, nothing is dropped from it).
@@ -812,15 +813,26 @@ Rules, one test each (`tests/assistant-chat.test.mjs`):
 ```js
 export const SESSIONS_SQL      // Hermes 0.17.0's ACP listing (docs/spikes/S9/sessions.sql): id, title, first-user preview,
                                // cwd (model_config.$.cwd), model, message_count, started_at, last_active, token and cost columns
-export function isProfileName(s), isSessionId(s)          // session: ^[0-9a-f-]{36}$
+export function ownedSessionsSql(ids)   // the same columns and `archived` for the given local ids only (source='local',
+                                        // messages; archived ones flagged); cwd from the `cwd` column; only 0.17.0 columns; null when no id is a local one
+export const OWNED_MAX = 200
+export function isProfileName(s), isSessionId(s)          // session: ^(?:[0-9a-f-]{36}|local-[0-9a-f]{64})$
+export function isLocalSessionId(s)                        // ^local-[0-9a-f]{64}$
 export function sessionKey(profile, sessionId), parseKey(key)   // "<profile>/<sessionId>" | null
 export function normalizeCwd(p, home)                      // trimmed, ~ expanded, . and .. resolved, no trailing /
 export function firmlinkShort(path)                        // "/private/tmp/x" → "/tmp/x" (any /private/… path); null otherwise
 export function pathsToResolve({folder, home, profiles, local})   // the folder and every row and local cwd, normalized, each once, sorted
-export function mapRows(json)       // sqlite3 -json output → [{id, title, cwd, model, messageCount, startedAt, updatedAt, stats}]; "" → []; not an array → null
-export function mapSessionList(result)   // session/list → the same rows with model, count and stats unknown
+export function mapRows(json)       // sqlite3 -json output → [{id, title, cwd, model, messageCount, startedAt, updatedAt, stats, archived}]; "" → []; not an array → null
+export function mapSessionList(result)   // session/list → the same rows with model, count and stats unknown, archived false
 export function normalizeUi(raw, folder) // {v:1, folder, selected:{agent, profile, session}|null, collapsed:[profile]}; another folder → fresh
-export function buildList({folder, home, profiles, local, running, bridges, ui, real?}): ListModel
+export function normalizeOwned(raw)      // {v:1, sessions:[{profile, folder, session, at}]}: local ids only, newest first,
+                                         // each profile/session once, folder normalized, at most OWNED_MAX
+export function addOwned(raw, {profile, folder, session, at})   // the key with that entry first, or null: malformed or held
+export function ownedIds(raw, folder, profile)                  // that profile's local ids made in that folder
+export function dropOwned(raw, profile, session)                // the key without that entry, or null when absent
+export function heldSelection(ui, owned, folder)                // {profile, sessionId, at}: the remembered selection when it is
+                                                                // a local id `owned` holds for that profile in that folder; else null
+export function buildList({folder, home, profiles, local, owned?, running, bridges, ui, real?}): ListModel
 export function pruneUi(ui, list)   // the selection cleared once its group loaded without error and has no such row
 
 ListModel = {groups:[{agent, profile, visible, collapsed, bridge, running, rows, loading, error?}],
@@ -837,6 +849,17 @@ row = {key, profile, sessionId, title, updatedAt, model, messageCount, running, 
   last part, else "New thread". The service passes rows and `local` with the titles it shows (K4): the agent's newest
   `session_info_update` of this run over a stored row's, and a local session's first prompt line only while it has no
   other title.
+- Hermes local sessions (a gateway Hermes stores an editor's thread as `source='local'`, id `local-<64 hex>`, cwd in
+  the `cwd` column, AT-25): a row with a local id shows only when `owned` holds it for that profile and the folder
+  (normalized), it is not archived, and its cwd is in the folder. `owned` records only what this Assistant made
+  (`session/new`, `session/fork` answered with a local id by that profile's bridge in that folder), so another
+  editor's, the CLI's, another folder's and another profile's local chats never show, from the database or from
+  `session/list`. Sessions made in this run (`local`) show as before, one with a local id not once the profile's rows
+  rule it out (that id archived, or its cwd in another folder). Without `owned` the list is exactly the ACP listing.
+- The remembered selection (`heldSelection`): the service passes it in `local` when nothing of this run holds it, so
+  after a reload it stays listed and selected (and `pruneUi` keeps it) while its group is loading, failed, or lists
+  no row for it yet (AT-25 on la-c12: a reload during the chat's first turn read no row for it); once a row lists it
+  the row wins, and once the rows rule it out the selection is cleared.
 
 ### CLI: `bin/acp-bridge.mjs` (K3)
 
@@ -915,8 +938,11 @@ Every reply ends its connection, and the bridge destroys it 1 s later (no half-o
   or reservation failures do not permit launch. Only the bridge signals its agent group, and not after its child
   exits. Callers check `checking()` first. See ARCHITECTURE §13 for legacy migration assumptions.
 - `sys/assistant-sessions.js` (takes `run(command, args, options)`, so tests run it on real sqlite3 files):
-  `querySessions(run, db)` → `{rows, via: readonly|immutable|absent}` or `{error: schema|locked|open|parse|failed,
-  detail}`; `profileSessions(run, home, profile)`; `listProfiles(run, home)`; `listFolderFiles(run, folder)` (at most
+  `querySessions(run, db, owned = [])` → `{rows, via: readonly|immutable|absent}` or `{error: schema|locked|open|parse|failed,
+  detail}`: SESSIONS_SQL's rows, then, only when `owned` holds a local id, `ownedSessionsSql(owned)`'s rows on the same
+  target (an id already listed kept once); a failure of either is the result, so a database is read exactly as before
+  until a local session is owned and local chats never count against SESSIONS_SQL's `LIMIT 1000`;
+  `profileSessions(run, home, profile, owned = [])`; `listProfiles(run, home)`; `listFolderFiles(run, folder)` (at most
   2,000 folder-relative paths to depth 8, no pictures, hidden entries, `node_modules`, `.venv`, `venv`, `__pycache__`;
   one `/bin/sh -c` running `find … -print0 | head -c WALK_BYTES` (512 KiB), so the walk stops at that cap; a path the
   cut ends inside is left out);

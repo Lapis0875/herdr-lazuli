@@ -23,6 +23,9 @@ export const KEY = Object.freeze({
   /** The Assistant screen's remembered UI (D25): `{v:1, folder, selected:{agent, profile, session}|null,
    *  collapsed:[profile]}`. A value for another folder is reset; a selected row that no longer exists is cleared. */
   assistantUi: "lazuli.assistant.ui",
+  /** The Hermes local sessions the Assistant made (`local-<64 hex>` ids), so only those are listed and restored:
+   *  `{v:1, sessions:[{profile, folder, session, at}]}`, newest first, at most 200 (core/assistant-list.js). */
+  assistantOwned: "lazuli.assistant.owned",
 });
 
 /** Store names that have a rev counter and a snapshot file (`data/lazuli/snap/<name>.json`). */

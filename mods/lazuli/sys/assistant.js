@@ -21,8 +21,10 @@
 //
 // Each chat is core/assistant-chat.js state, reduced from the bridge's records and the service's own events; the list
 // is core/assistant-list.js `buildList` over each profile's state.db rows (sys/assistant-sessions.js), the sessions
-// made in this run, the running set and the shared key `lazuli.assistant.ui`. Changes redraw every copy through the
-// store `assistant` (no snapshot: nothing of the Assistant reaches the relay, D5), at most once per 80 ms.
+// made in this run, the running set, the shared key `lazuli.assistant.ui` and the Hermes local sessions this service
+// made (`lazuli.assistant.owned`, by profile and folder: the only local chats listed and restored). Changes redraw
+// every copy through the store `assistant` (no snapshot: nothing of the Assistant reaches the relay, D5), at most once
+// per 80 ms.
 //
 // Every `net`, `exec` and `hc` call is behind `checking()`: `herdr-app check` runs no part of this.
 
@@ -30,7 +32,10 @@ import { checking, exec, home, shared, setShared, pickFolder as pickFolderDialog
 import { t } from "../core/i18n.js";
 import * as wire from "../core/acp-wire.js";
 import { emptyChat, reduce, isRunning, queueHead, canAnswer, MAX_MESSAGE } from "../core/assistant-chat.js";
-import { buildList, normalizeUi, pruneUi, mapSessionList, parseKey, sessionKey, isProfileName, isSessionId, pathsToResolve } from "../core/assistant-list.js";
+import {
+  buildList, normalizeUi, pruneUi, mapSessionList, parseKey, sessionKey, isProfileName, isSessionId, pathsToResolve,
+  isLocalSessionId, normalizeOwned, addOwned, ownedIds, dropOwned, heldSelection,
+} from "../core/assistant-list.js";
 import { agentArgv, routeText } from "../core/assistant-agents.js";
 import { normalize } from "../core/paths.js";
 import * as store from "./store.js";
@@ -130,6 +135,8 @@ const real = {};
 const turns = new Map(); // key → events | null
 const loadingKeys = new Set(); // chats whose session/load is open: their updates replay the history
 const endedInLoad = new Set(); // chats whose turn ended while their history loaded: they load once more
+// Hermes gateway chats (a local id) whose load waits for their running turn's answer (reload): they load once idle.
+const deferredLoads = new Set();
 const seen = new Map(); // profile → {pid, seq}: the newest record applied from that bridge (a replay of it is dropped)
 const resume = new Map(); // profile → {pid, seq}: where the last stream of that bridge stopped, for the next one
 let clientSeq = 0;
@@ -190,6 +197,21 @@ function setUi(cx, next) {
 function selectedKey() {
   const s = uiNow().selected;
   return s ? `${s.profile}/${s.session}` : null;
+}
+
+function ownedNow() {
+  return normalizeOwned(shared(KEY.assistantOwned));
+}
+
+/** Remembers a Hermes local session this service made (`session/new`, `session/fork`) with the profile and folder of
+ *  the bridge that answered, so the list shows it and a reload restores it. Other ids need no record: Hermes lists
+ *  them itself (SESSIONS_SQL). */
+function own(cx, scope, profile, sessionId) {
+  if (!isLocalSessionId(sessionId) || !scopeActive(scope) || !scope.folder) return;
+  const next = addOwned(shared(KEY.assistantOwned), { profile, folder: scope.folder, session: sessionId, at: Date.now() });
+  if (!next) return;
+  setShared(KEY.assistantOwned, next);
+  changed(cx);
 }
 
 function setBridge(cx, profile, value) {
@@ -272,6 +294,20 @@ const storedOf = (key) => {
   return k ? (S.profiles.find((p) => p.profile === k.profile)?.rows ?? []).find((r) => r.id === k.sessionId) ?? null : null;
 };
 const localOf = (key) => S.local.find((l) => `${l.profile}/${l.sessionId}` === key) ?? null;
+
+/** The remembered selection standing in for its row (core/assistant-list.js heldSelection): a Hermes local session
+ *  this service made with that profile in this folder that nothing of this run holds (after a reload; its database row
+ *  may count no message yet). A list entry like a session made in this run, but not one of S.local: "+" never reuses
+ *  it, and it goes once another chat is selected. */
+function heldLocal() {
+  const h = S.folder ? heldSelection(shared(KEY.assistantUi), shared(KEY.assistantOwned), S.folder) : null;
+  if (!h || localOf(`${h.profile}/${h.sessionId}`)) return null;
+  return { profile: h.profile, sessionId: h.sessionId, title: null, prompt: null, updatedAt: h.at, cwd: S.folder };
+}
+const heldOf = (key) => {
+  const h = heldLocal();
+  return h && `${h.profile}/${h.sessionId}` === key ? h : null;
+};
 const titleText = (s) => (typeof s === "string" && s.trim() ? s : null);
 
 /** A session's title as the list shows it (null: none known). */
@@ -300,7 +336,8 @@ function listSources() {
         return { ...p, rows: p.rows.map((r) => (titleText(agentTitles.get(`${p.profile}/${r.id}`)) ? { ...r, title: agentTitles.get(`${p.profile}/${r.id}`) } : r)) };
       })
     : S.profiles;
-  const local = S.local.map((l) => {
+  const held = heldLocal();
+  const local = (held ? [...S.local, held] : S.local).map((l) => {
     const title = listTitle(`${l.profile}/${l.sessionId}`);
     return title === l.title ? l : { ...l, title };
   });
@@ -318,7 +355,7 @@ export function snapshot() {
   const running = Object.values(S.sessions)
     .filter((c) => isRunning(c))
     .map((c) => c.key);
-  const list = buildList({ folder: S.folder, home: home(), ...listSources(), running, bridges: S.bridges, ui: uiNow(), real });
+  const list = buildList({ folder: S.folder, home: home(), ...listSources(), running, bridges: S.bridges, ui: uiNow(), owned: ownedNow(), real });
   const value = { gate: S.gate, gateDetail: S.gateDetail, folder: S.folder, hermes: S.hermes, bridges: S.bridges, list, sessions: S.sessions, notices: S.notices };
   built = { version, value };
   return value;
@@ -340,7 +377,7 @@ export function onNotice(fn) {
 // ---- notices ----------------------------------------------------------------------------------------------------
 
 function rowOf(key) {
-  return storedOf(key) ?? localOf(key);
+  return storedOf(key) ?? localOf(key) ?? heldOf(key);
 }
 
 function titleOf(key) {
@@ -445,7 +482,8 @@ function onAnswer(cx, id, c) {
 }
 
 /** After a request ends: a command that rewrote the history reloads the session, the queue head goes, a stale chat
- *  reloads once idle, and the list is read again (message counts, titles, cost). */
+ *  reloads once idle, as does a gateway chat whose load waited for this answer (reload), and the list is read again
+ *  (message counts, titles, cost). */
 function afterTurn(cx, key, entry) {
   const chat = S.sessions[key];
   if (!chat) return;
@@ -455,7 +493,7 @@ function afterTurn(cx, key, entry) {
   }
   flushQueue(cx, key);
   const after = S.sessions[key];
-  if (after?.stale && !isRunning(after) && selectedKey() === key) reload(cx, key);
+  if (!isRunning(after) && (deferredLoads.has(key) || (after?.stale && selectedKey() === key))) reload(cx, key);
   if (!isRunning(after)) scheduleList(cx, after.profile);
   refreshFiles(cx);
 }
@@ -896,13 +934,26 @@ async function openFolder(cx, retry) {
 export const open = (cx) => openFolder(cx, false);
 export const recheck = (cx) => openFolder(cx, true);
 
-/** The selection remembered in `lazuli.assistant.ui` is loaded once the screen opens (D25). A profile whose bridge
- *  shows an error waits for the banner's Retry. */
+/** The selection remembered in `lazuli.assistant.ui` is loaded once the screen opens (D25), unless another one was
+ *  made before the load starts. A profile whose bridge shows an error waits for the banner's Retry. */
 function restoreSelection(cx) {
   const key = selectedKey();
   if (!key || S.bridges[parseKey(key)?.profile]?.state === "error") return;
   const chat = S.sessions[key];
-  if (!chat || !chat.loaded || chat.stale) owned(cx, (tcx) => doSelect(tcx, key));
+  if (!chat || !chat.loaded || chat.stale) owned(cx, (tcx) => (selectedKey() === key ? doSelect(tcx, key) : { ok: true }));
+}
+
+/** A Hermes local session its bridge has no session for (a load answered without `models`): not kept. Its record goes,
+ *  with the selection when it is still that one (a newer selection stays). */
+function forget(cx, scope, key) {
+  if (!scopeActive(scope)) return;
+  const k = parseKey(key);
+  const next = dropOwned(shared(KEY.assistantOwned), k.profile, k.sessionId);
+  if (next) setShared(KEY.assistantOwned, next);
+  S.local = S.local.filter((l) => `${l.profile}/${l.sessionId}` !== key);
+  const ui = uiNow();
+  if (selectedKey() === key) setUi(cx, { ...ui, selected: null });
+  changed(cx);
 }
 
 // ---- the list ---------------------------------------------------------------------------------------------------
@@ -936,7 +987,7 @@ async function listViaAgent(cx, profile) {
 async function listProfile(cx, profile) {
   if (debugAgent()) return listViaAgent(cx, profile);
   const scope = folderScope();
-  const r = await disk.profileSessions(run, home(), profile);
+  const r = await disk.profileSessions(run, home(), profile, ownedIds(ownedNow(), scope.folder, profile));
   if (!r.error) return { profile, rows: r.rows };
   log(`${profile}: sessions not read (${r.error}: ${r.detail ?? ""})`);
   if (scopeActive(scope) && activeClient(profile)) {
@@ -981,7 +1032,7 @@ async function doList(cx, only, scope) {
     S.profiles = S.profiles.filter((p) => names.includes(p.profile));
     // Every profile is listed: a remembered selection that no longer exists is cleared (K2).
     const ui = uiNow();
-    const pruned = pruneUi(ui, buildList({ folder: S.folder, home: home(), ...listSources(), running: [], bridges: S.bridges, ui, real }));
+    const pruned = pruneUi(ui, buildList({ folder: S.folder, home: home(), ...listSources(), running: [], bridges: S.bridges, ui, owned: ownedNow(), real }));
     if (pruned !== ui) setUi(cx, pruned);
   }
   syncRows(cx);
@@ -1080,7 +1131,7 @@ async function switchFolder(cx, folder) {
     );
     for (const id of promptKeys.keys()) promptKeys.delete(id);
     loads.clear();
-    for (const m of [turns, loadingKeys, endedInLoad, seen, resume, agentTitles, filledTitles]) m.clear();
+    for (const m of [turns, loadingKeys, endedInLoad, deferredLoads, seen, resume, agentTitles, filledTitles]) m.clear();
     Object.assign(S, fresh(folder), { hermes: S.hermes, notices: S.notices });
     filesAt = 0;
     log(`folder ${folder ?? "(none)"}`);
@@ -1141,7 +1192,8 @@ export async function pickFolder(cx) {
  *  turn log, so it shows once and whole. A turn that ended during the load may be missing from that history: the chat
  *  then loads once more. A load without an answer within LOAD_MS reopens the stream, and one that ended `disconnected`
  *  (its stream reopened or dropped) tries once more on the bridge still running (no launch). A load result without
- *  `models` is Hermes's answer for an unknown id (S9): `not-found`. */
+ *  `models` is Hermes's answer for an unknown id (S9): `not-found`. A Hermes gateway chat (a local id) with a turn
+ *  running is not loaded until that turn's answer comes (afterTurn): meanwhile it shows that turn live. */
 function reload(cx, key) {
   if (loads.has(key)) return loads.get(key);
   const scope = folderScope();
@@ -1162,6 +1214,19 @@ function reload(cx, key) {
       if (retried) await b.client.caughtUp(tcx, LOAD_MS);
       if (!scopeActive(scope)) return { error: "disconnected" };
       if (!S.sessions[key]) ensureChat(key);
+      // No load under a gateway turn still running (AT-25 on la-c13): the gateway's load installs a new snapshot that
+      // can pass over that turn's answer (acp_adapter/gateway_server.py `_adopt`, its event watermark), which then
+      // never comes, and the history it replays can already hold the turn, which the turn log would add again. Until
+      // the answer comes, a chat not loaded yet shows the running turn alone, live, from its turn log.
+      if (isLocalSessionId(k.sessionId) && isRunning(S.sessions[key])) {
+        deferredLoads.add(key);
+        if (!S.sessions[key].loaded) {
+          apply(tcx, key, { type: "load-start" }, { type: "loaded" });
+          resumeTurn(tcx, key);
+        }
+        break;
+      }
+      deferredLoads.delete(key);
       endedInLoad.delete(key);
       loadingKeys.add(key);
       apply(tcx, key, { type: "load-start" });
@@ -1185,6 +1250,7 @@ function reload(cx, key) {
       }
       if (!isObj(r.result) || !Object.prototype.hasOwnProperty.call(r.result, "models")) {
         apply(tcx, key, { type: "loaded" });
+        if (isLocalSessionId(k.sessionId)) forget(tcx, scope, key);
         return { error: "not-found" };
       }
       apply(tcx, key, { type: "loaded", models: r.result.models, modes: r.result.modes });
@@ -1278,6 +1344,7 @@ async function doNewSession(cx, profile = "default") {
   const sessionId = r.result?.sessionId;
   const key = sessionKey(profile, sessionId);
   if (!key) return { error: "not-found" };
+  own(cx, b.client.scope, profile, sessionId);
   const now = Date.now();
   ensureChat(key, { loaded: true, updatedAt: now });
   apply(cx, key, { type: "loaded", models: r.result.models ?? null, modes: r.result.modes ?? null });
@@ -1302,6 +1369,7 @@ async function doFork(cx, key) {
   if (r.error) return r;
   const next = sessionKey(k.profile, r.result?.sessionId);
   if (!next) return { error: "not-found" };
+  own(cx, b.client.scope, k.profile, r.result.sessionId);
   const now = Date.now();
   ensureChat(next, { title: titleOf(key), updatedAt: now });
   S.local = [...S.local, { profile: k.profile, sessionId: r.result.sessionId, title: titleOf(key), updatedAt: now, cwd: S.folder }];

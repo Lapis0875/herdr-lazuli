@@ -10,6 +10,13 @@
 // columns. The cwd filter and the title fallback (title → first user message cut to 60 characters with
 // "..." → folder name → "New thread", session.py:73-81) run here, as Hermes runs them in Python.
 // `sqlite3 -json` prints nothing at all for zero rows, so `mapRows("")` is `[]`.
+//
+// A gateway Hermes stores an editor's thread as `source='local'` under an id `local-<64 hex>`, its cwd in the `cwd`
+// column. SESSIONS_SQL does not read those, and Lazuli lists only the ones it made itself: each `session/new` or
+// `session/fork` answer with a local id is remembered in the shared key `lazuli.assistant.owned` with its profile
+// and folder (normalizeOwned), `ownedSessionsSql` reads exactly those ids, and buildList shows a local id only when it
+// is owned in that profile and folder. Other local chats (another editor's, the CLI's) never show and never count
+// against SESSIONS_SQL's LIMIT.
 
 import { AGENT_IDS, agentOf, isProfileName } from "./assistant-agents.js";
 import { normalize } from "./paths.js";
@@ -51,18 +58,64 @@ WHERE s.source = 'acp'
 ORDER BY last_active DESC, s.id DESC
 LIMIT 1000;`;
 
-const SESSION_ID = /^[0-9a-f-]{36}$/;
+/** SESSIONS_SQL's columns for the Hermes local sessions Lazuli made, read by id (`sqlite3 -readonly -json <state.db>
+ *  <sql>`, rows for mapRows): `source='local'`, at least one message, newest first, with `archived` (an archived one
+ *  is returned so buildList can tell it from one not saved yet). The cwd is the `cwd` column (a gateway Hermes writes
+ *  none into `model_config`, which is read only when the column is empty). Every column read is in Hermes 0.17.0's
+ *  schema too. The ids are inlined: each is `local-` and 64 hex digits, so none can quote. Null when no id is a local
+ *  session id. */
+export function ownedSessionsSql(ids) {
+  const want = [...new Set(Array.isArray(ids) ? ids.filter(isLocalSessionId) : [])].sort();
+  if (!want.length) return null;
+  return `SELECT
+  s.id AS id,
+  s.title AS title,
+  COALESCE((SELECT SUBSTR(REPLACE(REPLACE(m.content, X'0A', ' '), X'0D', ' '), 1, 63)
+            FROM messages m
+            WHERE m.session_id = s.id AND m.role = 'user' AND m.content IS NOT NULL
+            ORDER BY m.timestamp, m.id LIMIT 1), '') AS preview,
+  COALESCE(NULLIF(s.cwd, ''), CASE WHEN json_valid(s.model_config) THEN json_extract(s.model_config, '$.cwd') END) AS cwd,
+  s.model AS model,
+  s.message_count AS message_count,
+  s.started_at AS started_at,
+  COALESCE((SELECT MAX(m2.timestamp) FROM messages m2 WHERE m2.session_id = s.id), s.started_at) AS last_active,
+  s.input_tokens AS input_tokens,
+  s.output_tokens AS output_tokens,
+  s.cache_read_tokens AS cache_read_tokens,
+  s.cache_write_tokens AS cache_write_tokens,
+  s.reasoning_tokens AS reasoning_tokens,
+  s.estimated_cost_usd AS estimated_cost_usd,
+  s.actual_cost_usd AS actual_cost_usd,
+  s.cost_status AS cost_status,
+  s.api_call_count AS api_call_count,
+  s.archived AS archived
+FROM sessions s
+WHERE s.source = 'local'
+  AND s.id IN (${want.map((id) => `'${id}'`).join(", ")})
+  AND s.message_count > 0
+ORDER BY last_active DESC, s.id DESC;`;
+}
+
+const SESSION_ID = /^(?:[0-9a-f-]{36}|local-[0-9a-f]{64})$/;
+const LOCAL_ID = /^local-[0-9a-f]{64}$/;
 const BRIDGE_STATES = new Set(["off", "starting", "ready", "error", "stopped"]);
 const DEFAULT = "default";
+/** At most this many owned local sessions are remembered, the newest made kept. */
+export const OWNED_MAX = 200;
 
 const isPlain = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const str = (v) => (typeof v === "string" ? v : null);
 const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
 const ms = (seconds) => (num(seconds) === null ? null : Math.round(seconds * 1000));
 
-/** Whether `s` has the form of a session id in a target (K7): 36 characters of hex digits and "-". */
+/** Accept legacy session targets and Hermes local IDs without admitting path separators. */
 export function isSessionId(s) {
   return typeof s === "string" && SESSION_ID.test(s);
+}
+
+/** Whether `s` is a Hermes local session id (`local-` and 64 lowercase hex digits): listed only when Lazuli made it. */
+export function isLocalSessionId(s) {
+  return typeof s === "string" && LOCAL_ID.test(s);
 }
 
 /** A session's key `<profile>/<sessionId>`, or null when either part is malformed. */
@@ -140,9 +193,9 @@ function statsOf(r) {
   };
 }
 
-/** `sqlite3 -json` output of SESSIONS_SQL → `[{id, title, cwd, model, messageCount, startedAt, updatedAt,
- *  stats}]` (times in ms; a missing number is null). Blank output is `[]`; output that is not a JSON
- *  array is null. */
+/** `sqlite3 -json` output of SESSIONS_SQL or ownedSessionsSql → `[{id, title, cwd, model, messageCount, startedAt,
+ *  updatedAt, stats, archived}]` (times in ms; a missing number is null; `archived` true only for a row that says so,
+ *  which only ownedSessionsSql returns). Blank output is `[]`; output that is not a JSON array is null. */
 export function mapRows(json) {
   if (typeof json !== "string") return null;
   if (json.trim() === "") return [];
@@ -167,6 +220,7 @@ export function mapRows(json) {
         startedAt,
         updatedAt: ms(r.last_active) ?? startedAt,
         stats: statsOf(r),
+        archived: r.archived === 1 || r.archived === true,
       };
     });
 }
@@ -188,6 +242,7 @@ export function mapSessionList(result) {
         startedAt: null,
         updatedAt: Number.isFinite(at) ? at : null,
         stats: null,
+        archived: false,
       };
     });
 }
@@ -204,6 +259,66 @@ export function normalizeUi(raw, folder) {
   const selected = agent && !agent.planned && isProfileName(s.profile) && isSessionId(s.session) ? { agent: s.agent, profile: s.profile, session: s.session } : null;
   const collapsed = Array.isArray(raw.collapsed) ? [...new Set(raw.collapsed.filter(isProfileName))] : [];
   return { v: 1, folder: f, selected, collapsed };
+}
+
+const ownedEntry = (e) => isPlain(e) && isProfileName(e.profile) && isLocalSessionId(e.session)
+  && typeof e.folder === "string" && e.folder.startsWith("/") && num(e.at) !== null;
+
+/** The shared key `lazuli.assistant.owned`: the Hermes local sessions Lazuli made, `{v: 1, sessions: [{profile,
+ *  folder, session, at}]}`, newest made first, each profile/session once, at most OWNED_MAX. `folder` (normalized) is
+ *  the folder of the bridge that made it; `at` when (ms). Malformed entries are dropped; a malformed value is empty. */
+export function normalizeOwned(raw) {
+  const list = isPlain(raw) && raw.v === 1 && Array.isArray(raw.sessions) ? raw.sessions.filter(ownedEntry) : [];
+  const seen = new Set();
+  const sessions = [];
+  for (const e of list.sort((a, b) => b.at - a.at)) {
+    const key = `${e.profile}/${e.session}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    sessions.push({ profile: e.profile, folder: normalize(e.folder), session: e.session, at: e.at });
+    if (sessions.length === OWNED_MAX) break;
+  }
+  return { v: 1, sessions };
+}
+
+/** The owned key with one more session Lazuli made, `{profile, folder, session, at}`, or null when there is nothing
+ *  to write: the entry is malformed (a session id that is not a local one among it), or that profile already holds
+ *  that session in that folder. */
+export function addOwned(raw, entry) {
+  if (!ownedEntry(entry)) return null;
+  const owned = normalizeOwned(raw);
+  const folder = normalize(entry.folder);
+  const same = (e) => e.profile === entry.profile && e.session === entry.session;
+  if (owned.sessions.some((e) => same(e) && e.folder === folder)) return null;
+  const next = { profile: entry.profile, folder, session: entry.session, at: entry.at };
+  return normalizeOwned({ v: 1, sessions: [next, ...owned.sessions.filter((e) => !same(e))] });
+}
+
+/** The local session ids Lazuli made with `profile` in `folder` (compared normalized), newest made first. */
+export function ownedIds(raw, folder, profile) {
+  if (typeof folder !== "string" || !folder.startsWith("/") || !isProfileName(profile)) return [];
+  const f = normalize(folder);
+  return normalizeOwned(raw).sessions.filter((e) => e.profile === profile && e.folder === f).map((e) => e.session);
+}
+
+/** The owned key without that profile's `session`, or null when it holds no such entry. */
+export function dropOwned(raw, profile, session) {
+  const owned = normalizeOwned(raw);
+  const sessions = owned.sessions.filter((e) => e.profile !== profile || e.session !== session);
+  return sessions.length === owned.sessions.length ? null : { v: 1, sessions };
+}
+
+/** The remembered selection (`ui`, the shared key) when it is a Hermes local session `owned` holds for that profile
+ *  in `folder`: `{profile, sessionId, at}`, else null. After a reload nothing of the run before stands in for it, and
+ *  the database may list no row for it yet (AT-25: a reload during its first turn): the service passes it in
+ *  buildList's `local`, as a session made in this run, so the list keeps it selected until the profile's rows list it
+ *  or rule it out, and loads it. */
+export function heldSelection(ui, owned, folder) {
+  const s = normalizeUi(ui, folder).selected;
+  if (!s || !isLocalSessionId(s.session) || !folder.startsWith("/")) return null;
+  const f = normalize(folder);
+  const e = normalizeOwned(owned).sessions.find((x) => x.profile === s.profile && x.session === s.session && x.folder === f);
+  return e ? { profile: e.profile, sessionId: e.session, at: e.at } : null;
 }
 
 function keySet(v) {
@@ -239,7 +354,10 @@ const byRecent = (a, b) => (b.updatedAt ?? -Infinity) - (a.updatedAt ?? -Infinit
 /** The list (K6): `{groups, planned, pickable}`.
  *  - `profiles`: `[{profile, rows, error?}]`, rows from `mapRows`/`mapSessionList` (null = not loaded);
  *  - `local`: sessions this run made, `[{profile, sessionId, title?, updatedAt?, model?, cwd?}]`, shown
- *    while the database has no row for them (new empty sessions);
+ *    while the database has no row for them (new empty sessions); one with a Hermes local id also not once the
+ *    database rules it out (its row archived, or its cwd in another folder);
+ *  - `owned`: the shared key `lazuli.assistant.owned`: a row with a Hermes local id shows only when that profile
+ *    made it in this folder and it is not archived (another editor's or the CLI's local chats never show);
  *  - `running`: keys with a turn running; `bridges`: `{[profile]: state | {state}}`; `ui`: the shared key;
  *  - `real`: optional `{[normalized path]: resolved path}` (pathsToResolve's paths with symlinks resolved; "" for one
  *    that does not resolve): a cwd is in the folder when it is the folder's path, or resolves to where the folder does.
@@ -264,6 +382,10 @@ export function buildList(o) {
     const n = normalizeCwd(cwd, home);
     return n === want || (wantReal !== null && realOf(n) === wantReal);
   };
+  const ownedFolder = folder !== null && folder.startsWith("/") ? normalize(folder) : null;
+  const owned = new Set(normalizeOwned(o?.owned).sessions.filter((e) => e.folder === ownedFolder).map((e) => `${e.profile}/${e.session}`));
+  const mine = (profile, r) => !isLocalSessionId(r.id) || (owned.has(`${profile}/${r.id}`) && r.archived !== true);
+  const ruledOut = (r) => Boolean(r) && (r.archived === true || (typeof r.cwd === "string" && !inFolder(r.cwd)));
 
   const groups = sources(o?.profiles).map((src) => {
     const row = (profile, id, r, isLocal) => {
@@ -282,12 +404,15 @@ export function buildList(o) {
         stats: isLocal ? null : r.stats ?? null,
       };
     };
-    const stored = (src.rows ?? []).filter((r) => isPlain(r) && typeof r.id === "string" && inFolder(r.cwd));
+    const stored = (src.rows ?? []).filter((r) => isPlain(r) && typeof r.id === "string" && mine(src.profile, r) && inFolder(r.cwd));
     const ids = new Set(stored.map((r) => r.id));
     const rows = stored.map((r) => row(src.profile, r.id, r, false));
+    const localRows = new Map();
+    for (const r of src.rows ?? []) if (isPlain(r) && isLocalSessionId(r.id) && !localRows.has(r.id)) localRows.set(r.id, r);
     for (const l of local) {
       if (l.profile !== src.profile || !isSessionId(l.sessionId) || ids.has(l.sessionId)) continue;
       if (l.cwd !== undefined && l.cwd !== null && !inFolder(l.cwd)) continue;
+      if (ruledOut(localRows.get(l.sessionId))) continue;
       ids.add(l.sessionId);
       rows.push(row(src.profile, l.sessionId, l, true));
     }

@@ -7,7 +7,7 @@ import { tmpdir, platform } from 'node:os';
 import { join } from 'node:path';
 import {
   SESSIONS_SQL, mapRows, mapSessionList, normalizeCwd, buildList, normalizeUi, pruneUi, isProfileName, isSessionId, sessionKey, parseKey,
-  firmlinkShort, pathsToResolve,
+  firmlinkShort, pathsToResolve, isLocalSessionId, ownedSessionsSql, normalizeOwned, addOwned, ownedIds, OWNED_MAX, dropOwned, heldSelection,
 } from '../mods/lazuli/core/assistant-list.js';
 import { resolvePaths, shortFolder } from '../mods/lazuli/sys/assistant-sessions.js';
 
@@ -43,7 +43,9 @@ test('mapRows reads sqlite3 -json output', () => {
   assert.deepEqual(mapRows(JSON.stringify([ROW()])), [{
     id: sid(1), title: 'notes', cwd: FOLDER, model: 'gpt-5.5', messageCount: 2, startedAt: 1795386035692, updatedAt: 1795386044500,
     stats: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, estimatedCostUsd: 0.01, actualCostUsd: null, costStatus: 'estimated', apiCallCount: 1 },
+    archived: false,
   }]);
+  assert.deepEqual(mapRows(JSON.stringify([ROW({ archived: 1 }), ROW({ archived: 0 })])).map((r) => r.archived), [true, false], 'only ownedSessionsSql reads the column');
   // Hermes's title fallback: title, then the first user message (60 characters + "..."), then the folder name
   const titles = mapRows(JSON.stringify([
     ROW({ title: '  Named  ' }),
@@ -66,7 +68,7 @@ test('mapRows reads sqlite3 -json output', () => {
 
 test('mapSessionList maps the session/list fallback', () => {
   assert.deepEqual(mapSessionList({ sessions: [{ sessionId: sid(2), cwd: FOLDER, title: 'T', updatedAt: '2026-11-18T11:22:50+00:00' }, { cwd: FOLDER }] }), [
-    { id: sid(2), title: 'T', cwd: FOLDER, model: null, messageCount: null, startedAt: null, updatedAt: Date.parse('2026-11-18T11:22:50+00:00'), stats: null },
+    { id: sid(2), title: 'T', cwd: FOLDER, model: null, messageCount: null, startedAt: null, updatedAt: Date.parse('2026-11-18T11:22:50+00:00'), stats: null, archived: false },
   ]);
   assert.deepEqual(mapSessionList({ sessions: [] }), []);
   assert.deepEqual(mapSessionList(null), []);
@@ -122,6 +124,123 @@ test('bad profile names are refused', () => {
   assert.equal(parseKey('coder'), null);
   assert.equal(isSessionId('4733fa10-9a37-48dc-b388-7db72fdbd59b'), true);
   assert.equal(isSessionId('4733FA10-9a37-48dc-b388-7db72fdbd59b'), false);
+});
+
+test('Hermes local session IDs round-trip as targets without admitting malformed paths', () => {
+  const id = `local-${'ab'.repeat(32)}`;
+  assert.deepEqual(parseKey(sessionKey('default', id)), { profile: 'default', sessionId: id });
+  for (const bad of [id.slice(0, -1), `${id}0`, `${id}/x`, id.toUpperCase(), `local-${'g'.repeat(64)}`]) {
+    assert.equal(sessionKey('default', bad), null);
+  }
+});
+
+// Hermes local session ids (`local-` and 64 hex digits) and the shared key of the ones Lazuli made.
+const LID = (c) => `local-${c.repeat(64)}`;
+const OWNED = (...sessions) => ({ v: 1, sessions: sessions.map(([profile, folder, session, at]) => ({ profile, folder, session, at })) });
+
+test('the owned key keeps each local session Lazuli made once, newest first, with its profile and folder', () => {
+  assert.equal(isLocalSessionId(LID('a')), true);
+  for (const bad of [sid(1), LID('A'), `${LID('a')}0`, LID('a').slice(0, -1), `${LID('a')}/x`, null]) assert.equal(isLocalSessionId(bad), false, String(bad));
+  assert.deepEqual(normalizeOwned(null), { v: 1, sessions: [] });
+  assert.deepEqual(normalizeOwned({ v: 2, sessions: [] }), { v: 1, sessions: [] });
+  const raw = OWNED(
+    ['default', `${FOLDER}/`, LID('1'), 10],
+    ['default', '/x', LID('1'), 5], // the same session again (older): dropped
+    ['coder', FOLDER, LID('1'), 7], // the same id under another profile is another record
+    ['default', FOLDER, sid(1), 20], // not a local id: never recorded
+    ['Bad', FOLDER, LID('2'), 20], ['default', 'relative', LID('2'), 20], ['default', FOLDER, LID('2'), 'x'],
+  );
+  assert.deepEqual(normalizeOwned(raw).sessions, [
+    { profile: 'default', folder: FOLDER, session: LID('1'), at: 10 },
+    { profile: 'coder', folder: FOLDER, session: LID('1'), at: 7 },
+  ]);
+  const next = addOwned(raw, { profile: 'default', folder: `${FOLDER}/.`, session: LID('3'), at: 30 });
+  assert.deepEqual(next.sessions.map((e) => [e.profile, e.folder, e.session]), [['default', FOLDER, LID('3')], ['default', FOLDER, LID('1')], ['coder', FOLDER, LID('1')]]);
+  assert.equal(addOwned(next, { profile: 'default', folder: FOLDER, session: LID('3'), at: 40 }), null, 'already held: nothing to write');
+  assert.equal(addOwned(next, { profile: 'default', folder: FOLDER, session: sid(3), at: 40 }), null, 'an ACP id needs no record');
+  assert.equal(addOwned(next, { profile: 'default', folder: null, session: LID('4'), at: 40 }), null);
+  // At most OWNED_MAX, the newest made kept.
+  const many = Array.from({ length: OWNED_MAX + 5 }, (_, i) => ['default', FOLDER, `local-${i.toString(16).padStart(64, '0')}`, i]);
+  const capped = normalizeOwned(OWNED(...many)).sessions;
+  assert.equal(capped.length, OWNED_MAX);
+  assert.deepEqual([capped[0].at, capped.at(-1).at], [OWNED_MAX + 4, 5]);
+  // The ids of one profile in one folder, as the database query takes them.
+  assert.deepEqual(ownedIds(next, `${FOLDER}/`, 'default'), [LID('3'), LID('1')]);
+  assert.deepEqual(ownedIds(next, FOLDER, 'coder'), [LID('1')]);
+  assert.deepEqual(ownedIds(next, '/elsewhere', 'default'), []);
+  assert.deepEqual(ownedIds(next, null, 'default'), []);
+});
+
+test('the owned sessions query reads only the given local ids, with 0.17.0 columns', () => {
+  assert.equal(ownedSessionsSql([]), null);
+  assert.equal(ownedSessionsSql([sid(1), 'x', `${LID('a')}' OR 1=1 --`]), null, 'nothing but local ids is ever inlined');
+  const sql = ownedSessionsSql([LID('b'), LID('a'), LID('b'), sid(1)]);
+  assert.ok(sql.includes(`s.id IN ('${LID('a')}', '${LID('b')}')`), sql);
+  for (const part of ["s.source = 'local'", 's.message_count > 0', 's.archived AS archived', 'NULLIF(s.cwd', 's.estimated_cost_usd', 's.api_call_count']) assert.ok(sql.includes(part), part);
+  for (const left of ['created_source', 'hidden', 'last_activity_at', 'LIMIT 1000', 's.archived = 0']) assert.ok(!sql.includes(left), left);
+  // The rows map as SESSIONS_SQL's do.
+  assert.equal(mapRows(JSON.stringify([ROW({ id: LID('a') })]))[0].id, LID('a'));
+});
+
+test('a local session shows only when this profile made it in this folder; ACP rows as before', () => {
+  const OWN = LID('1'), OTHER = LID('2'), THERE = LID('3'), CODER = LID('4'), MOVED = LID('5');
+  const owned = OWNED(['default', `${FOLDER}/`, OWN, 5], ['default', '/elsewhere', THERE, 4], ['coder', FOLDER, CODER, 3], ['default', FOLDER, MOVED, 2]);
+  const stats = { inputTokens: 18, outputTokens: 2903, estimatedCostUsd: 0.1682544, costStatus: 'estimated', apiCallCount: 5 };
+  const localRow = (id, cwd = FOLDER, at = 9000) => ({ id, title: `t-${id.slice(6, 8)}`, cwd, model: 'm', messageCount: 10, startedAt: at, updatedAt: at, stats });
+  const rows = [...rowsIn(2), localRow(OWN), localRow(OTHER, FOLDER, 9500), localRow(THERE), localRow(CODER), localRow(MOVED, '/elsewhere')];
+  const ui = { v: 1, folder: FOLDER, selected: { agent: 'hermes', profile: 'default', session: OWN }, collapsed: [] };
+  const profiles = [{ profile: 'default', rows }, { profile: 'coder', rows: [localRow(OWN), localRow(CODER)] }];
+  const l = list({ profiles, owned, ui });
+  // Another editor's chat in this folder, one made in another folder, one another profile made and one Hermes moved
+  // to another folder stay out.
+  assert.deepEqual(l.groups[0].rows.map((r) => [r.sessionId, r.selected, r.local]), [[OWN, true, false], [sid(2), false, false], [sid(1), false, false]]);
+  assert.deepEqual([l.groups[0].rows[0].stats, l.groups[0].rows[0].messageCount], [stats, 10]);
+  assert.deepEqual(l.groups[1].rows.map((r) => r.sessionId), [CODER]);
+  assert.equal(pruneUi(ui, l), ui, 'the owned selection survives the list');
+  const stray = { ...ui, selected: { ...ui.selected, session: OTHER } };
+  assert.equal(pruneUi(stray, list({ profiles, owned, ui: stray })).selected, null, 'an unrelated local selection is cleared');
+  // Without the key no local chat shows, and the ACP rows are exactly the legacy list.
+  assert.deepEqual(list({ profiles }).groups[0].rows.map((r) => r.sessionId), [sid(2), sid(1)]);
+  assert.deepEqual(list({ profiles, owned: { v: 1, sessions: 'x' } }).groups.map((g) => g.visible), [true, false]);
+  // session/list (the fallback) lists every local chat of the folder: the same rule applies.
+  const listed = mapSessionList({ sessions: [OWN, OTHER].map((sessionId) => ({ sessionId, cwd: FOLDER, updatedAt: '2026-11-25T18:54:00Z' })) });
+  assert.deepEqual(list({ profiles: [{ profile: 'default', rows: listed }], owned }).groups[0].rows.map((r) => r.sessionId), [OWN]);
+  // Sessions made in this run show before the database has them, local ids among them.
+  assert.deepEqual(list({ profiles: [{ profile: 'default', rows: [] }], local: [{ profile: 'default', sessionId: LID('6'), cwd: FOLDER, updatedAt: 1 }] }).groups[0].rows.map((r) => [r.sessionId, r.local]), [[LID('6'), true]]);
+});
+
+test('a remembered owned selection stands in for its row until the database lists it or rules it out', () => {
+  const OWN = LID('1'), OTHER = LID('2');
+  const owned = OWNED(['default', FOLDER, OWN, 5000]);
+  const ui = { v: 1, folder: `${FOLDER}/`, selected: { agent: 'hermes', profile: 'default', session: OWN }, collapsed: [] };
+  // Held only for a local id that profile made in this folder, from the key as it is stored.
+  assert.deepEqual(heldSelection(ui, owned, FOLDER), { profile: 'default', sessionId: OWN, at: 5000 });
+  assert.equal(heldSelection(ui, owned, '/elsewhere'), null, 'the key of another folder');
+  assert.equal(heldSelection(ui, OWNED(['default', '/elsewhere', OWN, 5000]), FOLDER), null, 'made in another folder');
+  assert.equal(heldSelection(ui, OWNED(['coder', FOLDER, OWN, 5000]), FOLDER), null, 'made by another profile');
+  assert.equal(heldSelection({ ...ui, selected: { ...ui.selected, session: OTHER } }, owned, FOLDER), null, 'not made here');
+  assert.equal(heldSelection({ ...ui, selected: { ...ui.selected, session: sid(1) } }, OWNED(['default', FOLDER, sid(1), 1]), FOLDER), null, 'an ACP id');
+  assert.equal(heldSelection(ui, owned, null), null);
+  // The service passes it as a session made in this run: it stands in, selected, while the profile's rows lack it
+  // (not read yet, none, or no message counted) and once a row lists it the row wins.
+  const held = [{ profile: 'default', sessionId: OWN, title: null, updatedAt: 5000, cwd: FOLDER }];
+  const at = (rows) => list({ profiles: [{ profile: 'default', rows }], local: held, owned, ui });
+  for (const [what, rows] of [['not loaded', null], ['empty', []], ['others only', rowsIn(2)]]) {
+    const l = at(rows);
+    assert.deepEqual(l.groups[0].rows.find((r) => r.sessionId === OWN)?.local, true, what);
+    assert.equal(pruneUi(normalizeUi(ui, FOLDER), l).selected?.session, OWN, what);
+  }
+  const saved = { id: OWN, title: 'Saved', cwd: FOLDER, model: 'm', messageCount: 2, startedAt: 1, updatedAt: 6000, stats: null, archived: false };
+  assert.deepEqual(at([saved]).groups[0].rows.map((r) => [r.sessionId, r.local, r.title]), [[OWN, false, 'Saved']]);
+  // Ruled out: archived, or Hermes moved it to another folder. No row then, so the selection is cleared.
+  for (const [what, gone] of [['archived', { ...saved, archived: true }], ['moved', { ...saved, cwd: '/elsewhere' }]]) {
+    const l = at([gone]);
+    assert.deepEqual(l.groups[0].rows, [], what);
+    assert.equal(pruneUi(normalizeUi(ui, FOLDER), l).selected, null, what);
+  }
+  // A record goes as a whole.
+  assert.deepEqual(dropOwned(OWNED(['default', FOLDER, OWN, 5], ['coder', FOLDER, OWN, 4]), 'default', OWN).sessions.map((e) => e.profile), ['coder']);
+  assert.equal(dropOwned(owned, 'coder', OWN), null);
 });
 
 test('local new sessions, running and bridge state, selection and collapse', () => {

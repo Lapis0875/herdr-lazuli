@@ -443,7 +443,7 @@ Install (README): copy to `~/.herdr/herdr-relay/profiles/lazuli.json`, `chmod 60
 | i18n | `i18n.test.mjs` | key sets equal in both languages; placeholders equal; no empty text; fallback order |
 | other pure logic | `todo-doc.test.mjs`, `queue-doc.test.mjs`, `spend.test.mjs`, `agent-cmd.test.mjs`, `resume-tools.test.mjs`, `md-tree.test.mjs`, `lru.test.mjs`, `proto.test.mjs` | upstream to-do and queue cases; Claude duplicate usage lines counted once; unknown model unpriced; argv per tool; a partial JSON line held until complete; oversized line refused |
 | structure | `purity.test.mjs`, `layout.test.mjs`, `theme.test.mjs`, `relay-profile.test.mjs`, `static-server.test.mjs` | forbidden imports in `core/`; unique layout ids; every `view` exists in `VIEWS`; every `keys.json` action is in the bus table; `panel-body.active === "files"`; the Assistant's center child, columns, views and ⌥⌘4; the settings 1→2 pins migration; contrast ≥ 4.5 for each text/background token pair; 16 ANSI colors; profile scripts exist; `..` and a wrong `Host` are refused |
-| Assistant (§13) | `acp-wire.test.mjs`, `assistant-agents.test.mjs`, `assistant-chat.test.mjs`, `assistant-list.test.mjs`, `assistant-sessions-sql.test.mjs`, `acp-bridge.test.mjs`, `fake-acp-agent.test.mjs` | the chat reducer's eleven rules with deadlines at 59,999/60,000/60,001 ms, approval buttons by option id, a reply-less turn failing with its agent error or no-reply, and a running turn applied again after a load showing once; cwd equality, firmlink short forms, hidden profiles, `default` first, Nod last, UI state of another folder reset; argv always with `-p`; discovery reuse by profile, folder, Herdr and agent argv; the tracker's turns and loads; stderr lines redacted and Hermes's error lines read as agent errors; the bridge's auth, file modes, token kept out of the log, loopback, hello, replay and `gap`, a stream that starts over with `turns`, `agent-error` records, `replaced`, ping, idle exit and none with a prompt or approval open, Herdr gone within 5 s (12 s with a running prompt), SIGHUP, agent crash, a 5 MiB burst in order, a 16 MiB line dropped; the session query on a WAL database built from Hermes's schema and a missing column read as `schema`; every fake-agent row against the recorded Hermes shapes |
+| Assistant (§13) | `acp-wire.test.mjs`, `assistant-agents.test.mjs`, `assistant-chat.test.mjs`, `assistant-list.test.mjs`, `assistant-sessions-sql.test.mjs`, `assistant-owned-sessions.test.mjs`, `acp-bridge.test.mjs`, `fake-acp-agent.test.mjs` | the chat reducer's eleven rules with deadlines at 59,999/60,000/60,001 ms, approval buttons by option id, a reply-less turn failing with its agent error or no-reply, and a running turn applied again after a load showing once; cwd equality, firmlink short forms, hidden profiles, `default` first, Nod last, UI state of another folder reset; argv always with `-p`; discovery reuse by profile, folder, Herdr and agent argv; the tracker's turns and loads; stderr lines redacted and Hermes's error lines read as agent errors; the bridge's auth, file modes, token kept out of the log, loopback, hello, replay and `gap`, a stream that starts over with `turns`, `agent-error` records, `replaced`, ping, idle exit and none with a prompt or approval open, Herdr gone within 5 s (12 s with a running prompt), SIGHUP, agent crash, a 5 MiB burst in order, a 16 MiB line dropped; the session query on a WAL database built from Hermes's schema and a missing column read as `schema`; Hermes local sessions: only the owned ones read by id (legacy and gateway schemas, outside the 1,000-row limit, archived ones flagged), other folders', profiles' and editors' local chats hidden, an owned chat selected and loaded with its usage after a reload; with `start` then `open` and the inventory held back, a reload during the chat's first turn keeps it selected and loads it with its transcript and cost without a select call, a newer selection wins, and one Hermes has no session for, archived, moved or owned elsewhere is not kept; with a fake gateway that loses a running prompt's answer to a load (la-c13), a reload mid-turn sends no load until the answer, streams the turn once, then loads once (one transcript, idle, cost), a select or Stop without the answer keeps the turn running, identical repeated turns stay two, and an ACP chat still loads mid-turn; every fake-agent row against the recorded Hermes shapes |
 
 **Live window** (`docs/TESTING.md`, owner: testcode-writer):
 1. Start a second Herdr with a scratch home: `HERDR_APP_HOME=/tmp/lazuli-home`, with `mods/lazuli`, the layout, themes and keys copied in. [INFERENCE] a second instance per home works; S6 confirms it.
@@ -702,6 +702,28 @@ snapshot or `shared.json`.
   until the database has them. The list is read again about a second after each turn. The shared key
   `lazuli.assistant.ui` keeps the selection and the collapsed groups (DESIGN E5): reset for another folder, the
   selection cleared once its row is gone.
+- **Hermes local sessions.** A gateway Hermes answers `session/new` and `session/fork` with an id `local-<64 hex>` and
+  stores the thread as `source='local'`, its cwd in the `cwd` column (AT-25); SESSIONS_SQL does not read it. The service
+  records each such id it was answered with, with that bridge's profile and folder, in the shared key
+  `lazuli.assistant.owned` (at most 200, the newest made kept; kept across folder changes). Each listing then reads
+  exactly those ids of that profile and folder with a second query on the same database target (`ownedSessionsSql`:
+  `source='local'`, at least one message, archived ones flagged; only columns Hermes 0.17.0 has), so the chat lists,
+  stays selected and loads after a reload with its database usage and cost. A local id shows only when owned in that
+  profile and folder, not archived, and its cwd is in the folder: another editor's, the CLI's, another folder's or
+  profile's local chats never show (from the database or `session/list`) and never count against the listing's
+  `LIMIT 1000`. With nothing owned a database is read with the one ACP query, as before. A compressed chat lists its
+  first row, as ACP rows do.
+- **Remembered local selection after a reload.** A reload starts from empty service state: the status copy's `start`
+  reconnects to the running bridge (whose hello restores the running turn), then lists every profile; a view's `open`
+  shares that list, then restores the selection. On la-c12 (AT-25) a reload during a new chat's first turn lost the
+  selection: the only writers that clear it are that full list's `pruneUi` and a folder change (none), and with
+  nothing of the run standing in for the chat any more (`local` is per run), the list read during the turn had no row
+  for it, so `pruneUi` cleared it and the restore found nothing to load. The service now passes the remembered
+  selection, when it is a local id owned in that profile and folder and nothing of this run holds it, as a stand-in
+  row (`heldSelection`): it stays selected through an inventory that is still out, failed or lacks its row, and the
+  restore loads it with no select call (once, and only while it is still the selection: a newer one wins). The stand-in
+  gives way to the database row, and goes with the selection when the rows rule it out (archived, or its cwd in
+  another folder) or a load answers without `models` (no such session; its record is dropped as well).
 - **Chats.** `+` makes `session/new` (an unused empty chat of that profile made in this run is reused); selecting runs
   `session/load`, whose history replays into the chat; Fork runs `session/fork`. Text goes as described in 13.6. Stop
   sends `session/cancel` and pauses the chips. An approval answer is `{outcome:{outcome:"selected", optionId}}`, one per
@@ -716,6 +738,16 @@ snapshot or `shared.json`.
   it streamed, a steer's answer as its notice; at most 4,000) and applies them again after the load, the prompts only
   as their user items: the turn shows once and whole. A turn too long to keep marks the chat stale (it reloads once
   idle); a turn that ended during the load loads the chat once more.
+- **No load under a gateway turn.** A Hermes gateway chat (a local id) is not loaded while a prompt of it waits for
+  its answer (in the service's view: the bridge's hello lists it as running, or this run sent it). On la-c13 (AT-25) a
+  reload just as such a turn finished loaded it: the prompt was never answered, so the chat kept Responding, and the
+  replayed history already held the finished pair, which the turn's events then added again. The gateway's load
+  installs a fresh snapshot whose event watermark can pass over the turn's `message.complete`
+  (`acp_adapter/gateway_server.py` `_adopt`, `_events`), and its history can hold the running turn; the observed run
+  fits that, but no Hermes-side log shows which. Instead such a chat shows the running turn alone, live, from its
+  events (a chat already loaded keeps its transcript), and loads once its answer comes, so the history replays once.
+  Only that answer ends the turn: without it the chat stays running (a Stop sends `session/cancel` and waits for the
+  answer too), with no timeout. Earlier turns of such a chat show only once the running one ended.
 - **Agent errors and failed turns.** An `agent-error` record is not tied to a session: every chat of that profile gets
   it, and a chat whose turn runs keeps the newest one. A prompt's turn that ends `end_turn` with no assistant text, no
   tool item and no approval card gets a `failed` notice with that text, or "Hermes ended the turn without a reply; see

@@ -1,6 +1,7 @@
 // The Assistant's sessions on disk (CONTRACTS K6, K8; spike S9): Hermes's profiles, each profile's ACP sessions read
-// read-only from its `state.db` with Hermes's own listing query (core/assistant-list.js SESSIONS_SQL), and the folder's
-// files for the composer's @ menu. Nothing here writes under ~/.hermes.
+// read-only from its `state.db` with Hermes's own listing query (core/assistant-list.js SESSIONS_SQL) and the local
+// sessions Lazuli made there (ownedSessionsSql), and the folder's files for the composer's @ menu. Nothing here writes
+// under ~/.hermes.
 //
 // Every function takes `run(command, args, options)`, resolving `{code, stdout, stderr}` (Herdr's `exec`, or Node's
 // child_process in tests), so this module imports no host module and tests run it against real sqlite3 databases.
@@ -11,7 +12,7 @@
 // `file:<db>?immutable=1`. A database without a column or table the query reads (another Hermes version) is
 // `{error: "schema"}`; a profile without a `state.db` has no sessions yet.
 
-import { SESSIONS_SQL, mapRows, isProfileName, firmlinkShort } from "../core/assistant-list.js";
+import { SESSIONS_SQL, ownedSessionsSql, mapRows, isProfileName, firmlinkShort } from "../core/assistant-list.js";
 import { stateDbPath, profilesDir } from "../core/assistant-agents.js";
 import { kindOf } from "../core/paths.js";
 
@@ -64,31 +65,45 @@ export function queryResult(r) {
 }
 
 /**
- * One state.db's ACP sessions: `{rows, via}` (`via` "readonly" or "immutable") or `{error, detail}`. A missing file is
- * `{rows: [], via: "absent"}`: that profile has no sessions yet.
+ * One state.db's sessions: `{rows, via}` (`via` "readonly" or "immutable") or `{error, detail}`. A missing file is
+ * `{rows: [], via: "absent"}`: that profile has no sessions yet. The rows are SESSIONS_SQL's, then the Hermes local
+ * sessions among `owned` (ownedSessionsSql, run on the target SESSIONS_SQL read, only when there is such an id), so a
+ * database without local sessions is read exactly as before; a failure of either query is the result.
  */
-export async function querySessions(run, db) {
+export async function querySessions(run, db, owned = []) {
   if (typeof db !== "string" || !db.startsWith("/")) return { error: "failed", detail: "no database path" };
   if (!(await exists(run, db))) return { rows: [], via: "absent" };
-  const once = async (target) => {
+  const once = async (target, sql) => {
     try {
-      return await run(SQLITE, ["-readonly", "-json", target, SESSIONS_SQL], { timeout: QUERY_MS });
+      return await run(SQLITE, ["-readonly", "-json", target, sql], { timeout: QUERY_MS });
     } catch (e) {
       return { code: -1, stdout: "", stderr: errText(e) };
     }
   };
-  const first = await once(db);
-  const r = queryResult(first);
-  if (!r.error) return { ...r, via: "readonly" };
-  if (r.error !== "open" || !/\(14\)/.test(said(first)) || (await exists(run, `${db}-wal`))) return r;
-  const again = queryResult(await once(`file:${uriPath(db)}?immutable=1`));
-  return again.error ? again : { ...again, via: "immutable" };
+  let target = db;
+  let via = "readonly";
+  const first = await once(db, SESSIONS_SQL);
+  let r = queryResult(first);
+  if (r.error) {
+    if (r.error !== "open" || !/\(14\)/.test(said(first)) || (await exists(run, `${db}-wal`))) return r;
+    target = `file:${uriPath(db)}?immutable=1`;
+    via = "immutable";
+    r = queryResult(await once(target, SESSIONS_SQL));
+    if (r.error) return r;
+  }
+  const sql = ownedSessionsSql(owned);
+  if (!sql) return { ...r, via };
+  const mine = queryResult(await once(target, sql));
+  if (mine.error) return mine;
+  const ids = new Set(r.rows.map((x) => x.id));
+  return { rows: [...r.rows, ...mine.rows.filter((x) => !ids.has(x.id))], via };
 }
 
-/** One profile's sessions: `querySessions` on its state.db (`~/.hermes/state.db` for `default`). */
-export function profileSessions(run, home, profile) {
+/** One profile's sessions: `querySessions` on its state.db (`~/.hermes/state.db` for `default`), with the local
+ *  session ids Lazuli made with that profile in the folder. */
+export function profileSessions(run, home, profile, owned = []) {
   const db = stateDbPath(home, profile);
-  return db ? querySessions(run, db) : Promise.resolve({ error: "failed", detail: `bad profile ${profile}` });
+  return db ? querySessions(run, db, owned) : Promise.resolve({ error: "failed", detail: `bad profile ${profile}` });
 }
 
 /** Folder names → the profiles that may run: `default`, then every valid profile name, each once, by name. */
