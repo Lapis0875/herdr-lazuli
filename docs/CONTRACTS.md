@@ -912,7 +912,10 @@ Every reply ends its connection, and the bridge destroys it 1 s later (no half-o
   hold requests fail them (stale). `ensureBridge(cx, profile, {launch})`: a launch-wanting caller never gets the
   answer of a reuse-only connect in flight; it waits for it. Replacing a same-folder, same-Herdr bridge after a
   missing `hello` or an argv change requires authenticated shutdown and confirmed exit (or confirmed prior exit).
-  When exit is uncertain, keep discovery and return retryable `bridge-timeout` without launching. Reuse-only never
+  When exit is uncertain, keep discovery and return retryable `bridge-timeout` without launching. A launch never
+  attaches to a live bridge of this profile for another folder: one of this Herdr (`herdrPid` matches) is retired
+  the same way first (authenticated shutdown, confirmed exit; unconfirmed: retryable `bridge-elsewhere`, no launch);
+  another Herdr's live bridge (either folder) is left alone and nothing starts (`bridge-foreign`). Reuse-only never
   shuts down a bridge. Attach, recovery, callbacks and `open(cx)` are scoped to the current folder generation.
   A delayed `hello` cannot replace the active client; recovery preserves an identity mismatch as `auth`. A
   `replaced` subscriber relinquishes shutdown authority, settles its in-flight turns locally as disconnected,
@@ -972,7 +975,7 @@ AssistantState = {gate: ok|checking|no-folder|folder-missing|relay|hermes-missin
                   list: ListModel, sessions:{[key]: ChatState}, notices}
 ```
 - Results are `{ok:true, …}` or `{error}`; codes `no-folder relay hermes-missing hermes-check-failed
-  bridge-launch-failed bridge-timeout agent-exit auth disconnected busy not-found too-long too-late rpc:<code>`, and
+  bridge-launch-failed bridge-timeout bridge-elsewhere bridge-foreign agent-exit auth disconnected busy not-found too-long too-late rpc:<code>`, and
   `cancelled` for a dismissed picker. `key` is `<profile>/<sessionId>`.
 - `open` order, list sources, send routing and notices: ARCHITECTURE §13.4 and §13.6.
 

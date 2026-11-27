@@ -597,8 +597,13 @@ snapshot or `shared.json`.
   `hello` arrives within 5 s. A launch that cannot reuse a bridge of this folder, profile and Herdr (no `hello` or
   a different agent argv) requests authenticated shutdown unless the process is already confirmed gone. An ACK is
   not exit: only confirmed absence permits retirement and replacement. An inconclusive result leaves discovery alone
-  and shows a retryable error; the mod also remembers the discovery if an older bridge unlinks it early. A reuse-only
-  connection never shuts down the bridge. The read helper distinguishes ENOENT from an unreadable file; an uncertain
+  and shows a retryable error; the mod also remembers the discovery if an older bridge unlinks it early. A live bridge
+  of the profile for another folder holds the profile's lock, so a bridge launched beside it would exit at once (la-c15:
+  the folder changed in `settings.json` and a reload, with no client of the old bridge connected, showed "Couldn't start
+  Hermes"). It is never attached: one of this Herdr is retired first in the same way (authenticated shutdown, confirmed
+  exit; otherwise the retryable `bridge-elsewhere` and no launch); another Herdr's (either folder) is left alone and
+  nothing starts (`bridge-foreign`). A reuse-only connection never shuts down the bridge. The read helper distinguishes
+  ENOENT from an unreadable file; an uncertain
   or invalid discovery cannot authorize replacement. Finished terminals are reaped without signalling any live
   terminal from a saved PID. An orphan after ungraceful bridge death is deliberately not signalled.
   Every attachment, queued transport write and stream callback belongs to one folder generation. `hello` must

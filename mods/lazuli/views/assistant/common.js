@@ -77,12 +77,12 @@ export function rowTime(at, now = Date.now()) {
   return shortDate(at);
 }
 
-const BANNERS = ["agent-exit", "disconnected", "bridge-launch-failed", "bridge-timeout", "auth"];
+const BANNERS = ["agent-exit", "disconnected", "bridge-launch-failed", "bridge-timeout", "auth", "bridge-elsewhere", "bridge-foreign"];
 
 /** A bridge error code with words of its own (`assistant.banner.<code>`); any other reads as a failed launch. */
 export const bannerCode = (code) => (BANNERS.includes(code) ? code : "bridge-launch-failed");
 
-const ERRORS = ["no-folder", "relay", "hermes-missing", "hermes-check-failed", "bridge-launch-failed", "bridge-timeout", "agent-exit", "auth", "disconnected", "busy", "not-found", "too-long", "too-late"];
+const ERRORS = ["no-folder", "relay", "hermes-missing", "hermes-check-failed", "bridge-launch-failed", "bridge-timeout", "bridge-elsewhere", "bridge-foreign", "agent-exit", "auth", "disconnected", "busy", "not-found", "too-long", "too-late"];
 
 /** A service call's error code (K4) in words: `rpc:<code>` with its code, the others by name. */
 export function errorText(code) {

@@ -195,6 +195,10 @@ export default {
   "assistant.banner.bridge-timeout.body": "45초 안에 Hermes가 준비되지 않았습니다. 다시 시도하면 한 번 더 기다립니다.",
   "assistant.banner.auth": "Hermes 연결을 확인하지 못했습니다",
   "assistant.banner.auth.body": "이 폴더에서 실행 중인 브리지가 이 연결을 받지 않았습니다. 다시 시도하면 다시 확인하며, 그 브리지를 멈추거나 바꾸지는 않습니다.",
+  "assistant.banner.bridge-elsewhere": "다른 폴더의 Hermes가 아직 실행 중입니다",
+  "assistant.banner.bridge-elsewhere.body": "이 프로필이 이전 폴더에서 쓰던 브리지가 아직 멈추지 않아 이 폴더의 브리지를 시작할 수 없습니다. 다시 시도하면 다시 멈추도록 요청합니다.",
+  "assistant.banner.bridge-foreign": "다른 Herdr가 이 프로필의 Hermes를 실행 중입니다",
+  "assistant.banner.bridge-foreign.body": "그쪽 브리지가 이 프로필을 쓰고 있어 lazuli가 브리지를 하나 더 시작하지 않습니다. 그쪽 비서를 닫거나 그 Herdr를 종료한 뒤 다시 시도하세요.",
 
   // A service call's error (K4 codes), shown briefly over the chat.
   "assistant.error.no-folder": "폴더가 정해지지 않았습니다",
@@ -205,6 +209,8 @@ export default {
   "assistant.error.bridge-timeout": "Hermes가 제때 응답하지 않았습니다",
   "assistant.error.agent-exit": "Hermes가 종료됐습니다",
   "assistant.error.auth": "Hermes 연결을 확인하지 못했습니다",
+  "assistant.error.bridge-elsewhere": "다른 폴더의 Hermes가 아직 실행 중입니다",
+  "assistant.error.bridge-foreign": "다른 Herdr가 이 프로필의 Hermes를 실행 중입니다",
   "assistant.error.disconnected": "Hermes와 연결이 끊겼습니다",
   "assistant.error.busy": "응답이 끝난 뒤 다시 시도하세요",
   "assistant.error.not-found": "Hermes가 이 대화를 찾지 못했습니다",

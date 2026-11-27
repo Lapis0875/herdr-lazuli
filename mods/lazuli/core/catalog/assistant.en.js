@@ -195,6 +195,10 @@ export default {
   "assistant.banner.bridge-timeout.body": "Hermes wasn't ready within 45 seconds. Retry waits once more.",
   "assistant.banner.auth": "Couldn't verify the connection to Hermes",
   "assistant.banner.auth.body": "The running bridge for this folder didn't accept this connection. Retry checks again; it doesn't stop or replace that bridge.",
+  "assistant.banner.bridge-elsewhere": "Hermes is still running for another folder",
+  "assistant.banner.bridge-elsewhere.body": "This profile's bridge for the previous folder hasn't stopped yet, so one for this folder can't start. Retry asks it to stop again.",
+  "assistant.banner.bridge-foreign": "Another Herdr is running Hermes for this profile",
+  "assistant.banner.bridge-foreign.body": "Its bridge holds this profile, so lazuli doesn't start a second one. Close the Assistant there or quit that Herdr, then Retry.",
 
   // A service call's error (K4 codes), shown briefly over the chat.
   "assistant.error.no-folder": "No folder chosen",
@@ -205,6 +209,8 @@ export default {
   "assistant.error.bridge-timeout": "Hermes didn't answer in time",
   "assistant.error.agent-exit": "Hermes quit",
   "assistant.error.auth": "Couldn't verify the connection to Hermes",
+  "assistant.error.bridge-elsewhere": "Hermes is still running for another folder",
+  "assistant.error.bridge-foreign": "Another Herdr is running Hermes for this profile",
   "assistant.error.disconnected": "Lost the connection to Hermes",
   "assistant.error.busy": "Try again once the response ends",
   "assistant.error.not-found": "Hermes couldn't find this chat",

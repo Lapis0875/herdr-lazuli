@@ -656,3 +656,97 @@ test('an hc run receipt returned after the deadline is the only terminal cleaned
   await new Promise(setImmediate);
   assert.deepEqual(host.hc.slice(1), [['kill', host.address], ['rm', host.address]]);
 });
+
+// A live bridge of this profile for another folder holds the profile's lock: a bridge launched beside it exits at once
+// (la-c15: folder changed in settings.json and a reload, "Couldn't start Hermes"). It is never attached; this Herdr's is
+// retired through its authenticated shutdown and confirmed exit first; another Herdr's is left alone.
+const otherFolder = (host, extra = {}) => { host.discovery = JSON.stringify({ ...defaultReady, cwd: '/a', startedAt: 1, ...extra }); };
+const ops = (host) => host.steps.filter(([op]) => op !== 'probe');
+const noSignals = (host) => host.exec.every(([command, args]) => command !== '/bin/kill' || args[0] === '-0');
+
+test('a launch for this folder retires this Herdr\'s live bridge of another folder first, never attaching to it', async () => {
+  const host = defaultFixture();
+  otherFolder(host);
+  host.shutdownReply = { ok: true };
+  host.exitState = 'gone';
+  const service = await import('../mods/lazuli/sys/assistant.js?other-folder-retired');
+  assert.deepEqual(await service.open(cx), { ok: true });
+  assert.deepEqual(host.steps.slice(0, 3), [['probe', 'present'], ['shutdown', host.oldToken], ['probe', 'gone']]);
+  assert.deepEqual(ops(host), [['shutdown', host.oldToken], ['launch'], ['attach', host.replacement.token]], 'one shutdown, then the launch; no attach to it');
+  const launch = host.hc.find(([op]) => op === 'run');
+  assert.equal(launch[launch.indexOf('--cwd') + 1], '/project');
+  assert.equal(JSON.parse(host.discovery).cwd, '/project');
+  assert.deepEqual(service.snapshot().bridges.default, { state: 'ready' });
+  assert.ok(noSignals(host));
+  assert.ok(host.hc.every(([op]) => op === 'ls' || op === 'run'), 'no terminal killed');
+});
+
+test('a dead bridge\'s discovery for another folder needs no shutdown: the launch goes ahead', async () => {
+  const host = defaultFixture();
+  otherFolder(host);
+  host.commands.delete(host.oldPid);
+  const service = await import('../mods/lazuli/sys/assistant.js?other-folder-dead');
+  assert.deepEqual(await service.open(cx), { ok: true });
+  assert.deepEqual(ops(host), [['launch'], ['attach', host.replacement.token]]);
+});
+
+for (const unlinkEarly of [false, true]) {
+  test(`another folder's bridge whose exit is not confirmed: no launch, a retryable bridge-elsewhere${unlinkEarly ? ' (its discovery gone early)' : ''}`, async () => {
+    const host = defaultFixture();
+    otherFolder(host);
+    Object.assign(host, { shutdownReply: { ok: true }, exitState: 'present', unlinkEarly });
+    const service = await import(`../mods/lazuli/sys/assistant.js?other-folder-unconfirmed-${unlinkEarly}`);
+    const discovery = host.discovery;
+    assert.deepEqual(await service.open(cx), { error: 'bridge-elsewhere' });
+    assert.deepEqual(ops(host), [['shutdown', host.oldToken]]);
+    assert.equal(service.snapshot().bridges.default.state, 'error');
+    assert.equal(service.snapshot().bridges.default.error, 'bridge-elsewhere');
+    if (!unlinkEarly) assert.equal(host.discovery, discovery, 'discovery kept');
+    // Retry: asked to stop again while its discovery shows it; once only its PID remains, the remembered one is checked.
+    host.steps.length = 0;
+    assert.equal((await service.retryBridge(cx, 'default')).error, 'bridge-elsewhere');
+    assert.deepEqual(ops(host), unlinkEarly ? [] : [['shutdown', host.oldToken]]);
+    assert.ok(host.hc.every(([op]) => op !== 'run'), 'nothing launched');
+    assert.ok(noSignals(host));
+  });
+}
+
+for (const cwd of ['/a', '/project']) {
+  test(`another Herdr's live bridge (${cwd === '/a' ? 'another folder' : 'this folder'}) is left alone: no shutdown, no launch, bridge-foreign`, async () => {
+    const host = defaultFixture();
+    otherFolder(host, { cwd, herdrPid: 77 });
+    const discovery = host.discovery;
+    const service = await import(`../mods/lazuli/sys/assistant.js?foreign-${cwd.slice(1)}`);
+    assert.deepEqual(await service.open(cx), { error: 'bridge-foreign' });
+    assert.deepEqual(ops(host), []);
+    assert.deepEqual(host.hc.filter(([op]) => op !== 'ls'), []);
+    assert.equal(host.discovery, discovery);
+    assert.equal(service.snapshot().bridges.default.error, 'bridge-foreign');
+    assert.ok(noSignals(host));
+  });
+}
+
+test('this folder\'s live bridge of this Herdr is attached as before: no shutdown, no launch', async () => {
+  const host = defaultFixture();
+  host.oldToken = null; // it answers hello
+  const service = await import('../mods/lazuli/sys/assistant.js?same-folder-attach');
+  assert.deepEqual(await service.open(cx), { ok: true });
+  assert.deepEqual(host.steps, [['probe', 'present'], ['attach', defaultReady.token]]);
+  assert.deepEqual(host.hc, []);
+});
+
+test('a bridge this instance relinquished is not retired from another folder either', async () => {
+  const host = defaultFixture();
+  host.oldToken = null;
+  const former = await import('../mods/lazuli/sys/assistant.js?relinquished-other-folder');
+  assert.deepEqual(await former.open(cx), { ok: true });
+  const client = host.clients[0];
+  client.close();
+  await client.callbacks.onEnd({ reason: 'replaced' }, cx);
+  host.steps.length = 0;
+  host.hc.length = 0;
+  assert.deepEqual(await former.setFolder(cx, '/other'), { ok: true, path: '/other' });
+  assert.deepEqual(ops(host), [], 'neither shut down nor attached nor launched beside it');
+  assert.ok(host.hc.every(([op]) => op !== 'run'));
+  assert.deepEqual(former.snapshot().bridges.default, { state: 'off' });
+});

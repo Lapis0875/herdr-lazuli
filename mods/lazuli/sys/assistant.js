@@ -16,8 +16,8 @@
 //   onNotice(fn)                             notices for sys/notify.js: {id, kind, key, title, body, at}
 //
 // Results are `{ok: true, …}` or `{error}`, codes: no-folder relay hermes-missing hermes-check-failed
-// bridge-launch-failed bridge-timeout agent-exit auth disconnected busy not-found too-long too-late rpc:<code>, and
-// `cancelled` for a dismissed folder picker.
+// bridge-launch-failed bridge-timeout bridge-elsewhere bridge-foreign agent-exit auth disconnected busy not-found
+// too-long too-late rpc:<code>, and `cancelled` for a dismissed folder picker.
 //
 // Each chat is core/assistant-chat.js state, reduced from the bridge's records and the service's own events; the list
 // is core/assistant-list.js `buildList` over each profile's state.db rows (sys/assistant-sessions.js), the sessions
@@ -757,7 +757,8 @@ async function connectBridge(cx, profile, scope, launch) {
     }
   }
   if (launch && !ours && d === pending && (await bridge.pidState(d.pid)) !== "gone") {
-    const r = { error: "bridge-timeout", detail: "The previous bridge could not be confirmed stopped" };
+    const elsewhere = d.cwd !== folder;
+    const r = { error: elsewhere ? "bridge-elsewhere" : "bridge-timeout", detail: `The ${elsewhere ? "other folder's" : "previous"} bridge could not be confirmed stopped` };
     if (valid()) setBridge(cx, profile, { state: "error", ...r });
     return r;
   }
@@ -771,6 +772,33 @@ async function connectBridge(cx, profile, scope, launch) {
   if (!argv) {
     setBridge(cx, profile, { state: "error", error: "hermes-missing" });
     return { error: "hermes-missing" };
+  }
+  // A live bridge of this profile that is not this folder's (K3: one bridge a profile, which holds the profile's lock
+  // until it exits, so a launch beside it ends at once): never attached (folder isolation). Another Herdr's is left
+  // alone and nothing starts. This Herdr's, for another folder (the folder changed while no client of it was
+  // connected, e.g. in settings.json and a reload), is retired as switchFolder retires one: its authenticated shutdown,
+  // then its confirmed exit, before the launch; an exit not confirmed starts nothing. No PID signal either way (F14).
+  if (found.state === "ready" && found.profile === profile && !ours && (await bridge.pidState(found.pid)) !== "gone") {
+    if (!valid()) return { error: "disconnected" };
+    if (found.herdrPid !== pid) {
+      const r = { error: "bridge-foreign", detail: `The ${profile} bridge pid ${found.pid} belongs to another Herdr (pid ${found.herdrPid})` };
+      setBridge(cx, profile, { state: "error", ...r });
+      return r;
+    }
+    if (releasedStreams.get(releaseKey(profile, found.cwd))?.token === found.token) {
+      setBridge(cx, profile, { state: "off" });
+      return { error: "disconnected" };
+    }
+    log(`the ${profile} bridge pid ${found.pid} runs for ${found.cwd}: requesting shutdown`);
+    const stopped = await shutdownBridge(cx, found);
+    if (!(await bridge.awaitExit(cx, profile, found.pid))) {
+      pendingStops.set(profile, found);
+      if (!valid()) return { error: "disconnected" };
+      const r = { error: "bridge-elsewhere", detail: stopped.ok ? "The other folder's bridge has not exited" : "The other folder's bridge could not be confirmed stopped" };
+      setBridge(cx, profile, { state: "error", ...r });
+      return r;
+    }
+    if (!valid()) return { error: "disconnected" };
   }
   // Reaping touches finished terminals only. The bridge compares and replaces discovery under its own lock.
   if (found.state !== "absent") await bridge.reap([profile]);
