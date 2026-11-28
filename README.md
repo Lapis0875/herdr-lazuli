@@ -392,6 +392,11 @@ panel's listing, file reads, quick open, `git`, Review's `gh`, the session looku
   and `hc run --bg`, `hc kill`, `hc rm`, `hc ls --all --json` (bridge terminals). The bridge runs `hermes -p
   <profile> acp` in its own process group, in the folder, with the same `PATH` additions as `run-agent.mjs`.
   Orphans from a hard-killed bridge are not signalled using saved PIDs.
+- herdr-relay's switch in the status bar (on the Mac only): `hc get herdr-relay --json` about every 10 s while the
+  window shows, and, while no bridge Herdr started is live, `/bin/ps -p <pid> -o pid=` for the pid in
+  `mirror-endpoint.json`. When you turn it off: `/usr/bin/env PATH=<path> /bin/sh <launcher> autostart off`, then
+  `hc kill herdr-relay`. When you turn it on: the same `… autostart on`, then `… autostart run`. `<launcher>` and
+  `<path>` come from herdr-relay's `autostart.json`, or from the copy lazuli saved when it turned it off.
 
 **Reads**, outside its own folders:
 
@@ -404,6 +409,8 @@ panel's listing, file reads, quick open, `git`, Review's `gh`, the session looku
 - The Assistant: `~/.hermes/state.db` and `~/.hermes/profiles/<profile>/state.db`, read-only (the chat list, tokens and
   cost), the folder names under `~/.hermes/profiles`, and the files of the Assistant's folder. lazuli never writes under
   `~/.hermes`; Hermes itself does (its chats, and its provider login when it refreshes it).
+- herdr-relay's state folder `~/.herdr/herdr-relay/`: whether it exists, `autostart.json` and `mirror-endpoint.json`
+  (never its token).
 
 **Writes**
 
@@ -411,7 +418,8 @@ panel's listing, file reads, quick open, `git`, Review's `gh`, the session looku
   `routines-state.json` (schedule state and the last 20 runs of each routine), `ledger.jsonl` (agent working time),
   `migrated.json`, `snap/<name>.json` (snapshots of each store, for a warm start and herdr-relay), `drafts/` (unsaved
   edits), `cache/img/` (pictures for previews: 20 MB each at most, 200 MB in all), `cache/pdf/` (rendered pages, 300 MB
-  at most), `cache/walkthrough/` (finished walkthroughs), `tmp/` (a text file in flight before it is moved into place).
+  at most), `cache/walkthrough/` (finished walkthroughs), `tmp/` (a text file in flight before it is moved into place),
+  `relay.json` (herdr-relay's launcher and `PATH`, saved before the status bar turns its autostart off).
 - `~/.cache/lazuli/`: `scan-cache.json`, `run-cache.json`, `usage-cache.json` and `sessions-index.json` (the
   transcript reader's caches), `recaps/`, `routines/<slug>/<id>.*` and `runs/<id>.*` (run files: command, pid, output,
   exit), `bin/pdfd-<hash>`, `pdfd-<home>.json` (one per Herdr app home), `chrome.json` (both 0600), `broker.lock`, `chrome-profile/`, `chrome.log`,
@@ -432,7 +440,8 @@ panel's listing, file reads, quick open, `git`, Review's `gh`, the session looku
   0.19.1 from `cdn.jsdelivr.net`, pinned by subresource integrity, only when the page has a diagram or math.
 - Loopback only (`127.0.0.1`, random ports): the viewer's file server, the browser's DevTools port, the Chrome
   broker's lease port, the PDF renderer and the Assistant's bridges, which answer only a client holding the token in
-  their 0600 discovery files. The mod's own network use is the connections to the PDF renderer and the bridges.
+  their 0600 discovery files. The mod's own network use is the connections to the PDF renderer and the bridges, and a
+  connection to herdr-relay's port that it closes at once, without a request (is a bridge started outside Herdr up?).
 - Links open in your default browser.
 
 ## On your phone and tablet: herdr-relay
@@ -473,6 +482,17 @@ To install it:
 
 3. Restart the bridge: it reads profiles when it starts, and its log names each user profile it loaded or ignored.
    herdr-relay's `docs/PROFILES.md` §9 shows how to check a profile without starting the bridge.
+
+**Turning it on and off.** On the Mac the status bar shows a herdr-relay chip once `~/.herdr/herdr-relay/` exists:
+"Relay on" in the accent color while the bridge Herdr started runs, a dimmed icon while it is off, "Relay (external)"
+while a bridge started in a terminal or by the launchd agent runs (shown only: lazuli never stops it), and a spinner
+while it turns on or off. Click it for its menu. Turn off runs `herdr-relay autostart off` (otherwise the mirror mod
+starts the bridge again) and `hc kill herdr-relay`; Turn on runs `herdr-relay autostart on` and `autostart run` with the
+launcher and `PATH` autostart recorded, which lazuli saves to `data/lazuli/relay.json` before it turns autostart off.
+Each is confirmed by reading the status again; a failure shows "Relay failed" with the reason. The palette has the same
+commands ("Relay: Turn on", "Relay: Turn off"), and `herdr-app do lazuli.relay:on`, `relay:off` and `relay:status` run
+them too. Set autostart up once with `herdr-relay autostart on` (herdr-relay's `docs/INSTALL.md` §9); until then the
+chip says so. Devices never show the chip.
 
 ## Limits
 

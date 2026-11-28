@@ -378,6 +378,11 @@ Review의 `gh`, 세션 찾기)이 그 머신에서 실행됩니다.
   `hermes … acp`임을 `ps`로 확인한 뒤), 그리고 `hc run --bg`, `hc kill`, `hc rm`, `hc ls --all --json`(브리지와 끝난 브리지
   터미널). node로 도는 브리지 `bin/acp-bridge.mjs`는 `hermes -p <profile> acp`를 자기 프로세스 그룹에서, 폴더 안에서,
   `run-agent.mjs`와 같은 `PATH` 추가로 실행합니다.
+- 상태 표시줄의 herdr-relay 스위치(Mac에서만): 창이 보이는 동안 약 10초마다 `hc get herdr-relay --json`, Herdr가 띄운
+  브리지가 살아 있지 않을 때는 `mirror-endpoint.json`에 적힌 pid로 `/bin/ps -p <pid> -o pid=`. 끌 때는
+  `/usr/bin/env PATH=<path> /bin/sh <launcher> autostart off` 다음 `hc kill herdr-relay`, 켤 때는 같은 방식으로
+  `… autostart on` 다음 `… autostart run`. `<launcher>`와 `<path>`는 herdr-relay의 `autostart.json`에서, 없으면 lazuli가
+  끌 때 저장해 둔 사본에서 가져옵니다.
 
 **읽는 것** (자기 폴더 밖)
 
@@ -390,13 +395,16 @@ Review의 `gh`, 세션 찾기)이 그 머신에서 실행됩니다.
 - 비서: `~/.hermes/state.db`와 `~/.hermes/profiles/<profile>/state.db`를 읽기 전용으로(대화 목록, 토큰, 비용),
   `~/.hermes/profiles` 아래 폴더 이름, 비서 폴더의 파일. lazuli는 `~/.hermes` 아래에 아무것도 쓰지 않습니다. 쓰는 것은
   Hermes 자신입니다(대화, 그리고 제공자 로그인을 새로 고칠 때).
+- herdr-relay 상태 폴더 `~/.herdr/herdr-relay/`: 폴더가 있는지, `autostart.json`, `mirror-endpoint.json`(토큰은 읽지
+  않습니다).
 
 **쓰는 것**
 
 - Herdr 앱 홈의 `data/lazuli/`: `settings.json`, `todo.md`, `queue.json`, `routines/<slug>.md`, `routines-state.json`
   (일정 상태와 루틴마다 최근 20번의 실행), `ledger.jsonl`(에이전트 작업 시간), `migrated.json`, `snap/<name>.json`(빠른
   시작과 herdr-relay에 쓰는 저장소별 스냅숏), `drafts/`(저장하지 않은 수정), `cache/img/`(미리보기용 그림, 하나에 20 MB,
-  모두 합쳐 200 MB까지), `cache/pdf/`(그린 페이지, 300 MB까지), `cache/walkthrough/`(끝난 워크스루), `tmp/`(제자리로 옮기기 전의 텍스트 파일).
+  모두 합쳐 200 MB까지), `cache/pdf/`(그린 페이지, 300 MB까지), `cache/walkthrough/`(끝난 워크스루), `tmp/`(제자리로 옮기기 전의 텍스트 파일),
+  `relay.json`(상태 표시줄에서 herdr-relay 자동 시작을 끄기 전에 저장하는 실행기 경로와 `PATH`).
 - `~/.cache/lazuli/`: `scan-cache.json`, `run-cache.json`, `usage-cache.json`, `sessions-index.json`(대화 기록 리더의
   캐시), `recaps/`, `routines/<slug>/<id>.*`와 `runs/<id>.*`(실행 파일: 명령, pid, 출력, 종료 상태), `bin/pdfd-<hash>`,
   `pdfd-<home>.json`(Herdr 앱 홈마다 하나), `chrome.json`(둘 다 0600), `broker.lock`, `chrome-profile/`, `chrome.log`, `broker.log`,
@@ -417,7 +425,8 @@ Review의 `gh`, 세션 찾기)이 그 머신에서 실행됩니다.
   mermaid 12.3.0과 KaTeX 0.19.1을 하위 리소스 무결성(SRI)으로 고정해 불러옵니다.
 - 루프백(`127.0.0.1`, 임의 포트)만 쓰는 것: 뷰어의 파일 서버, 브라우저의 DevTools 포트, Chrome 브로커의 임대 포트, PDF
   렌더러, 비서 브리지. PDF 렌더러와 브리지는 0600 권한의 discovery 파일에 든 토큰을 가진 클라이언트에만 답합니다. 모드
-  자체가 쓰는 네트워크는 PDF 렌더러, 브리지와의 연결뿐입니다.
+  자체가 쓰는 네트워크는 PDF 렌더러, 브리지와의 연결, 그리고 herdr-relay 포트에 붙었다가 요청 없이 바로 끊는 연결(Herdr
+  밖에서 띄운 브리지가 떠 있는지 확인)뿐입니다.
 - 링크는 기본 브라우저에서 열립니다.
 
 ## 휴대폰과 태블릿에서: herdr-relay
@@ -457,6 +466,16 @@ macOS와 Tailscale만 지원하며, [Deno](https://deno.com) 2.9 이상이 필�
 
 3. 브리지를 다시 시작합니다. 프로필은 시작할 때 읽고, 불러오거나 무시한 사용자 프로필을 로그에 남깁니다. 브리지를 켜지 않고
    프로필을 검사하는 방법은 herdr-relay의 `docs/PROFILES.md` §9에 있습니다.
+
+**켜고 끄기.** Mac에서는 `~/.herdr/herdr-relay/`가 있으면 상태 표시줄에 herdr-relay 칩이 보입니다. Herdr가 띄운 브리지가
+돌 때는 강조 색의 "Relay 켜짐", 꺼져 있을 때는 흐린 아이콘, 터미널이나 launchd 에이전트로 띄운 브리지가 돌 때는
+"Relay(외부)"(보여 주기만 하고 lazuli가 끄지 않습니다), 켜거나 끄는 동안은 스피너입니다. 칩을 클릭하면 메뉴가 열립니다.
+끄기는 `herdr-relay autostart off`(안 그러면 미러 모드가 브리지를 다시 띄웁니다)와 `hc kill herdr-relay`를 실행하고, 켜기는
+자동 시작이 기록한 실행기와 `PATH`로 `herdr-relay autostart on`과 `autostart run`을 실행합니다. lazuli는 자동 시작을 끄기
+전에 이 실행기와 `PATH`를 `data/lazuli/relay.json`에 저장합니다. 둘 다 상태를 다시 읽어 확인하고, 실패하면 "Relay 실패"와
+이유를 보여 줍니다. 팔레트에도 같은 명령("Relay: 켜기", "Relay: 끄기")이 있고, `herdr-app do lazuli.relay:on`,
+`relay:off`, `relay:status`로도 실행할 수 있습니다. 자동 시작은 처음 한 번 `herdr-relay autostart on`으로 설정해야
+합니다(herdr-relay의 `docs/INSTALL.md` §9). 그전에는 칩이 그렇게 알려 줍니다. 기기에는 칩이 보이지 않습니다.
 
 ## 한계
 

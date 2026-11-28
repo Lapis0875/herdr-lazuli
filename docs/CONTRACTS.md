@@ -630,6 +630,114 @@ paletteCommands(chip(null)) // → ["menu","toggle","mode:on","mode:agent","mode
 - `ui/icons/coffee.svg`: Lucide `coffee` at stroke width 1.75, like the rest of the set (ISC, THIRD_PARTY_NOTICES "Lucide").
 - `tests/caffeinate-chip.test.mjs`: invalid, stale and `v: 2` states give `starting` with no active styling; each STATUS and LID entry has one icon (file present) and one tone, and a sample state reaches it; minutes left, lid, install and palette rules; every key above exists in both languages.
 
+## herdr-relay chip (ARCHITECTURE §8.1)
+
+lazuli shows whether herdr-relay runs and turns it on and off; it imports nothing from herdr-relay or its mirror mod and
+runs only the commands herdr-relay documents (its `docs/INSTALL.md` §9). Files: `core/relay-chip.js`, `sys/relay.js`,
+`views/status.js`, `views/shell/services.js`, `sys/search.js`, `sys/state.js` (`PREFIXED` gains `relay:`),
+`core/catalog/shell.{en,ko}.js`, `ui/icons/tablet-smartphone.svg`, `tests/relay-chip.test.mjs`,
+`tests/relay-service.test.mjs`. `layouts/lazuli.json` and `keys.json` are not changed.
+
+### core/relay-chip.js — pure
+
+```js
+export const TERMINAL = "herdr-relay", STATE_DIR = ".herdr/herdr-relay", AUTOSTART_FILE = "autostart.json"
+export const ENDPOINT_FILE = "mirror-endpoint.json", REMEMBER_FILE = "relay.json", LOG_FILE = "Library/Logs/herdr-relay.log"
+export const LAUNCHER_SUFFIX = "/packages/bridge/bin/herdr-relay", PATH_MAX = 8192
+export const GET_ARGS = ["get", "herdr-relay", "--json"], KILL_ARGS = ["kill", "herdr-relay"]
+export const VERBS = ["on", "off", "status"]
+export const STATUS: {[status]: {icon, tone}}   // on, off, starting, stopping, external, unset, error, unknown
+export const LABELED = ["on", "starting", "stopping", "external", "error"]
+export const ERRORS = ["exit", "spawn", "timeout", "remember"]
+export function launcherConfig(v): {launcher, path} | null
+export function autostartState(text | null): {kind: "absent"} | {kind: "ok", config} | {kind: "invalid"}
+export function rememberedConfig(text): config | null;  rememberText(config, at): string
+export function endpointOf(text): {port, pid} | null;  pidAlive(psResult, pid): boolean
+export function reasonOf(execResult): string           // last stderr line, else stdout's, else "exit <code>"; hc JSON → message; ≤200
+export function terminalState(execResult | {error}): {kind: "live", address} | {kind: "none", state} | {kind: "unknown", reason}
+export function baseOf(obs): "on" | "external" | "unknown" | "off" | "unset" | null
+export function chip(obs, {busy, error, device}): {status, base, icon, tone, busy, actions, error, autostart, address, reason} | null
+export function paletteCommands(chip): ("on" | "off")[];  allowed(chip, verb): boolean
+export function onPlan(obs): config | null;  offPlan(autostart, remembered): {remember, autostartOff}
+export function launcherArgs(config, verb): ["PATH=<path>", "/bin/sh", <launcher>, "autostart", verb]
+export function settled(verb, obs): boolean
+export function labelKey(chip), tipKey(chip), whyKey(error): string | null
+```
+- `obs` (what `sys/relay.js` read): `{present, terminal, autostart, endpoint, answering, remembered}`. `present`: the
+  state folder exists or a launcher is remembered; false → no chip. `answering`: the endpoint's pid runs and its port
+  accepts a connection.
+- `launcherConfig`: the mirror mod's rules (an absolute launcher ending in LAUNCHER_SUFFIX; a PATH of 1–8192 characters;
+  no C0 control or DEL in either). `autostartState`: `v === 1` with such a launcher and PATH is `ok`, null `absent`,
+  anything else `invalid`. `relay.json` = `{v: 1, launcher, path, at}`.
+- `terminalState`: exit 0 with JSON `state` `live` → live; another state → none; exit ≠ 0 with a JSON error of kind
+  `not_found` (stderr) → none; anything else, or hc not running → unknown with `reasonOf`.
+- `baseOf`: live → on; not none → unknown; answering → external; a valid autostart.json or a remembered launcher → off;
+  else unset.
+- `chip`: null for `device` or no base. `busy` ("starting" | "stopping") wins with no actions. `error`
+  `{action: "on"|"off", code: ERRORS, detail, seconds, base}` shows as `error` only while `base` equals the current
+  settled status. `actions`: on → ["off"], off → ["on"], every other status → []; an error offers its base's.
+  Tones: on accent (the only accent status), off and unset tertiary, starting, stopping and external secondary, error
+  error (`triangle-alert`), unknown unknown; the rest draw `tablet-smartphone`.
+- `offPlan`: valid file → remember its launcher and run `autostart off` with it; invalid file → `autostart off` with the
+  remembered launcher (null: skipped); no file → nothing (only `hc kill`). `onPlan`: the file's launcher, else the
+  remembered one.
+- `settled`: on → live terminal and answering; off → no live terminal (`none`).
+
+```js
+chip({present:true,terminal:{kind:"live",address:"t9c"},autostart:{kind:"ok",config},endpoint:null,answering:false,remembered:null})
+// → {status:"on",base:"on",icon:"tablet-smartphone",tone:"accent",busy:false,actions:["off"],error:null,autostart:true,address:"t9c",reason:null}
+chip({present:true,terminal:{kind:"none",state:null},autostart:{kind:"absent"},endpoint:{port:7781,pid:1},answering:true,remembered:null}).actions // → []
+chip(anyObs, {device: true}) // → null
+```
+
+### sys/relay.js — service (the status copy's)
+- `start(cx)` (from `views/shell/services.js`, after herdr-caffeinate; returns at once under `checking()`): a 2 s timer.
+  Each tick: off the Mac (`hostLocal()` false) only `probeHost(cx)`; else, unless a read or an action runs, the window is
+  hidden (`window()?.visible === false`) or the last read is under 10 s old, one read: the remembered launcher (once per
+  start), `fs.exists(~/.herdr/herdr-relay)`, then together `readTextFile` of autostart.json and mirror-endpoint.json and
+  `hc(GET_ARGS)`; when no terminal is live and an endpoint is named, `exec("/bin/ps", ["-p", pid, "-o", "pid="])` and
+  `net.connect("127.0.0.1", port)` raced with 2 s (closed at once). An older read never replaces a newer one. A change
+  of the settled status is logged (`[lazuli/relay]`, `debug.log` area `relay`).
+- `stop()`: cancels the timer; an action in flight finishes and its result is dropped.
+- `view()` → `chip(obs, {busy, error, device: !hostLocal()})`, safe in render; `commands()` → its `paletteCommands`;
+  `logPath()` → `~/Library/Logs/herdr-relay.log`.
+- `command(cx, verb)` (`relay:<verb>`; nothing without the service, under `checking()` or off the Mac): `status` reads
+  now (with the port check) and logs it; `on` / `off`, one at a time, read first and act only when `allowed`:
+  - off: `offPlan`; `writeTextFile(data/lazuli/relay.json, rememberText, <its current text>)` (a throw → error
+    `remember`, nothing else runs); `exec("/usr/bin/env", launcherArgs(config, "off"), {timeout: 60000})`; `hc(KILL_ARGS)`
+    (its result only logged); then reads every 1 s until `settled("off")`, at most 15 s.
+  - on: `launcherArgs(onPlan(obs), "on")`, then `"run"`, the same way; then reads with the port check until
+    `settled("on")`, at most 30 s.
+  - A non-zero exit → `{code: "exit", detail: reasonOf}`; a rejected exec → `spawn`; time up → `timeout` with
+    `seconds`. The failure is kept with the settled status read after it.
+
+### views, palette, catalogs, icon
+- `views/status.js`: after the queue item and before herdr-caffeinate's, `.when(view)` one `item` (`st-relay`): a
+  `Spinner` (busy) or `Icon(icon)` 13 px in `toneColor(tone)`, and on a wide bar (≥ 860 px) the words of `labelKey`.
+  Tooltip and accessibility label: `tipKey` (`{reason}`: the error's `why.*`, or the unknown status's reason),
+  `tip.autostart` while off with autostart.json present, `tip.open`, joined with " · ". Click: `openMenu` (300 px,
+  label `menu.label`): heading `menu.heading {state}` (`state.<status>`); after a failure its reason (disabled) and
+  `menu.log` (`{kind: "open", url: logPath()}`); each action `menu.on|off` running `lazuli.relay:<verb>`;
+  `menu.setup` (unset) or `menu.external` (external), disabled; a separator and `menu.refresh` (`lazuli.relay:status`).
+- `sys/search.js`: `relayEntries(bound)` after lazuli's own: `{id: "relay:<verb>", kind: "command", group: "lazuli",
+  icon: "command", title: t("shell.relay.cmd.<verb>"), hint: "herdr-relay", keys: the binding of
+  "lazuli.relay:<verb>", words: "relay herdr-relay <verb> ipad iphone phone tablet mirror tailscale 릴레이 아이패드 휴대폰",
+  action: {kind: "command", run: "lazuli.relay:<verb>"}}` for each of `relay.commands()`.
+- Catalog keys (`shell.relay.*`, en and ko; "herdr-relay" and "Relay" English in both): `label.<LABELED>`,
+  `tip.{on,off,starting,stopping,external,unset,unknown,autostart,open}`, `tip.error.{on,off}`,
+  `why.{exit,spawn,remember}`, `why.timeout.{on,off}`, `state.<status>`, `menu.{label,heading,on,off,refresh,setup,
+  external,log}`, `cmd.{on,off}` (titles start with "Relay: ").
+- `ui/icons/tablet-smartphone.svg`: Lucide `tablet-smartphone` (lucide-static 1.82.0) at stroke width 1.75 (ISC,
+  THIRD_PARTY_NOTICES "Lucide").
+- `tests/relay-chip.test.mjs`: the invocations; autostart.json, relay.json, endpoint, `ps` and `hc get` parsing; every
+  status from its source with its icon (file present) and tone; source order; actions per status, none for an outside
+  bridge, while busy or on a device; the failure's lifetime; the plans and `settled`; every key in both languages.
+- `tests/relay-service.test.mjs`: the real `sys/relay.js` on a fake Mac (herdr, net, fs, store and the host probe
+  replaced): nothing at all on a device; the exact call order of off (read, save, `autostart off`, `hc kill`, read) and
+  on (read, `autostart on`, `autostart run`, read, `ps`, connect); an outside bridge never touched, a stale endpoint
+  not counted; unset, absent and unknown; a failure's reason; the 15 s timeout; a failed save stopping before
+  `autostart off`; one action at a time; no reads while the window is hidden.
+
 ## Assistant (lazuli-assistant plan, its contracts K1–K9; DESIGN E; ARCHITECTURE §13)
 
 Tested with Hermes Agent 0.17.0. Files: `core/acp-wire.js`, `core/assistant-agents.js`, `core/assistant-chat.js`,

@@ -88,8 +88,9 @@ export const COMMANDS = Object.freeze({
 });
 
 /** Commands that carry an argument after the prefix: `target:<target>` (notification clicks, §7),
- *  `key:<keystroke>` (test hook, §2) and `assistant:<verb>` (the Assistant screen's verbs, to every copy). */
-export const PREFIXED = Object.freeze({ "target:": OWNER.status, "key:": OWNER.self, "assistant:": OWNER.self });
+ *  `key:<keystroke>` (test hook, §2), `assistant:<verb>` (the Assistant screen's verbs, to every copy) and
+ *  `relay:<verb>` (herdr-relay on, off, status: the status chip's menu, the palette, `herdr-app do`; sys/relay.js). */
+export const PREFIXED = Object.freeze({ "target:": OWNER.status, "key:": OWNER.self, "assistant:": OWNER.self, "relay:": OWNER.status });
 
 /** What Herdr itself sends a focusable copy (`pane.go` onto it, a popup over it closed). */
 export const FOCUS = "focus";

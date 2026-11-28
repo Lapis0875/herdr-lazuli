@@ -1,7 +1,8 @@
 // UI text for the shell (sidebar, bell, status bar, headers, menus), English. Keys start with "shell.".
 // The view keys are U2's; restore (sys/resume.js), migration (sys/migrate.js) and notification (sys/notify.js) texts
 // are T14's; the herdr-caffeinate chip and palette texts (`shell.caffeinate.*`, views/status.js, sys/search.js) are
-// herdr-caffeinate L1's. "Caffeinate" is a product name and stays English in both languages.
+// herdr-caffeinate L1's. "Caffeinate" is a product name and stays English in both languages. The herdr-relay chip,
+// menu and palette texts are `shell.relay.*` (sys/relay.js); "herdr-relay" and its short form "Relay" stay English.
 
 export default {
   "shell.restore.restored": "Previous sessions restored: {count}",
@@ -160,6 +161,46 @@ export default {
   "shell.caffeinate.cmd.closed-lid.toggle": "Caffeinate: Toggle lid-closed mode",
   "shell.caffeinate.cmd.install": "Caffeinate: Install the lid-closed helper",
   "shell.caffeinate.cmd.uninstall": "Caffeinate: Uninstall the lid-closed helper",
+
+  "shell.relay.label.on": "Relay on",
+  "shell.relay.label.starting": "Relay starting…",
+  "shell.relay.label.stopping": "Relay stopping…",
+  "shell.relay.label.external": "Relay (external)",
+  "shell.relay.label.error": "Relay failed",
+  "shell.relay.tip.on": "herdr-relay is on: your iPad and phone can show this window",
+  "shell.relay.tip.off": "herdr-relay is off",
+  "shell.relay.tip.starting": "Turning herdr-relay on…",
+  "shell.relay.tip.stopping": "Turning herdr-relay off…",
+  "shell.relay.tip.external": "herdr-relay runs outside Herdr (a terminal or the login agent): stop it there",
+  "shell.relay.tip.unset": "herdr-relay autostart is not set up: run herdr-relay autostart on in a terminal",
+  "shell.relay.tip.unknown": "Can't read herdr-relay's status: {reason}",
+  "shell.relay.tip.error.on": "Couldn't turn herdr-relay on: {reason}",
+  "shell.relay.tip.error.off": "Couldn't turn herdr-relay off: {reason}",
+  "shell.relay.tip.autostart": "autostart is on: the mirror mod starts it again",
+  "shell.relay.tip.open": "click for options",
+  "shell.relay.why.exit": "{detail}",
+  "shell.relay.why.spawn": "the launcher didn't run: {detail}",
+  "shell.relay.why.remember": "couldn't save the launcher's path: {detail}",
+  "shell.relay.why.timeout.on": "not answering after {s} s (log: ~/Library/Logs/herdr-relay.log)",
+  "shell.relay.why.timeout.off": "still running after {s} s",
+  "shell.relay.state.on": "On",
+  "shell.relay.state.off": "Off",
+  "shell.relay.state.starting": "Starting…",
+  "shell.relay.state.stopping": "Stopping…",
+  "shell.relay.state.external": "Running outside Herdr",
+  "shell.relay.state.unset": "Not set up",
+  "shell.relay.state.unknown": "Status unknown",
+  "shell.relay.state.error": "Failed",
+  "shell.relay.menu.label": "herdr-relay",
+  "shell.relay.menu.heading": "herdr-relay · {state}",
+  "shell.relay.menu.on": "Turn on",
+  "shell.relay.menu.off": "Turn off",
+  "shell.relay.menu.refresh": "Check again",
+  "shell.relay.menu.setup": "Run herdr-relay autostart on in a terminal",
+  "shell.relay.menu.external": "Stop it where it was started",
+  "shell.relay.menu.log": "Open the log",
+  "shell.relay.cmd.on": "Relay: Turn on",
+  "shell.relay.cmd.off": "Relay: Turn off",
 
   "shell.activity.label": "Side panel",
   "shell.activity.review": "Review",
