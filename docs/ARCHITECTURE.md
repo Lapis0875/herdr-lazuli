@@ -61,7 +61,7 @@ Every file targets under 600 lines. `core/` is pure (see §9).
 | View registry | `main.js` picks `VIEWS[props().view] ?? Placeholder`, calls `view.init(props, cx)`, and forwards `render` and `close`. Same shape as `REF lstack-herdr-cockpit/main.js:36-58`, but hand-written. |
 | Command pump | Each copy loops on `nextCommand()` and calls `bus.dispatch(command, view, cx)`. `key:<keystroke>` goes to `view.key()` (test hook). |
 | Command ownership | Window-wide commands are handled only by the `status` copy, which is always shown and exists once per layout (F2). `file-mode` is handled by the `file` copy whose `tab === focused().tab`. ⌘S is an `on_key_down` inside the editor, not a `keys.json` entry. |
-| Services | The `status` copy starts every service in `init`, guarded by `checking()`: gh poll, fleet, routines tick, resume, queue, the Assistant (reconnects only, §13), notify, migration, pdfd build, ledger. |
+| Services | The `status` copy starts every service in `init`, guarded by `checking()`: gh poll, fleet, routines tick, resume, queue, the Assistant (reconnects only, §13), notify, migration, pdfd build, ledger, the herdr-relay status reads (§8.1). |
 | Store | `sys/store.js` holds a module-level map (F3). After a change the owner writes `H/data/lazuli/snap/<name>.json` and bumps `shared("lazuli.rev")[name]`, which re-renders every copy. Snapshots also give a warm start and feed relay devices (§8). |
 | Settings | `H/data/lazuli/settings.json`: `{version:2, language:"system"|"ko"|"en", agent:{command:["omp"], model?}, notifications:{system:true}, gh:{org?:[], pollSec:120}, routines:{maxParallel:3}, pins:[…], pdf:{zoom:"fit"}, editor:"code", assistant:{folder:null, debugAgent:null}}`. A version 1 file gains `"assistant"` in its own `pins` once and is written back as version 2. The live copy is `shared("lazuli.settings")`, so a change applies at once (C3). |
 | i18n | Flat keys per fragment, `{name}` placeholders, fallback ko → en → key. `"system"` resolves once with `exec("defaults", ["read","-g","AppleLanguages"])`: first entry starting `ko` → Korean. AI prompts append "Answer in Korean/English" from the setting. |
@@ -83,6 +83,7 @@ Commands (`keys.json` section `layout:lazuli`, D2):
 | ⌥⌘Q, ⌘R | `lazuli.queue`, `lazuli.recap` | status | dialog |
 | ⌥⌘R | `lazuli.resume` | status | retry pending restores (§7) |
 | ⌘G, ⌘L | `lazuli.pr`, `lazuli.ticket` | status | `exec("open", [url])` |
+| — | `lazuli.relay:on`, `relay:off`, `relay:status` | status | herdr-relay on, off, read now (§8.1); the status chip's menu and the palette run them |
 
 Shared keys (all under `lazuli.`):
 
@@ -428,6 +429,39 @@ Notifications (A8; `sys/notify.js`):
 | Markdown local images, PDF pages | not drawn | the static route does not serve `data/lazuli/**` (`RELAY POLICY.md` §2.1) |
 
 Install (README): copy to `~/.herdr/herdr-relay/profiles/lazuli.json`, `chmod 600`, restart the bridge (`RELAY PROFILES.md` §3). Three rows conflict with D4 as written: see P1.
+
+### 8.1 herdr-relay on/off chip (`core/relay-chip.js`, `sys/relay.js`)
+
+The owner turns herdr-relay (the bridge that mirrors this window to the iPad and phone) on and off from the status bar.
+lazuli imports nothing from herdr-relay or its mirror mod; it runs the commands herdr-relay documents (herdr-relay
+`docs/INSTALL.md` §9) and reads its state folder `~/.herdr/herdr-relay/`.
+
+| Status | Source (first match) | Chip | Offers |
+|---|---|---|---|
+| On | `hc get herdr-relay --json` `state` `live`: the bridge `autostart run` started in that herdr-core terminal | `tablet-smartphone`, accent, "Relay on" | Turn off |
+| Unknown | `hc get` failed other than `not_found` | unknown tone | nothing |
+| Running outside Herdr | `mirror-endpoint.json` `{port, pid}`: `/bin/ps -p <pid>` finds it and `127.0.0.1:<port>` accepts a TCP connection (closed at once; no request, no token) | secondary, "Relay (external)" | nothing: lazuli never signals a pid |
+| Off | a valid `autostart.json`, or the launcher lazuli remembered in `data/lazuli/relay.json` | tertiary | Turn on |
+| Not set up | neither | tertiary; tooltip and menu: run `herdr-relay autostart on` | nothing |
+| Starting, Stopping | an action in flight | spinner, "Relay starting…" / "Relay stopping…" | nothing |
+| Error | the last action failed, while the status it left is unchanged | `triangle-alert`, error tone, "Relay failed"; the reason in the tooltip and menu | what that status offers |
+
+No chip without `~/.herdr/herdr-relay/` (and nothing remembered), before the first read, under `herdr-app check`, and on a
+window not known to be the Mac (`views/apps/snapshot.js` `hostLocal()`, the views' relay gate): there the service runs no
+status read and `relay:<verb>` does nothing. On the Mac a 2 s timer reads at most every 10 s while `window().visible`,
+and every second while an action is confirmed.
+
+Actions (`lazuli.relay:on|off`, owner `status`, handler registered by `views/shell/services.js`), one at a time, each
+decided on a fresh read and confirmed by reading again:
+
+- Off: save `{launcher, path}` of a valid `autostart.json` to `data/lazuli/relay.json`; run
+  `/usr/bin/env PATH=<path> /bin/sh <launcher> autostart off` (while the file exists the mirror mod would restart the
+  bridge within 15–300 s); `hc kill herdr-relay` (exit 3 `… was removed` is normal: the terminal is `--rm`); done when no
+  terminal is live, else an error after 15 s.
+- On: with `autostart.json`'s launcher, else the remembered one: `… autostart on` (records the same `PATH` again), then
+  `… autostart run`; done when the terminal is live and the bridge answers, else an error after 30 s.
+- A non-zero exit fails with the program's last line; the launcher's timeout is 60 s (it may fetch the modules
+  `deno.lock` pins first).
 
 ## 9. Testing
 

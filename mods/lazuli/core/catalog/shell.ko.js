@@ -1,7 +1,8 @@
 // UI text for the shell (sidebar, bell, status bar, headers, menus), Korean. Keys start with "shell.".
 // The view keys are U2's; restore (sys/resume.js), migration (sys/migrate.js) and notification (sys/notify.js) texts
 // are T14's; the herdr-caffeinate chip and palette texts (`shell.caffeinate.*`, views/status.js, sys/search.js) are
-// herdr-caffeinate L1's. "Caffeinate" is a product name and stays English in both languages.
+// herdr-caffeinate L1's. "Caffeinate" is a product name and stays English in both languages. The herdr-relay chip,
+// menu and palette texts are `shell.relay.*` (sys/relay.js); "herdr-relay" and its short form "Relay" stay English.
 
 export default {
   "shell.restore.restored": "이전 세션 {count}개를 복원했습니다",
@@ -160,6 +161,46 @@ export default {
   "shell.caffeinate.cmd.closed-lid.toggle": "Caffeinate: 덮개 닫힘 모드 전환",
   "shell.caffeinate.cmd.install": "Caffeinate: 덮개 닫힘 도우미 설치",
   "shell.caffeinate.cmd.uninstall": "Caffeinate: 덮개 닫힘 도우미 제거",
+
+  "shell.relay.label.on": "Relay 켜짐",
+  "shell.relay.label.starting": "Relay 켜는 중…",
+  "shell.relay.label.stopping": "Relay 끄는 중…",
+  "shell.relay.label.external": "Relay(외부)",
+  "shell.relay.label.error": "Relay 실패",
+  "shell.relay.tip.on": "herdr-relay 켜짐: iPad와 휴대폰에서 이 창을 볼 수 있음",
+  "shell.relay.tip.off": "herdr-relay 꺼짐",
+  "shell.relay.tip.starting": "herdr-relay 켜는 중…",
+  "shell.relay.tip.stopping": "herdr-relay 끄는 중…",
+  "shell.relay.tip.external": "herdr-relay가 Herdr 밖(터미널이나 로그인 에이전트)에서 실행 중: 거기서 끄세요",
+  "shell.relay.tip.unset": "herdr-relay 자동 시작이 설정되지 않음: 터미널에서 herdr-relay autostart on 실행",
+  "shell.relay.tip.unknown": "herdr-relay 상태를 읽을 수 없음: {reason}",
+  "shell.relay.tip.error.on": "herdr-relay를 켜지 못함: {reason}",
+  "shell.relay.tip.error.off": "herdr-relay를 끄지 못함: {reason}",
+  "shell.relay.tip.autostart": "자동 시작 켜짐: 미러 모드가 다시 시작함",
+  "shell.relay.tip.open": "클릭해 메뉴 열기",
+  "shell.relay.why.exit": "{detail}",
+  "shell.relay.why.spawn": "실행기를 실행하지 못함: {detail}",
+  "shell.relay.why.remember": "실행기 경로를 저장하지 못함: {detail}",
+  "shell.relay.why.timeout.on": "{s}초가 지나도 응답 없음(로그: ~/Library/Logs/herdr-relay.log)",
+  "shell.relay.why.timeout.off": "{s}초가 지나도 실행 중",
+  "shell.relay.state.on": "켜짐",
+  "shell.relay.state.off": "꺼짐",
+  "shell.relay.state.starting": "켜는 중…",
+  "shell.relay.state.stopping": "끄는 중…",
+  "shell.relay.state.external": "Herdr 밖에서 실행 중",
+  "shell.relay.state.unset": "설정 안 됨",
+  "shell.relay.state.unknown": "상태 모름",
+  "shell.relay.state.error": "실패",
+  "shell.relay.menu.label": "herdr-relay",
+  "shell.relay.menu.heading": "herdr-relay · {state}",
+  "shell.relay.menu.on": "켜기",
+  "shell.relay.menu.off": "끄기",
+  "shell.relay.menu.refresh": "다시 확인",
+  "shell.relay.menu.setup": "터미널에서 herdr-relay autostart on 실행",
+  "shell.relay.menu.external": "실행한 곳에서 끄세요",
+  "shell.relay.menu.log": "로그 열기",
+  "shell.relay.cmd.on": "Relay: 켜기",
+  "shell.relay.cmd.off": "Relay: 끄기",
 
   "shell.activity.label": "사이드 패널",
   "shell.activity.review": "리뷰",

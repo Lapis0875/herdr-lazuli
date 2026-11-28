@@ -118,7 +118,8 @@ export function keyEvent(keystroke) {
 }
 
 // Handlers that later slices register: palette, quickopen, queue, recap, resume, pr, ticket,
-// next-waiting, next:blocked, next:done, target (targets the built-in route leaves).
+// next-waiting, next:blocked, next:done, target (targets the built-in route leaves), relay
+// (`relay:on|off|status`, views/shell/services.js → sys/relay.js command; the status copy only).
 
 /** Registered handlers by command name (prefixed commands without their colon: `target`). */
 export const handlers = Object.create(null);

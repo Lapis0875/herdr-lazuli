@@ -1,6 +1,7 @@
 // The palette's search index (ARCHITECTURE §4.4, DESIGN A4): lazuli's commands (the Assistant's `go:assistant` row
-// among them, K1), Herdr's commands (with herdr-caffeinate's when that mod is installed, DESIGN D3), layouts, the
-// language, spaces, tabs, agents, PRs from the gh store, to-dos, routines, the Assistant's chats in its folder, and past
+// among them, K1, and herdr-relay's on/off while the Mac's relay chip offers them), Herdr's commands (with
+// herdr-caffeinate's when that mod is installed, DESIGN D3), layouts, the language, spaces, tabs, agents, PRs from the
+// gh store, to-dos, routines, the Assistant's chats in its folder, and past
 // sessions of OMP, Claude Code and Codex. `query(text)` ranks them; each result carries an action descriptor that
 // `perform(action)` runs, so the palette view only draws and picks.
 //
@@ -18,6 +19,7 @@ import { STORE, COMMANDS, MOD, LANGUAGE_SETTINGS } from "./state.js";
 import { refreshSessions, findSessions, sessionsOf } from "./scan.js";
 import * as assistant from "./assistant.js";
 import * as caffeinate from "./caffeinate.js";
+import * as relay from "./relay.js";
 import { TOOLS, resumeArgv } from "../core/resume-tools.js";
 import { forkArgv } from "../core/agent-cmd.js";
 import { MOD as CAFFEINATE, commandKey } from "../core/caffeinate-chip.js";
@@ -141,6 +143,15 @@ function lazuliEntries(bound) {
   }
   out.push({ id: "cmd:work", kind: "command", group: "lazuli", icon: "terminal", title: t("palette.cmd.work"), hint: "", keys: null, words: "work", action: { kind: "command", ...SHOW_WORK } });
   return out;
+}
+
+/** herdr-relay's actions (sys/relay.js): "Turn on" while it is off, "Turn off" while the bridge Herdr started runs;
+ *  nothing for a bridge started outside Herdr, while one runs, or off the Mac. */
+function relayEntries(bound) {
+  return relay.commands().map((verb) => {
+    const action = `${MOD}.relay:${verb}`;
+    return { id: `relay:${verb}`, kind: "command", group: "lazuli", icon: "command", title: t(`shell.relay.cmd.${verb}`), hint: "herdr-relay", keys: bound.get(action) ?? null, words: `relay herdr-relay ${verb} ipad iphone phone tablet mirror tailscale 릴레이 아이패드 휴대폰`, action: { kind: "command", run: action } };
+  });
 }
 
 function herdrEntries(bound) {
@@ -287,7 +298,7 @@ function assistantEntries() {
 /** Every entry, in group order. */
 export function entries(q = "") {
   const bound = bindings();
-  const all = [...lazuliEntries(bound), ...placeEntries(), ...herdrEntries(bound), ...caffeinateEntries(bound), ...languageEntries(), ...prEntries(), ...todoEntries(), ...routineEntries(), ...assistantEntries(), ...sessionEntries(q)];
+  const all = [...lazuliEntries(bound), ...relayEntries(bound), ...placeEntries(), ...herdrEntries(bound), ...caffeinateEntries(bound), ...languageEntries(), ...prEntries(), ...todoEntries(), ...routineEntries(), ...assistantEntries(), ...sessionEntries(q)];
   return all.sort((a, b) => GROUPS.indexOf(a.group) - GROUPS.indexOf(b.group));
 }
 

@@ -1,8 +1,8 @@
 // The status bar under the main area (mockup A): the agents by stage (each count goes somewhere), the focused agent's
 // program, PR and CI with ⌘G, its ticket with ⌘L, then terminals waiting to be restored (⌥⌘R), the queued prompts
-// (⌥⌘Q) and, when herdr-caffeinate is installed, its chip (DESIGN D3). Its layout copy is the owner of the window-wide
-// commands (sys/bus.js routes them to the view named "status") and runs the services (views/shell/services.js); a
-// `preview: true` copy only draws.
+// (⌥⌘Q), the herdr-relay chip on the Mac once herdr-relay is set up there (sys/relay.js) and, when herdr-caffeinate is
+// installed, its chip (DESIGN D3). Its layout copy is the owner of the window-wide commands (sys/bus.js routes them to
+// the view named "status") and runs the services (views/shell/services.js); a `preview: true` copy only draws.
 
 import { div } from "gpui-kit";
 import { h_flex } from "gpui-base";
@@ -12,15 +12,17 @@ import * as fleet from "../sys/fleet.js";
 import * as queue from "../sys/queue.js";
 import * as scan from "../sys/scan.js";
 import * as caffeinate from "../sys/caffeinate.js";
+import * as relay from "../sys/relay.js";
 import { STORE } from "../sys/state.js";
 import { showCenter } from "../sys/bus.js";
 import { treeCommand } from "./panels/tree-actions.js";
 import { t } from "../core/i18n.js";
 import { MOD as CAFFEINATE } from "../core/caffeinate-chip.js";
+import { labelKey as relayLabelKey, tipKey as relayTipKey, whyKey as relayWhyKey } from "../core/relay-chip.js";
 import { tokens } from "../ui/tokens.js";
 import { ViewRoot, Icon, Kbd, StatusDot, ProgramIcon, Spinner, Divider, Spacer, withTooltip, toneColor } from "../ui/kit.js";
 import { startServices, stopServices } from "./shell/services.js";
-import { act } from "./shell/actions.js";
+import { act, openMenu } from "./shell/actions.js";
 import { STAGES, STAGE_DOT, stageCounts, stageLabel, ciState, ciLabel } from "./shell/format.js";
 
 const list = (v) => (Array.isArray(v) ? v : []);
@@ -57,6 +59,34 @@ function caffeinateTip(c) {
   if (c.lid) parts.push(c.lid.blocked ? t("shell.caffeinate.tip.lid.blocked", { reason: t(`shell.caffeinate.blocked.${c.lid.blocked}`) }) : t(`shell.caffeinate.tip.lid.${c.lid.status}`));
   parts.push(t("shell.caffeinate.tip.open"));
   return parts.join(" · ");
+}
+
+/** Why a relay action failed (core whyKey): the program's own last line, or lazuli's words for a timeout or a save. */
+function relayWhy(error) {
+  return t(relayWhyKey(error), { detail: error.detail ?? "", s: error.seconds ?? "" });
+}
+
+/** The relay chip's tooltip (also its accessibility label): the state (with the failure's or the unknown status's
+ *  reason), that autostart is on while the bridge is off, the click. */
+function relayTip(c) {
+  const parts = [t(relayTipKey(c), { reason: c.status === "error" ? relayWhy(c.error) : (c.reason ?? "") })];
+  if (c.status === "off" && c.autostart) parts.push(t("shell.relay.tip.autostart"));
+  parts.push(t("shell.relay.tip.open"));
+  return parts.join(" · ");
+}
+
+/** The relay chip's menu: the state, the failure, the action it offers (core `actions`), what to do where lazuli
+ *  offers nothing, and a fresh read. Items run `lazuli.relay:<verb>` through the command bus. */
+function relayMenu(c) {
+  const verbAction = (verb) => ({ kind: "run", run: `lazuli.relay:${verb}` });
+  const items = [{ heading: t("shell.relay.menu.heading", { state: t(`shell.relay.state.${c.status}`) }) }];
+  if (c.status === "error") items.push({ label: relayWhy(c.error), icon: "triangle-alert", disabled: true, action: null });
+  for (const verb of c.actions) items.push({ label: t(`shell.relay.menu.${verb}`), icon: verb === "on" ? "play" : "circle-stop", action: verbAction(verb) });
+  if (c.status === "unset") items.push({ label: t("shell.relay.menu.setup"), icon: "terminal", disabled: true, action: null });
+  if (c.status === "external") items.push({ label: t("shell.relay.menu.external"), icon: "info", disabled: true, action: null });
+  items.push({ separator: true }, { label: t("shell.relay.menu.refresh"), icon: "refresh-cw", action: verbAction("status") });
+  if (c.status === "error") items.push({ label: t("shell.relay.menu.log"), icon: "scroll-text", action: { kind: "open", url: relay.logPath() } });
+  openMenu(items, { width: 300, label: t("shell.relay.menu.label") });
 }
 
 export default class Status {
@@ -164,6 +194,17 @@ export default class Status {
     return this.item(k, "st-caffeinate", parts.filter(Boolean), { tooltip: tip, onClick: () => run(`${CAFFEINATE}.menu`) }).accessibility_label(tip);
   }
 
+  /** herdr-relay's chip (sys/relay.js), drawn on the Mac once herdr-relay is set up there: the devices glyph in its
+   *  status's tone (a spinner while it turns on or off, a warning after a failure), its words when the bar is wide;
+   *  a click opens its menu. */
+  relayChip(k, c, wide) {
+    const color = toneColor(c.tone, k);
+    const key = wide ? relayLabelKey(c) : null;
+    const tip = relayTip(c);
+    const parts = [c.busy ? Spinner({ size: 13, color }) : Icon(c.icon, { size: 13, color }), key ? div().text_color(color).child(t(key)) : null];
+    return this.item(k, "st-relay", parts.filter(Boolean), { tooltip: tip, onClick: () => relayMenu(c) }).accessibility_label(tip);
+  }
+
   render(_cx) {
     const k = tokens();
     const rows = fleet.rows();
@@ -174,6 +215,7 @@ export default class Status {
     const lost = list(restore?.pending).length + list(restore?.failed).length;
     const queued = queue.get()?.count ?? 0;
     const cf = caffeinate.view(Date.now());
+    const rl = relay.view();
     const agentPart = w >= 560 ? this.agent(k, a, wide) : [];
     return ViewRoot("lz-status", { bg: k.bg.app })
       .flex_row()
@@ -205,6 +247,7 @@ export default class Status {
           onClick: () => queue.open(null),
         }),
       )
+      .when(Boolean(rl), (e) => e.child(this.relayChip(k, rl, wide)))
       .when(Boolean(cf), (e) => e.child(this.caffeinateChip(k, cf)));
   }
 }

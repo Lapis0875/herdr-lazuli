@@ -131,7 +131,8 @@ The full licence text is in `LICENSES/Apache-2.0.txt`.
   1.75.0; `coffee.svg` (the herdr-caffeinate chip) was taken from the Lucide repository (`main`, commit `891daab`); 8
   more for the Assistant screen (`at-sign.svg`, `brain.svg`, `folder-open.svg`, `folder-x.svg`, `laptop.svg`,
   `navigation.svg`, `paperclip.svg`, `square-slash.svg`) were taken from Lucide for its prototype
-  (`docs/mockups/assistant/icons-new/`) and copied with the same paths, in the file layout of the rest of the set.
+  (`docs/mockups/assistant/icons-new/`) and copied with the same paths, in the file layout of the rest of the set;
+  `tablet-smartphone.svg` (the herdr-relay chip) was taken from `lucide-static` 1.82.0.
 - In this repository: every icon in `mods/lazuli/ui/icons/` except `sidebar.svg` (Herdr's, above), drawn with a stroke
   width of 1.75; a few under other file names (for example, `external.svg` is Lucide's `external-link`).
 - The licence, with the MIT License of the icons Lucide derives from Feather (© 2013-present Cole Bemis), is in
