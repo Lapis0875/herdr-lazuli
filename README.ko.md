@@ -3,9 +3,10 @@
 [English](README.md)
 
 코딩 에이전트와 함께 일하기 위한 [Herdr 앱](https://herdr.dev) 레이아웃입니다. 에이전트와 그 풀 리퀘스트를 한 보드에
-모아 보여 주고, GitHub 인박스, 할 일 목록, 예약 루틴, 줄마다 댓글을 달아 에이전트에게 보내는 리뷰 패널, 그리고
-Markdown·HTML·PDF·그림을 미리 보는 파일 탭을 갖췄습니다. 이 모두를 손으로 쓴 모드 하나, `lazuli`가 그립니다.
-Herdr, Node.js, GitHub CLI 말고는 필요한 것이 없습니다.
+모아 보여 주고, GitHub 인박스, 할 일 목록, 예약 루틴, 줄마다 댓글을 달아 에이전트에게 보내는 리뷰 패널,
+Markdown·HTML·PDF·그림을 미리 보는 파일 탭, 그리고 내가 고른 폴더에서 [Hermes Agent](https://hermes-agent.nousresearch.com)와
+대화하는 비서 화면을 갖췄습니다. 이 모두를 손으로 쓴 모드 하나, `lazuli`가 그립니다. Herdr, Node.js, GitHub CLI 말고는
+필요한 것이 없고, 비서에는 Hermes Agent가 더 필요합니다.
 
 ![lazuli](layouts/lazuli.svg)
 
@@ -19,7 +20,7 @@ lazuli는 [cockpit](https://github.com/quaresc/cockpit)에서 생성한 포크�
 
 ## 기능
 
-**가운데 화면** (⌥⌘0~⌥⌘3)
+**가운데 화면** (⌥⌘0~⌥⌘4)
 
 - **Home.** 지금 손봐야 할 일을 맨 위에 두고, 에이전트를 단계별 보드(내 차례, 작업 중, 준비됨, 완료)에 풀 리퀘스트와
   CI 상태와 함께 보여 줍니다. Inbox·To-do·Routines 요약, 이번 주 사용 금액, 최근 GitHub 이벤트, 세션 복원이 대기 중이거나
@@ -34,6 +35,10 @@ lazuli는 [cockpit](https://github.com/quaresc/cockpit)에서 생성한 포크�
   `weekdays 9:00,17:30`, cron)이나 GitHub 이벤트(`on review`, `on ci-failed` 등)에 맞춰, 또는 손으로 실행합니다. 루틴마다
   다음·지난 실행, 출력, 비용, 기록이 보이고, 자기만의 git worktree에서 돌릴 수도 있습니다. 바로 실행, 중지, 일시 정지,
   수정, 삭제를 할 수 있습니다.
+- **비서** (Assistant). 폴더 하나에서 Hermes Agent와 대화합니다. 왼쪽에는 Hermes 프로필별로 묶은 대화 목록, 가운데에는
+  Markdown으로 흘러나오는 답, 카드로 보이는 도구 호출(파일 수정은 diff), 허가 카드, 중지, Enter로 진행 중인 답의 방향
+  바꾸기, ⌥Enter나 ⌘Enter로 다음 메시지 대기열에 넣기가 있고, 오른쪽에는 폴더의 파일과 대화의 모델·컨텍스트·토큰·비용이
+  나옵니다([비서](#비서)).
 
 **사이드 패널** (⌘1~⌘4). 오른쪽 끝의 액티비티 레일은 가운데에 어떤 화면이 있든 늘 보입니다.
 
@@ -79,16 +84,17 @@ lazuli는 [cockpit](https://github.com/quaresc/cockpit)에서 생성한 포크�
   세션을 되살립니다. lazuli가 처음 실행할 때의 플래그 그대로 도구의 재개 명령을 입력합니다. 복원이 대기 중이거나 실패한
   터미널은 Home에 나오고, ⌥⌘R로 다시 시도합니다.
 - **팔레트** (⇧⌘P). lazuli와 Herdr의 명령과 단축키, 레이아웃, 언어, 스페이스, 탭, 에이전트, 풀 리퀘스트, 할 일, 루틴,
-  OMP·Claude Code·Codex의 지난 세션(Enter는 새 탭에서 재개, ⌘Enter는 포크), lazuli 설정을 찾습니다.
+  비서의 대화, OMP·Claude Code·Codex의 지난 세션(Enter는 새 탭에서 재개, ⌘Enter는 포크), lazuli 설정을 찾습니다.
 - **프롬프트 대기열** (⌥⌘Q). 에이전트가 일하는 동안 후속 지시를 적어 두었다가 하나씩, 또는 번호를 붙인 프롬프트 하나로
   모두 보냅니다. 오른쪽 가장자리의 서랍에 앞에 있는 에이전트의 대기열이 보입니다.
 - **요약** (⌘R). 모든 에이전트를 단계별로 보여 주며, 무엇을 했는지 AI가 요약하고, 기다리는 질문에 그 자리에서 답하고,
   미루기·새 탭으로 포크하기를 할 수 있습니다. Time 탭에는 이번 주 티켓별 에이전트 작업 시간이 나옵니다.
 - **이동.** ⌘J는 나를 기다리는 다음 에이전트, ⇧⌘J는 막힌 다음 에이전트, ⇧⌘U는 끝난 다음 에이전트로 갑니다. ⌘G와 ⌘L은
   포커스한 에이전트의 풀 리퀘스트와 티켓을 엽니다.
-- **알림.** 에이전트가 막히거나 끝났을 때, 루틴이 끝났을 때, GitHub 이벤트가 생겼을 때 알립니다. Herdr가 앞에 있으면 창
-  안에 띄우고, 뒤에 있으면 `terminal-notifier`로 macOS 알림을 보냅니다. 에이전트에 관한 알림을 누르면 그 에이전트로
-  포커스가 갑니다. `terminal-notifier`가 없으면 창 안 토스트와 Dock 배지로 대신합니다.
+- **알림.** 에이전트가 막히거나 끝났을 때, 루틴이 끝났을 때, GitHub 이벤트가 생겼을 때, 비서가 허가를 구하거나 답을
+  마쳤을 때 알립니다. Herdr가 앞에 있으면 창 안에 띄우고, 뒤에 있으면 `terminal-notifier`로 macOS 알림을 보냅니다.
+  에이전트에 관한 알림을 누르면 그 에이전트로 포커스가 가고, 비서 대화에 관한 알림을 누르면 그 대화가 열립니다.
+  `terminal-notifier`가 없으면 창 안 토스트와 Dock 배지로 대신합니다.
 - **한국어와 영어.** 처음에는 macOS 언어를 따릅니다(한국어면 한국어, 그 밖에는 영어). lazuli 설정이나 팔레트의 "언어"
   명령으로 바꾸면 바로 적용되고, AI가 쓰는 요약과 워크스루도 같은 언어를 씁니다.
 
@@ -111,6 +117,7 @@ lazuli는 [cockpit](https://github.com/quaresc/cockpit)에서 생성한 포크�
 | [`terminal-notifier`](https://github.com/julienXX/terminal-notifier)(`brew install terminal-notifier`) | macOS 알림 대신 창 안 토스트와 Dock 배지를 씁니다 |
 | `zstd`(`brew install zstd`) | 압축된 Codex 대화 기록(`.jsonl.zst`)을 사용 금액과 지난 세션에서 건너뜁니다 |
 | OMP 확장 `lazuli-tree.ts`(설치 4단계) | 호출 트리가 OMP 자체 파일로 세션을 찾고, 상태에 추정 표시를 붙입니다 |
+| [Hermes Agent](https://hermes-agent.nousresearch.com)(`hermes`), 0.17.0으로 테스트 | 비서 화면은 설치 방법만 보여 줍니다 |
 
 ## 설치
 
@@ -229,6 +236,7 @@ rm -f ~/.omp/agent/extensions/lstack-herdr-tree.ts
 | ⌥⌘1 `cmd-alt-1` | `lazuli.go:inbox` | 가운데에 Inbox |
 | ⌥⌘2 `cmd-alt-2` | `lazuli.go:todo` | 가운데에 To-do |
 | ⌥⌘3 `cmd-alt-3` | `lazuli.go:routines` | 가운데에 Routines |
+| ⌥⌘4 `cmd-alt-4` | `lazuli.go:assistant` | 가운데에 비서 |
 | ⌥⌘A `cmd-alt-a` | `lazuli.agent-view` | 작업 화면을 패널 보기와 포커스한 에이전트 보기 사이에서 전환 |
 | ⌥⌘B `cmd-alt-b` | `lazuli.panel` | 사이드 패널 보이기·숨기기 |
 | ⌘1 `cmd-1` | `lazuli.panel:review` | 사이드 패널 Review 탭 |
@@ -246,7 +254,9 @@ rm -f ~/.omp/agent/extensions/lstack-herdr-tree.ts
 | ⌘G `cmd-g` | `lazuli.pr` | 포커스한 에이전트의 풀 리퀘스트 열기 |
 | ⌘L `cmd-l` | `lazuli.ticket` | 포커스한 에이전트의 티켓 열기: PR 본문의 첫 트래커 링크, 없으면 브랜치 이름의 `KEY-123` |
 
-lazuli 레이아웃이 보이는 동안 ⌘1~⌘4는 Herdr의 탭 선택 키를 대신합니다. ⌘5~⌘9는 그대로 탭을 선택합니다.
+lazuli 레이아웃이 보이는 동안 ⌘1~⌘4는 Herdr의 탭 선택 키를 대신합니다. ⌘5~⌘9는 그대로 탭을 선택합니다. 비서가 없던
+lazuli에서 업데이트한다면 비서 화면과 ⌥⌘4를 위해 `layouts/lazuli.json`을 다시 복사하고(설치 2단계) `keys.json`을 다시
+합칩니다(3단계).
 
 ## 설정
 
@@ -262,9 +272,49 @@ lazuli 설정 화면(사이드바 아래 → 설정, 또는 팔레트)은 Herdr 
 | `gh.org` | `[]` | 이 GitHub 조직의 풀 리퀘스트만 봅니다. 비우면 전부 |
 | `gh.pollSec` | `120` | 창이 활성일 때 GitHub를 새로 읽는 간격(초, 30 이상). 뒤에 있을 때는 600초 |
 | `routines.maxParallel` | `3` | 동시에 실행하는 루틴 수 |
-| `pins` | `["inbox", "todo", "routines"]` | 사이드바에 고정한 앱과 그 순서 |
+| `pins` | `["inbox", "todo", "routines", "assistant"]` | 사이드바에 고정한 앱과 그 순서. 비서가 생기기 전의 설정에는 `"assistant"`가 한 번 붙습니다 |
 | `pdf.zoom` | `"fit"` | PDF를 열 때의 확대: `"fit"`, `50`, `75`, `100`, `125`, `150`, `200` |
 | `editor` | `"code"` | "편집기에서 열기"에 쓰는 외부 편집기 명령(`code`, `cursor`, `zed` 등). 원격 폴더는 `--folder-uri vscode-remote://ssh-remote+<host><path>`로 엽니다 |
+| `assistant.folder` | `null` | 비서가 일하는 이 Mac의 폴더. 정하지 않았으면 화면이 폴더를 고르라고 합니다. 폴더 선택 창이 `/private` 아래로 알려 주는 폴더(`/tmp/x`를 `/private/tmp/x`로)는 짧은 형태로 저장합니다 |
+
+## 비서
+
+비서 화면(⌥⌘4, 또는 사이드바의 "비서")은 이 Mac의 폴더 하나에서 [Hermes Agent](https://hermes-agent.nousresearch.com)와
+나누는 대화입니다. Hermes Agent **0.17.0**으로 테스트했습니다. 다른 버전에서는 바뀔 수 있는 Hermes의 일부를 읽습니다(아래).
+
+1. Hermes를 설치하고 모델을 설정합니다:
+   `curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash`, 그다음 `hermes setup`. `hermes`가 없으면 화면에도
+   이 두 명령이 나오고, `hermes acp --check`가 실패하면 그 출력이 나옵니다.
+2. 비서를 열고 폴더를 고릅니다. 나중에는 설정 화면의 비서 항목에서 바꿉니다. Hermes는 이 폴더에서 일하고, 목록에는 이
+   폴더에서 나눈 대화만 나옵니다.
+
+쓰는 법:
+
+- **대화.** Hermes 프로필별로 묶입니다. `default`는 늘 맨 위에 있고, 다른 프로필은 이 폴더에 대화가 있을 때만 나오며,
+  "Nod · Planned"는 맨 아래에 비활성으로 나옵니다. "+"는 그 프로필로 새 대화를 시작하고, 대화 행은 기록과 함께 열거나
+  포크합니다. 고른 대화와 접은 묶음은 기억합니다.
+- **입력창.** Enter는 보내기, ⇧Enter는 줄바꿈, `@`는 폴더의 파일 첨부(그림 제외), `/`는 Hermes 명령 목록입니다. Hermes가
+  답하는 동안 Enter는 진행 중인 답의 방향을 바꾸고(Hermes의 `/steer`), ⌥Enter나 ⌘Enter는 답이 끝나면 보낼 칩으로 메시지를
+  남깁니다. ⌘Enter가 있는 것은 한국어 입력기가 ⌥Enter를 가져가기 때문입니다. 한국어로 입력할 때 Enter는 조합 중인 글자까지
+  포함해 전체를 보냅니다. 중지는 답을 끝내고 칩을 멈춰 둡니다.
+- **허가.** Hermes가 무언가를 실행해도 되는지 물으면 카드에 한 번 허용, 항상 허용, 거부가 나오고, Hermes의 다른 선택지는
+  더 보기에 있으며, Hermes가 기다리는 60초를 셉니다. 그 뒤의 답은 늦었다며 거부됩니다.
+- **모델.** 대화 머리에 그 대화의 모델이 나오고, 그 대화에서만 바꿉니다. Hermes 자체의 기본 모델은 그대로입니다.
+- **오른쪽 열.** 대화의 모델, 모드, 사용한 컨텍스트, 마지막 답의 토큰, Hermes가 기록한 합계와 비용이 나오고, 그 아래에
+  폴더의 파일이 있습니다. 파일을 누르면 작업 화면에서 열리고, 첨부를 누르면 메시지에 붙습니다.
+- **알림.** 비서가 앞에 없을 때 허가 요청, 끝난 답, 실패한 답을 알리고, 알림을 누르면 그 대화가 열립니다.
+- **Hermes가 실패할 때.** Hermes는 답하지 못한 응답(제공자가 거부하는 모델, 만료된 로그인)을 메시지 없이 끝내고 이유를
+  오류 출력에 씁니다. 그러면 대화에 Hermes의 오류 줄을 담은 실패 안내가 나오고(긴 내용은 모두 보기로 펼침), 그런 줄이
+  없으면 Hermes가 답 없이 응답을 끝냈다고 알립니다. 자세한 내용은 브리지 로그
+  `~/.cache/lazuli/assistant/<home8>/<profile>.log`에 있습니다.
+
+동작 방식: 쓰는 Hermes 프로필마다 lazuli가 작은 브리지 `mods/lazuli/bin/acp-bridge.mjs`를 `hc run --bg`로 폴더에서
+시작합니다. 브리지는 `hermes -p <profile> acp`를 실행하고, 127.0.0.1로 lazuli와 통신하며, discovery 파일의 토큰을 가진
+클라이언트에만 답합니다. 파일은 `~/.cache/lazuli/assistant/<home8>/`에 있습니다(폴더 0700, `<profile>.json`과
+`<profile>.log` 0600, `<home8>`은 Herdr 앱 홈을 가리킴). 로그에는 메서드 이름과 크기만 남고, 토큰이나 내가 쓴 내용은
+남지 않습니다(프롬프트를 옮겨 적은 Hermes의 줄은 잘라 냅니다). 브리지는 다른 화면을 보거나 모드를 다시 불러와도 계속
+돌고, 실행 중이거나 나를 기다리는 것 없이 30분이 지나거나 Herdr가 끝나면 종료합니다. 다시 불러올 때는 같은 `hermes`를
+실행하는 브리지만 다시 쓰고, 진행 중이던 응답은 한 번, 온전히 보입니다. 끝난 브리지의 터미널은 lazuli가 1분마다 지웁니다.
 
 ## 실행하고 읽고 쓰는 것
 
@@ -320,6 +370,19 @@ Review의 `gh`, 세션 찾기)이 그 머신에서 실행됩니다.
   `open <url>`, `pbpaste`, `pbcopy`를 실행하고 node로 `chrome-broker.mjs`를 띄웁니다. 브로커는 브라우저
   (`--headless=new --remote-debugging-port=0 --user-data-dir=~/.cache/lazuli/chrome-profile --no-first-run
   --no-default-browser-check`)와 `ps -o command= -p <pid>`를 실행합니다.
+- 비서: `hermes`와 `node`를 찾는 `/bin/sh -c`의 `command -v`와 로그인 셸의 `command -v`, `tail`, `hermes acp --check`(시작할
+  때마다 한 번), `/bin/sh -c 'echo "$PPID"'`(Herdr의 pid), `/usr/bin/sqlite3 -readonly -json`(Hermes `state.db`에서 읽는
+  대화 목록), `/usr/bin/find`(Hermes 프로필과 @에 쓰는 폴더 파일), `/bin/sh -c`의 `cd -P`와 `pwd -P`(폴더의 실제 위치:
+  `/tmp/x`에서 만든 대화는 `/private/tmp/x`의 것), `/bin/test`, `/bin/ls`, `/bin/kill -0`,
+  `/bin/rm -f`(낡은 discovery 파일), `/bin/ps -o command=`와 `kill -s KILL`(죽은 브리지가 남긴 에이전트에만, 그 프로필의
+  `hermes … acp`임을 `ps`로 확인한 뒤), 그리고 `hc run --bg`, `hc kill`, `hc rm`, `hc ls --all --json`(브리지와 끝난 브리지
+  터미널). node로 도는 브리지 `bin/acp-bridge.mjs`는 `hermes -p <profile> acp`를 자기 프로세스 그룹에서, 폴더 안에서,
+  `run-agent.mjs`와 같은 `PATH` 추가로 실행합니다.
+- 상태 표시줄의 herdr-relay 스위치(Mac에서만): 창이 보이는 동안 약 10초마다 `hc get herdr-relay --json`, Herdr가 띄운
+  브리지가 살아 있지 않을 때는 `mirror-endpoint.json`에 적힌 pid로 `/bin/ps -p <pid> -o pid=`. 끌 때는
+  `/usr/bin/env PATH=<path> /bin/sh <launcher> autostart off` 다음 `hc kill herdr-relay`, 켤 때는 같은 방식으로
+  `… autostart on` 다음 `… autostart run`. `<launcher>`와 `<path>`는 herdr-relay의 `autostart.json`에서, 없으면 lazuli가
+  끌 때 저장해 둔 사본에서 가져옵니다.
 
 **읽는 것** (자기 폴더 밖)
 
@@ -329,31 +392,41 @@ Review의 `gh`, 세션 찾기)이 그 머신에서 실행됩니다.
 - 내가 연 파일과 폴더, Files 패널의 폴더, 스페이스와 에이전트의 저장소.
 - 마이그레이션에서 한 번: `~/.config/cockpit/todo.md`, `~/.config/cockpit/routines/*.md`,
   `~/.config/cockpit/config.json`의 `.spaces` 값, `~/.cache/cockpit/queue.json`.
+- 비서: `~/.hermes/state.db`와 `~/.hermes/profiles/<profile>/state.db`를 읽기 전용으로(대화 목록, 토큰, 비용),
+  `~/.hermes/profiles` 아래 폴더 이름, 비서 폴더의 파일. lazuli는 `~/.hermes` 아래에 아무것도 쓰지 않습니다. 쓰는 것은
+  Hermes 자신입니다(대화, 그리고 제공자 로그인을 새로 고칠 때).
+- herdr-relay 상태 폴더 `~/.herdr/herdr-relay/`: 폴더가 있는지, `autostart.json`, `mirror-endpoint.json`(토큰은 읽지
+  않습니다).
 
 **쓰는 것**
 
 - Herdr 앱 홈의 `data/lazuli/`: `settings.json`, `todo.md`, `queue.json`, `routines/<slug>.md`, `routines-state.json`
   (일정 상태와 루틴마다 최근 20번의 실행), `ledger.jsonl`(에이전트 작업 시간), `migrated.json`, `snap/<name>.json`(빠른
   시작과 herdr-relay에 쓰는 저장소별 스냅숏), `drafts/`(저장하지 않은 수정), `cache/img/`(미리보기용 그림, 하나에 20 MB,
-  모두 합쳐 200 MB까지), `cache/pdf/`(그린 페이지, 300 MB까지), `cache/walkthrough/`(끝난 워크스루), `tmp/`(제자리로 옮기기 전의 텍스트 파일).
+  모두 합쳐 200 MB까지), `cache/pdf/`(그린 페이지, 300 MB까지), `cache/walkthrough/`(끝난 워크스루), `tmp/`(제자리로 옮기기 전의 텍스트 파일),
+  `relay.json`(상태 표시줄에서 herdr-relay 자동 시작을 끄기 전에 저장하는 실행기 경로와 `PATH`).
 - `~/.cache/lazuli/`: `scan-cache.json`, `run-cache.json`, `usage-cache.json`, `sessions-index.json`(대화 기록 리더의
   캐시), `recaps/`, `routines/<slug>/<id>.*`와 `runs/<id>.*`(실행 파일: 명령, pid, 출력, 종료 상태), `bin/pdfd-<hash>`,
-  `pdfd-<home>.json`(Herdr 앱 홈마다 하나), `chrome.json`(둘 다 0600), `broker.lock`, `chrome-profile/`, `chrome.log`, `broker.log`.
+  `pdfd-<home>.json`(Herdr 앱 홈마다 하나), `chrome.json`(둘 다 0600), `broker.lock`, `chrome-profile/`, `chrome.log`, `broker.log`,
+  `assistant/<home8>/<profile>.json`과 `<profile>.log`(비서 브리지: 폴더 0700, 파일 0600, 로그는 5 MiB에서 교체).
 - `~/.herdr/worktrees/<repo>/auto/<slug>-<id>`: 루틴의 worktree. 실행이 아무것도 남기지 않았으면 실행 뒤에 지웁니다.
-- Herdr 공유 상태(`shared.json`): `lazuli.*` 키. 열린 파일 탭 목록도 여기 있습니다.
-- 터미널 라벨: `lazuli.resume`(복원할 내용), `lazuli.run`, `lazuli.sidecar`, `lazuli.view`.
+- Herdr 공유 상태(`shared.json`): `lazuli.*` 키. 열린 파일 탭 목록과 비서에서 고른 대화·접은 묶음(`lazuli.assistant.ui`)도
+  여기 있습니다.
+- 터미널 라벨: `lazuli.resume`(복원할 내용), `lazuli.run`, `lazuli.sidecar`, `lazuli.view`, `lazuli.assistant`(브리지의
+  프로필).
 - 내가 저장하고, 만들고, 이름을 바꾸고, 지운 것. `/usr/bin/trash`가 있으면 삭제한 것은 휴지통으로 갑니다.
 - OMP 확장은 OMP가 도는 터미널에 OSC 7501 기록을 씁니다.
 
 **네트워크**
 
-- `gh`는 내 `gh` 로그인으로 GitHub와 통신하고, 에이전트 CLI는 각자의 제공자와 통신합니다.
+- `gh`는 내 `gh` 로그인으로 GitHub와 통신하고, 에이전트 CLI와 Hermes는 각자의 제공자와 통신합니다.
 - HTML 뷰어의 헤드리스 브라우저는 `~/.cache/lazuli/chrome-profile`의 별도 프로필로, 페이지가 불러오는 것을 그대로
   불러옵니다. Markdown을 그린 페이지("Chrome으로 보기")는 다이어그램이나 수식이 있을 때만 `cdn.jsdelivr.net`에서
   mermaid 12.3.0과 KaTeX 0.19.1을 하위 리소스 무결성(SRI)으로 고정해 불러옵니다.
 - 루프백(`127.0.0.1`, 임의 포트)만 쓰는 것: 뷰어의 파일 서버, 브라우저의 DevTools 포트, Chrome 브로커의 임대 포트, PDF
-  렌더러. PDF 렌더러는 0600 권한의 discovery 파일에 든 토큰을 가진 클라이언트에만 답합니다. 모드 자체가 쓰는 네트워크는
-  PDF 렌더러와의 연결뿐입니다.
+  렌더러, 비서 브리지. PDF 렌더러와 브리지는 0600 권한의 discovery 파일에 든 토큰을 가진 클라이언트에만 답합니다. 모드
+  자체가 쓰는 네트워크는 PDF 렌더러, 브리지와의 연결, 그리고 herdr-relay 포트에 붙었다가 요청 없이 바로 끊는 연결(Herdr
+  밖에서 띄운 브리지가 떠 있는지 확인)뿐입니다.
 - 링크는 기본 브라우저에서 열립니다.
 
 ## 휴대폰과 태블릿에서: herdr-relay
@@ -376,6 +449,7 @@ macOS와 Tailscale만 지원하며, [Deno](https://deno.com) 2.9 이상이 필�
 | `gh`, 에이전트 실행, HTML 뷰어, 에이전트에게 보내기 | 거부 |
 | 저장, 할 일 목록 수정, 파일 탭 열기 | 거부 |
 | Markdown 속 그림, PDF 페이지 | 그리지 않음 |
+| 비서 | 데스크톱 전용 안내. 어떤 스냅숏에도 비서의 폴더, 대화, 브리지 토큰이 없고, 브리지 실행은 거부됩니다 |
 
 설치 방법:
 
@@ -392,6 +466,16 @@ macOS와 Tailscale만 지원하며, [Deno](https://deno.com) 2.9 이상이 필�
 
 3. 브리지를 다시 시작합니다. 프로필은 시작할 때 읽고, 불러오거나 무시한 사용자 프로필을 로그에 남깁니다. 브리지를 켜지 않고
    프로필을 검사하는 방법은 herdr-relay의 `docs/PROFILES.md` §9에 있습니다.
+
+**켜고 끄기.** Mac에서는 `~/.herdr/herdr-relay/`가 있으면 상태 표시줄에 herdr-relay 칩이 보입니다. Herdr가 띄운 브리지가
+돌 때는 강조 색의 "Relay 켜짐", 꺼져 있을 때는 흐린 아이콘, 터미널이나 launchd 에이전트로 띄운 브리지가 돌 때는
+"Relay(외부)"(보여 주기만 하고 lazuli가 끄지 않습니다), 켜거나 끄는 동안은 스피너입니다. 칩을 클릭하면 메뉴가 열립니다.
+끄기는 `herdr-relay autostart off`(안 그러면 미러 모드가 브리지를 다시 띄웁니다)와 `hc kill herdr-relay`를 실행하고, 켜기는
+자동 시작이 기록한 실행기와 `PATH`로 `herdr-relay autostart on`과 `autostart run`을 실행합니다. lazuli는 자동 시작을 끄기
+전에 이 실행기와 `PATH`를 `data/lazuli/relay.json`에 저장합니다. 둘 다 상태를 다시 읽어 확인하고, 실패하면 "Relay 실패"와
+이유를 보여 줍니다. 팔레트에도 같은 명령("Relay: 켜기", "Relay: 끄기")이 있고, `herdr-app do lazuli.relay:on`,
+`relay:off`, `relay:status`로도 실행할 수 있습니다. 자동 시작은 처음 한 번 `herdr-relay autostart on`으로 설정해야
+합니다(herdr-relay의 `docs/INSTALL.md` §9). 그전에는 칩이 그렇게 알려 줍니다. 기기에는 칩이 보이지 않습니다.
 
 ## 한계
 
@@ -419,6 +503,13 @@ macOS와 Tailscale만 지원하며, [Deno](https://deno.com) 2.9 이상이 필�
   다이어그램과 수식도 없습니다. 이 둘은 "Chrome으로 보기"에서만 보이고, CDN 스크립트를 받으려면 네트워크가 필요합니다.
 - **PDF.** 드래그로 고를 수 없고 대신 "이 페이지 텍스트 복사"가 있습니다. `pdftocairo` 대체 경로에는 검색, 링크, 목차가
   없습니다.
+- **비서.** Hermes Agent만 되고, 0.17.0으로 테스트했습니다. Nod는 예정으로만 나옵니다. 대화 목록과 합계·비용은 Hermes의
+  `state.db`에서 읽는데, 이것은 공개되지 않은 스키마를 Hermes 0.17.0의 쿼리로 읽는 것이라 다른 버전에서는 실패할 수
+  있습니다. 그러면 목록은 Hermes ACP의 `session/list`로 가져오고, 토큰과 비용은 없습니다. Hermes가 압축한 대화의 합계는
+  일부만 셀 수 있습니다. 파일 수정은 대화가 진행 중일 때만 diff로 보입니다(Hermes의 기록 재생에는 diff가 없습니다).
+  그림은 첨부할 수 없고, 대화 보관·삭제·이름 바꾸기와 Hermes의 자동 허용 모드도 없습니다. 폴더는 한 번에 하나, 이
+  Mac에 있는 것만 됩니다. 실패한 답의 이유는 Hermes가 그것을 `❌` 줄이나 `[ERROR]` 기록으로 남길 때만 보이고, 그렇지 않으면
+  대화에는 답 없이 응답이 끝났다고만 나옵니다.
 - **Files 패널:** 폴더마다 500개, 모두 합쳐 5,000개까지 보여 줍니다. `/usr/bin/trash`가 없으면 삭제는 되돌릴 수 없고,
   확인 창에도 그렇게 나옵니다. **빠르게 열기**는 파일을 20,000개까지(git 밖에서는 `find`로 깊이 6까지) 모아 가장 잘 맞는
   50개를 보여 줍니다.
@@ -427,7 +518,7 @@ macOS와 Tailscale만 지원하며, [Deno](https://deno.com) 2.9 이상이 필�
 ## 제거
 
 1. 실행 중인 루틴을 멈추고, `ctrl-shift-l`로 다른 레이아웃으로 바꾼 뒤 5분 기다립니다. PDF 렌더러와 공유 Chrome은 마지막으로
-   쓰고 5분 뒤에 종료됩니다.
+   쓰고 5분 뒤에 종료됩니다. 비서 브리지는 Herdr가 끝날 때, 또는 마지막으로 쓰고 30분 뒤에 종료됩니다.
 2. 파일을 지웁니다.
 
    ```sh
@@ -459,6 +550,8 @@ lazuli의 구조와 작업 방법(구조, 테스트, 화면 미리보기, 문구
 - [Lucide](https://github.com/lucide-icons/lucide)와 Feather: 아이콘.
 - [marked](https://github.com/markedjs/marked): Markdown 파서.
 - 길형진의 [Pretendard](https://github.com/orioncactus/pretendard): UI 글꼴.
+- Nous Research의 [Hermes Agent](https://hermes-agent.nousresearch.com): 비서가 대화하는 에이전트(함께 배포하지 않음).
+  비서의 프로토콜 세부 사항은 그 어댑터 소스에서 왔습니다.
 
 ## 라이선스
 

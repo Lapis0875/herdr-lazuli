@@ -4,7 +4,7 @@
 
 import * as fs from "fs/promises";
 import { appHome, checking, exec, readTextFile, writeTextFile, shared, setShared } from "herdr";
-import { KEY, STORE_NAME, normalizeSettings } from "./state.js";
+import { KEY, STORE_NAME, SETTINGS_VERSION, migratedSettings, normalizeSettings } from "./state.js";
 import { onLanguageChange, resolveLanguage, setLanguage } from "../core/i18n.js";
 
 const log = (msg) => console.log(`[lazuli/store] ${msg}`);
@@ -313,12 +313,15 @@ function publishSettings(value) {
 async function readSettingsFile() {
   const text = await readTextFile(settingsPath());
   if (text == null) return normalizeSettings(null);
+  let raw;
   try {
-    return normalizeSettings(JSON.parse(text));
+    raw = JSON.parse(text);
   } catch (e) {
     log(`settings.json is not JSON, keeping the live settings: ${errText(e)}`);
     return settings();
   }
+  if (migratedSettings(raw)) migrateSettingsFile();
+  return normalizeSettings(raw);
 }
 
 let loading = null;
@@ -348,6 +351,29 @@ export function updateSettings(change) {
   const next = saving.catch(() => {}).then(() => writeSettings(change));
   saving = next;
   return next;
+}
+
+/** Writes an older settings.json back once, migrated (state.js migratedSettings), in turn with the other
+ *  settings writes. It reads the file again and expects that text: a file another write already migrated
+ *  is left as it is, and one changed in between stays for the next load to migrate. */
+function migrateSettingsFile() {
+  if (checking()) return;
+  saving = saving
+    .catch(() => {})
+    .then(async () => {
+      const path = settingsPath();
+      const text = await readTextFile(path);
+      let value = null;
+      try {
+        value = text == null ? null : migratedSettings(JSON.parse(text));
+      } catch {
+        // No longer JSON: nothing to migrate.
+      }
+      if (!value) return;
+      await writeTextFile(path, `${JSON.stringify(value, null, 2)}\n`, text);
+      log(`settings.json migrated to version ${SETTINGS_VERSION}`);
+    })
+    .catch((e) => log(`settings.json not migrated: ${errText(e)}`));
 }
 
 function edited(base, change) {

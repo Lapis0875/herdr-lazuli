@@ -37,6 +37,16 @@ export default {
   "settings.pins.up": "Move up",
   "settings.pins.down": "Move down",
 
+  "settings.assistant.section": "Assistant",
+  "settings.assistant.folder": "Folder",
+  "settings.assistant.folderHint": "Hermes runs in this folder, and the Assistant lists only the chats held there. Only folders on this Mac.",
+  "settings.assistant.choose": "Choose folder…",
+  "settings.assistant.unset": "Not set",
+  "settings.assistant.relay": "Set it in lazuli on the Mac",
+  "settings.assistant.confirmTitle": "Stop the response and change the folder?",
+  "settings.assistant.confirmBody": "A response is running in {folder}. Changing the folder cancels it and restarts Hermes in {next}.",
+  "settings.assistant.confirm": "Stop and change",
+
   "settings.notify.section": "Notifications",
   "settings.notify.system": "System notifications while Herdr is in the background",
   "settings.notify.ask": "Allow notifications",

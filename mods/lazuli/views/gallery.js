@@ -15,19 +15,20 @@ import {
 
 // Every icon under ui/icons/.
 const ICONS = [
-  "activity", "alarm-clock", "app-window", "arrow-down", "arrow-up", "arrow-up-to-line", "bell", "bell-dot", "bot",
-  "calendar-clock", "chart-column", "check", "chevron-down", "chevron-left", "chevron-right", "chevron-up",
-  "chevrons-down-up", "chevrons-up-down", "circle", "circle-check", "circle-dashed", "circle-dot", "circle-help",
-  "circle-pause", "circle-stop", "circle-x", "clock", "code", "columns", "command", "copy", "corner-down-left",
-  "external", "eye", "eye-off", "file", "file-code", "file-diff", "file-plus", "file-text", "files", "folder",
-  "folder-git", "folder-plus", "git-branch", "git-compare", "git-fork", "git-merge", "git-pull-request",
-  "git-pull-request-draft", "globe", "hand", "history", "hourglass", "image", "inbox", "info", "keyboard",
-  "languages", "layers", "layout-dashboard", "layout-template", "link", "list", "list-ordered", "list-todo", "loader",
-  "lock", "map", "maximize-2", "message-square", "message-square-plus", "minimize-2", "more", "move-horizontal",
-  "move-vertical", "palette", "panel-left", "pencil", "pin", "play", "plus", "refresh-cw", "reply", "rotate-ccw",
-  "route", "rows-2", "scan", "scan-eye", "scroll-text", "search", "send", "server", "settings", "shield-check",
-  "sidebar", "skip-forward", "sparkles", "square-pen", "square-split", "terminal", "ticket", "timer", "trash-2",
-  "triangle-alert", "undo", "user", "users", "workflow", "wrench", "x", "zap", "zoom-in", "zoom-out",
+  "activity", "alarm-clock", "app-window", "arrow-down", "arrow-up", "arrow-up-to-line", "at-sign", "bell", "bell-dot",
+  "bot", "brain", "calendar-clock", "chart-column", "check", "chevron-down", "chevron-left", "chevron-right",
+  "chevron-up", "chevrons-down-up", "chevrons-up-down", "circle", "circle-check", "circle-dashed", "circle-dot",
+  "circle-help", "circle-pause", "circle-stop", "circle-x", "clock", "code", "columns", "command", "copy",
+  "corner-down-left", "external", "eye", "eye-off", "file", "file-code", "file-diff", "file-plus", "file-text", "files",
+  "folder", "folder-git", "folder-open", "folder-plus", "folder-x", "git-branch", "git-compare", "git-fork",
+  "git-merge", "git-pull-request", "git-pull-request-draft", "globe", "hand", "history", "hourglass", "image", "inbox",
+  "info", "keyboard", "languages", "laptop", "layers", "layout-dashboard", "layout-template", "link", "list",
+  "list-ordered", "list-todo", "loader", "lock", "map", "maximize-2", "message-square", "message-square-plus",
+  "minimize-2", "more", "move-horizontal", "move-vertical", "navigation", "palette", "panel-left", "paperclip", "pencil",
+  "pin", "play", "plus", "refresh-cw", "reply", "rotate-ccw", "route", "rows-2", "scan", "scan-eye", "scroll-text",
+  "search", "send", "server", "settings", "shield-check", "sidebar", "skip-forward", "sparkles", "square-pen",
+  "square-slash", "square-split", "terminal", "ticket", "timer", "trash-2", "triangle-alert", "undo", "user", "users",
+  "workflow", "wrench", "x", "zap", "zoom-in", "zoom-out",
 ];
 
 const STATES = ["working", "blocked", "done", "idle", "unknown"];

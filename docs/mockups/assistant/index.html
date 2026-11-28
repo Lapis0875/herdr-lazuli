@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>lazuli · Assistant screen prototype (plan lazuli-assistant, P1)</title>
+<style>
+  :root { --bg: #E9E9E7; --fg: #1B1B1A; --muted: #55554F; --line: #CFCFCB; --card: #F6F6F4; --link: #1F4FA8; color-scheme: light; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "Apple SD Gothic Neo", system-ui, sans-serif; background: var(--bg); color: var(--fg); font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; word-break: keep-all; overflow-wrap: break-word; }
+  header, main, footer { max-width: 1800px; margin: 0 auto; padding: 0 32px; }
+  header { padding-top: 28px; display: flex; flex-direction: column; gap: 8px; }
+  h1 { font-size: 22px; letter-spacing: -.01em; text-wrap: balance; }
+  h2 { font-size: 17px; margin: 28px 0 10px; text-wrap: balance; }
+  header p, .note { color: var(--muted); max-width: 980px; text-wrap: pretty; }
+  .controls { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin-top: 6px; }
+  fieldset { border: 0; display: flex; align-items: center; gap: 4px; }
+  legend { float: left; margin-right: 8px; color: var(--muted); font-size: 13px; }
+  .seg { display: inline-flex; padding: 2px; gap: 2px; border: 1px solid var(--line); border-radius: 7px; background: var(--card); }
+  .seg label { padding: 3px 10px; border-radius: 5px; cursor: pointer; font-size: 13px; color: var(--muted); }
+  .seg input { position: absolute; opacity: 0; pointer-events: none; }
+  .seg input:checked + span { color: var(--fg); font-weight: 600; }
+  .seg label:has(input:checked) { background: #fff; box-shadow: 0 0 0 1px var(--line); }
+  .seg label:has(input:focus-visible) { outline: 2px solid var(--link); outline-offset: 1px; }
+  .status { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; padding: 3px 10px; border-radius: 999px; background: #F3E6C4; color: #5B4300; border: 1px solid #DCC58A; }
+  .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+  figure { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  figure > a { display: block; border-radius: 8px; overflow: hidden; outline: 1px solid rgba(0, 0, 0, .14); outline-offset: -1px; line-height: 0; }
+  figure img { width: 100%; height: auto; display: block; }
+  figcaption { font-size: 13px; color: var(--muted); display: flex; flex-direction: column; gap: 2px; }
+  figcaption b { color: var(--fg); font-size: 14px; }
+  figcaption .links { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12.5px; }
+  a { color: var(--link); }
+  a:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; border-radius: 4px; }
+  table { border-collapse: collapse; width: 100%; max-width: 1200px; font-size: 13px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  th, td { text-align: left; vertical-align: top; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  th { font-weight: 600; background: #EFEFEC; }
+  tr:last-child td { border-bottom: 0; }
+  td:first-child { white-space: nowrap; }
+  code, .mono { font: 12px ui-monospace, "SF Mono", Menlo, monospace; }
+  ul.list { padding-left: 18px; display: flex; flex-direction: column; gap: 4px; max-width: 1200px; }
+  .icons { display: flex; flex-wrap: wrap; gap: 10px; }
+  .ic { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); font-size: 13px; }
+  .ic svg { width: 18px; height: 18px; flex: none; }
+  .ic span { color: var(--muted); }
+  .ic code { color: var(--fg); }
+  .layout { display: flex; gap: 8px; max-width: 900px; height: 150px; font-size: 12.5px; }
+  .layout div { border: 1px solid var(--line); border-radius: 8px; background: var(--card); padding: 8px; display: flex; flex-direction: column; gap: 2px; }
+  .layout .side { padding: 0; border: 0; background: none; gap: 8px; }
+  .layout b { font-weight: 600; }
+  footer { padding-top: 28px; padding-bottom: 40px; color: var(--muted); font-size: 12.5px; }
+  @media (max-width: 1100px) { .grid { grid-template-columns: 1fr; } .layout { height: auto; flex-wrap: wrap; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>lazuli · Assistant screen (비서) · HTML prototype</h1>
+  <p>Plan <code>lazuli-assistant</code>, node P1. Drawn in the A · Lapis system: colors from <code>themes/lazuli-{light,dark}.json</code>, sizes and fonts from <code>mods/lazuli/ui/tokens.js</code>, the kit's components and Lucide icons at stroke 1.75. Eleven screens, each in Korean and English, dark and light: 1440 × 900 frames rendered by headless Chrome from <a href="screen.html">screen.html</a>. Click a picture for full size; the HTML link opens the live page.</p>
+  <p><span class="status">Owner approval: approved on 2026-11-23 (owner decisions: the / menu hides /steer and /queue; AT-08's late deny is sent by command)</span></p>
+  <div class="controls">
+    <fieldset class="seg-wrap"><legend>Language</legend><span class="seg"><label><input type="radio" name="lang" value="ko" checked><span>한국어</span></label><label><input type="radio" name="lang" value="en"><span>English</span></label></span></fieldset>
+    <fieldset class="seg-wrap"><legend>Theme</legend><span class="seg"><label><input type="radio" name="theme" value="dark" checked><span>Dark</span></label><label><input type="radio" name="theme" value="light"><span>Light</span></label></span></fieldset>
+  </div>
+</header>
+
+<main>
+  <h2>Layout (K2)</h2>
+  <div class="layout" aria-label="Assistant row layout">
+    <div style="width:180px"><b>assistant-list</b><span>px 260 · min 220 · max 420</span><span>profile groups → chats</span></div>
+    <div style="flex:1"><b>assistant-chat</b><span>weight 1 · min 360</span><span>header · banners · transcript · plan dock · composer</span></div>
+    <div class="side" style="width:220px"><div style="height:60px"><b>assistant-info</b><span>px 188</span></div><div style="flex:1"><b>assistant-files</b><span>weight 1 · files-tree, scope "assistant"</span></div></div>
+  </div>
+  <p class="note" style="margin-top:8px">Ids, nesting and the split side column are K2's. Sizes changed from K2's first numbers (K2 leaves them to this prototype): list 280 → 260 and side 340 → 300, so at 1440 × 900 the chat gets 528 px instead of 468 px (about 72 code columns in a diff instead of 62). Info stays 188 px; the side column stays split, not tabbed, because the six info rows and the tree are used together (Attach a file while watching context and cost).</p>
+
+  <h2>Screens</h2>
+  <div class="grid" id="shots">
+    <figure data-s="chat"><a href="shots/chat-ko-dark.png"><img src="shots/chat-ko-dark.png" width="1440" height="900" alt="Response in progress"></a><figcaption><b>1 · Response in progress</b><span>Running row with spinner; bridges ready, off and error (collapsed group); Nod · Planned. User prompt, collapsed thought, collapsed read tool, expanded edit tool with its diff, steer message and acknowledgement notice, streaming markdown with caret. Plan dock open (2 of 3). Composer in running mode: two queued chips, Stop, steer button. Sidebar running dot.</span><span class="links"><a class="live" href="screen.html?s=chat">HTML</a></span></figcaption></figure>
+    <figure data-s="tools"><a href="shots/tools-ko-dark.png"><img src="shots/tools-ko-dark.png" width="1440" height="900" alt="Finished response and the new-chat profile picker" loading="lazy"></a><figcaption><b>2 · Finished response · new-chat profile picker</b><span>Expanded thought; expanded execute tool with input, output and “3 more lines”; markdown answer (bold, list, inline code). Reply typed with an attachment chip. Picker: filter, Hermes profiles (15, scrolls), Nod disabled with Planned. Hovered file row shows Attach.</span><span class="links"><a class="live" href="screen.html?s=tools">HTML</a></span></figcaption></figure>
+    <figure data-s="approval"><a href="shots/approval-ko-dark.png"><img src="shots/approval-ko-dark.png" width="1440" height="900" alt="Approval card with More menu, countdown and an expired card" loading="lazy"></a><figcaption><b>3 · Approval · More · expiry</b><span>Expired edit approval (its two options, disabled) and the “too late” notice. Live approval: 47 s left with a draining bar; Allow once, Allow always, Deny; More open with Allow for session and Deny always. Tool card awaiting permission; plan dock collapsed; sidebar pyrite count; row “Needs you”.</span><span class="links"><a class="live" href="screen.html?s=approval">HTML</a></span></figcaption></figure>
+    <figure data-s="stopped"><a href="shots/stopped-ko-dark.png"><img src="shots/stopped-ko-dark.png" width="1440" height="900" alt="Stopped response, paused queue and the slash command menu" loading="lazy"></a><figcaption><b>4 · Stopped · paused queue · / menu</b><span>Cancelled notice; the queue paused with its chip and Resume; the / menu with Hermes's nine advertised commands (descriptions as Hermes sends them). Hovered list row shows Fork. Cost “unknown”.</span><span class="links"><a class="live" href="screen.html?s=stopped">HTML</a></span></figcaption></figure>
+    <figure data-s="new"><a href="shots/new-ko-dark.png"><img src="shots/new-ko-dark.png" width="1440" height="900" alt="New chat with the @ file menu" loading="lazy"></a><figcaption><b>5 · New chat · @ file menu</b><span>Untitled row selected; empty-chat intro; @ menu (folder files, images excluded); doc-writer's bridge starting; info with nothing yet; Fork disabled.</span><span class="links"><a class="live" href="screen.html?s=new">HTML</a></span></figcaption></figure>
+    <figure data-s="error"><a href="shots/error-ko-dark.png"><img src="shots/error-ko-dark.png" width="1440" height="900" alt="Hermes quit banner and a failed request" loading="lazy"></a><figcaption><b>6 · Hermes quit · failed request</b><span>Agent-exit banner with Retry; stale transcript; failed-request notice with the JSON-RPC error; composer offline; the default group's error row.</span><span class="links"><a class="live" href="screen.html?s=error">HTML</a></span></figcaption></figure>
+    <figure data-s="gate-folder"><a href="shots/gate-folder-ko-dark.png"><img src="shots/gate-folder-ko-dark.png" width="1440" height="900" alt="Gate: no folder" loading="lazy"></a><figcaption><b>7 · Gate: no folder</b><span>Folder picker call to action; list and side wait.</span><span class="links"><a class="live" href="screen.html?s=gate-folder">HTML</a></span></figcaption></figure>
+    <figure data-s="gate-missing"><a href="shots/gate-missing-ko-dark.png"><img src="shots/gate-missing-ko-dark.png" width="1440" height="900" alt="Gate: folder missing" loading="lazy"></a><figcaption><b>8 · Gate: folder missing</b><span>The saved path, Check again, Choose another folder.</span><span class="links"><a class="live" href="screen.html?s=gate-missing">HTML</a></span></figcaption></figure>
+    <figure data-s="gate-hermes"><a href="shots/gate-hermes-ko-dark.png"><img src="shots/gate-hermes-ko-dark.png" width="1440" height="900" alt="Gate: Hermes missing" loading="lazy"></a><figcaption><b>9 · Gate: Hermes missing</b><span>Install and setup commands with Copy, Check again, where lazuli looked and the tested version. The file tree still works (it needs only the folder).</span><span class="links"><a class="live" href="screen.html?s=gate-hermes">HTML</a></span></figcaption></figure>
+    <figure data-s="gate-check"><a href="shots/gate-check-ko-dark.png"><img src="shots/gate-check-ko-dark.png" width="1440" height="900" alt="Gate: ACP check failed" loading="lazy"></a><figcaption><b>10 · Gate: check failed</b><span><code>hermes acp --check</code> output with its exit code, a hint and Check again.</span><span class="links"><a class="live" href="screen.html?s=gate-check">HTML</a></span></figcaption></figure>
+    <figure data-s="gate-relay"><a href="shots/gate-relay-ko-dark.png"><img src="shots/gate-relay-ko-dark.png" width="1440" height="900" alt="Gate: relay device" loading="lazy"></a><figcaption><b>11 · Gate: relay device</b><span>Desktop-only notice; no list, info or files on the device.</span><span class="links"><a class="live" href="screen.html?s=gate-relay">HTML</a></span></figcaption></figure>
+  </div>
+
+  <h2>What the node check asks for, and where it is</h2>
+  <table>
+    <thead><tr><th>Check item (P1)</th><th>Screens</th></tr></thead>
+    <tbody>
+      <tr><td>List: profile groups, running and bridge states, Nod · Planned</td><td>1–6 (ready, off, starting in 5, error in 1–6, running in 1–3, waiting in 3, collapsed group everywhere)</td></tr>
+      <tr><td>Streaming text</td><td>1</td></tr>
+      <tr><td>Tool cards collapsed and expanded, with a diff</td><td>1 (collapsed read, expanded edit with diff), 2 (expanded execute), 3 (awaiting permission), 4 (collapsed search)</td></tr>
+      <tr><td>A thought</td><td>1 and 4 (collapsed), 2 (expanded)</td></tr>
+      <tr><td>A plan</td><td>1 (dock open), 3 (dock collapsed)</td></tr>
+      <tr><td>Approval card with More and countdown; an expired card</td><td>3</td></tr>
+      <tr><td>Steer notice; queued chips, one paused</td><td>1 (steer and two chips), 4 (paused chip with Resume)</td></tr>
+      <tr><td>Composer with @ and / menus and Stop</td><td>5 (@), 4 (/), 1 and 3 (Stop)</td></tr>
+      <tr><td>Side column: info above files</td><td>every screen</td></tr>
+      <tr><td>Gates: no folder, folder missing, Hermes missing, check failed, relay</td><td>7–11</td></tr>
+      <tr><td>New-chat profile picker with Nod Planned</td><td>2</td></tr>
+      <tr><td>Light and dark, Korean and English</td><td>every screen, four PNGs each (toggles above)</td></tr>
+    </tbody>
+  </table>
+  <p class="note" style="margin-top:8px">Not drawn, same parts with other text: the “Checking Hermes…” gate (spinner and one line), the disconnected banner (the agent-exit banner's shape), bridge <code>stopped</code> (the <code>off</code> ring, its own tooltip), an answered approval (collapses to one line, check icon and “Answered: Allow once”), a replayed tool card (no duration, no diff), the dropped-items notice, the model menu (an <code>openMenu</code> list with a check on the current model), the folder-change confirmation in settings (strings in <code>other</code>), and the loading line.</p>
+
+  <h2>Icons</h2>
+  <p class="note">New Lucide icons this screen needs (lucide-static 1.75.0, ISC, redrawn at stroke 1.75 like the kit's set; sources in <code>icons-new/</code>, for U2 to copy into <code>mods/lazuli/ui/icons/</code>):</p>
+  <div class="icons" id="new-icons">
+    <span class="ic"><svg aria-hidden="true"><use href="#i-at-sign"/></svg><code>at-sign</code><span>composer @ button</span></span>
+    <span class="ic"><svg aria-hidden="true"><use href="#i-square-slash"/></svg><code>square-slash</code><span>composer / button</span></span>
+    <span class="ic"><svg aria-hidden="true"><use href="#i-brain"/></svg><code>brain</code><span>thought, tool kind think</span></span>
+    <span class="ic"><svg aria-hidden="true"><use href="#i-paperclip"/></svg><code>paperclip</code><span>attachments, Attach in the tree</span></span>
+    <span class="ic"><svg aria-hidden="true"><use href="#i-navigation"/></svg><code>navigation</code><span>steer tag and notice</span></span>
+    <span class="ic"><svg aria-hidden="true"><use href="#i-folder-open"/></svg><code>folder-open</code><span>choose folder</span></span>
+    <span class="ic"><svg aria-hidden="true"><use href="#i-folder-x"/></svg><code>folder-x</code><span>folder missing</span></span>
+    <span class="ic"><svg aria-hidden="true"><use href="#i-laptop"/></svg><code>laptop</code><span>relay gate</span></span>
+  </div>
+  <p class="note" style="margin-top:8px">Reused from the kit: <code>bot</code> (sidebar item, default profile, empty chat, Hermes gate), <code>message-square-plus</code>, <code>plus</code>, <code>hand</code>, <code>timer</code>, <code>hourglass</code>, <code>shield-check</code>, <code>check</code>, <code>x</code>, <code>list-todo</code>, <code>circle-check</code>, <code>circle-dot</code>, <code>circle</code>, <code>circle-dashed</code>, <code>list-ordered</code>, <code>circle-pause</code>, <code>play</code>, <code>circle-stop</code>, <code>arrow-up</code>, <code>git-fork</code>, <code>loader</code>, <code>circle-x</code>, <code>triangle-alert</code>, <code>refresh-cw</code>, <code>copy</code>, <code>user</code>, <code>search</code>, <code>chevron-*</code>, and per tool kind <code>file-text</code> (read), <code>file-diff</code> (edit), <code>trash-2</code> (delete), <code>move-horizontal</code> (move), <code>search</code> (search), <code>terminal</code> (execute), <code>globe</code> (fetch), <code>layers</code> (switch_mode), <code>wrench</code> (other). <code>route</code> was not used for steer: the rail's Plan panel already owns it.</p>
+
+  <h2>Text</h2>
+  <ul class="list">
+    <li><a href="catalog.ko.js">catalog.ko.js</a> and <a href="catalog.en.js">catalog.en.js</a> are in lazuli's catalog format (flat keys, <code>{var}</code> placeholders, Korean in the <code>-습니다</code> voice of the other catalogs). The default export is <code>assistant.*</code> for U1; <code>other</code> holds the keys for the shell, palette and settings catalogs. <code>build.py</code> fails when the two languages differ or a screen uses a missing key or icon.</li>
+    <li>Approval buttons are labelled by <code>optionId</code> from the catalog; an option id lazuli does not know shows Hermes's own <code>name</code>. Hermes's words stay as Hermes sends them in both languages: command descriptions in the / menu, the approval detail (“Dangerous command: recursive delete”), mode names (“Default”).</li>
+  </ul>
+
+  <h2>Notes for the views (U1, U2)</h2>
+  <ul class="list">
+    <li>CSS variables are the kit's names (<code>--bg-card</code> = <code>tokens().bg.card</code>, <code>--state-blocked</code>, <code>--radius-lg</code>, <code>--font-size-sm</code>, …) and <code>style.css</code> uses only flex rows and columns, text, icons, 1 px borders, radii, solid fills, the two kit shadows and opacity. No grid, gradient, blur, transform or pseudo-element on the screen.</li>
+    <li>Block headers match the Files panel: 40 px, title 12 px semibold, 12 px left padding, a soft bottom rule. Group headers are 28 px rows: twisty, profile (12 px semibold), <code>hermes</code> and the chat count (11 px mono, tertiary), running count (spinner + number, working), bridge <code>StatusDot</code> (ready = done, starting = working breathing, off/stopped = idle ring, error = error) with its tooltip and screen-reader label, then <code>IconButton</code> “+”. A bridge error adds a line with the reason and Retry, also when collapsed.</li>
+    <li>Transcript: the user message is a surface box (radius lg); Hermes's text has no bubble and goes through lazuli's Markdown renderer (B6); a thought is a 28 px row that expands to left-ruled text; a tool card is a bordered radius-md box with a 32 px header (kind icon, title, status, duration in mono, chevron) that expands to Input, Output (capped, “N more lines”) and Changes (the diff); events are one line, icon and text. A transcript that fits starts at the top; one that overflows stays at its end while the stream runs.</li>
+    <li>The plan is <code>ChatState.plan</code>, not an item, so it is a dock between the transcript and the composer: one row collapsed (Plan, n of m, the entry in progress), the entries when open (circle-check success, circle-dot working, circle tertiary).</li>
+    <li>Approval card: radius lg, surface fill, pyrite edge at 45%; header hand, title, countdown in mono pyrite; body the command (mono box) or the diff header, then Hermes's detail; buttons <code>allow_once</code> (primary), <code>allow_always</code>, <code>deny</code> when present; every other option in More; a 3 px bar drains with the seconds left. Expired: card fill, soft edge, hourglass, “Expired” badge, buttons disabled.</li>
+    <li>Composer: radius lg, strong edge (accent when focused); rows: queue (label or “Paused” + Resume, removable chips), attachments (paperclip chips), the text, a 36 px toolbar (@, /, the key hint, then Stop and the steer button while running, else Send). The @ and / lists are popovers inside the chat block because they follow the typing; the profile picker, More and the model menu are <code>openMenu</code> overlays.</li>
+    <li>Info: six 20 px rows, label column 72 px; totals and API calls share one row so the block fits K2's 188 px; context has a 56 × 4 px bar; cost shows “estimated” or “unknown”.</li>
+    <li>Sidebar item: <code>bot</code>, tooltip with ⌥⌘4; a pyrite count while approvals wait, else the working dot while a turn runs.</li>
+    <li>Motion: the kit's spinner, and the kit's breathing opacity on the starting bridge dot, the sidebar dot, the plan entry in progress and the caret. Nothing else moves; with reduced motion all of it stands still (the PNGs are rendered that way).</li>
+  </ul>
+
+  <h2>Deviations and open questions</h2>
+  <ul class="list">
+    <li><b>Sizes</b>: list 260 and side 300 instead of 280 and 340 (reason above). Not tabs.</li>
+    <li><b>Expired approval</b>: its buttons are disabled. AT-08's “wait 61 s, then press Deny” can then reach the “too late” refusal only through <code>lazuli.assistant:deny</code> (K7) or a press racing the last tick.</li>
+    <li><b>Catalog keys</b>: the sidebar reads <code>shell.app.&lt;place&gt;</code> for its labels and the palette uses <code>palette.cmd.go.&lt;place&gt;</code>; K1 names <code>shell.nav.assistant</code> and <code>palette.go.assistant</code>. The catalog here has <code>shell.app.assistant</code> (label), <code>shell.nav.assistant</code> (the badge's screen-reader text, like <code>shell.nav.inboxCount</code>) and <code>palette.cmd.go.assistant</code>.</li>
+    <li><b>/steer and /queue</b> show in the / menu because Hermes advertises them (AT-11); Enter and ⌥Enter already do both. Hiding them is open.</li>
+    <li><b>Gallery</b>: <code>docs/mockups/index.html</code> (outside P1's files) does not link this folder yet.</li>
+  </ul>
+</main>
+
+<footer>
+  Rebuild: <code>python3 docs/mockups/assistant/build.py</code> writes <code>tokens.css</code> and <code>icons.js</code>, checks the catalogs and renders the 44 PNGs into <code>shots/</code> (headless Google Chrome, 1440 × 900, scale 1, reduced motion). <code>--css-only</code> skips the pictures; <code>--serve</code> serves the repository on 127.0.0.1 and prints this page's URL (the live pages need it for the fonts and modules).
+</footer>
+
+<script type="module">
+  import { injectSprite } from "./icons.js";
+  injectSprite();
+  const pick = (name) => document.querySelector(`input[name="${name}"]:checked`).value;
+  function apply() {
+    const lang = pick("lang"), theme = pick("theme");
+    for (const f of document.querySelectorAll("#shots figure")) {
+      const s = f.dataset.s, png = `shots/${s}-${lang}-${theme}.png`;
+      f.querySelector("img").src = png;
+      f.querySelector("figure > a").href = png;
+      f.querySelector("a.live").href = `screen.html?s=${s}&lang=${lang}&theme=${theme}`;
+    }
+  }
+  for (const r of document.querySelectorAll("input[type=radio]")) r.addEventListener("change", apply);
+  apply();
+</script>
+</body>
+</html>

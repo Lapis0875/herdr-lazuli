@@ -1,0 +1,190 @@
+// UI text for the Assistant screen, Korean. Keys start with "assistant.". Catalog-ready: the default export is
+// what mods/lazuli/core/catalog/assistant.ko.js gets (U1); `other` lists the keys other catalogs get (U2).
+// Agent-written text (titles, replies, Hermes's command descriptions and approval details) is never here.
+
+export default {
+  // List (assistant-list).
+  "assistant.list.title": "대화",
+  "assistant.list.new": "새 대화",
+  "assistant.list.newIn": "{profile} 프로필로 새 대화",
+  "assistant.list.collapse": "{profile} 접기",
+  "assistant.list.expand": "{profile} 펼치기",
+  "assistant.list.count": "대화 {count}개",
+  "assistant.list.running": "실행 중 {count}",
+  "assistant.list.needsYou": "응답 필요",
+  "assistant.list.untitled": "새 대화",
+  "assistant.list.fork": "포크",
+  "assistant.list.empty": "이 폴더에서 나눈 대화가 아직 없습니다",
+  "assistant.list.gated": "폴더와 Hermes가 준비되면 대화가 여기에 나옵니다",
+
+  // Bridge state: the dot on a profile header (tooltip and screen-reader label).
+  "assistant.bridge.off": "Hermes 꺼짐 · 첫 메시지 때 시작합니다",
+  "assistant.bridge.starting": "Hermes 시작 중…",
+  "assistant.bridge.ready": "Hermes 연결됨",
+  "assistant.bridge.error": "Hermes를 시작하지 못했습니다",
+  "assistant.bridge.exited": "Hermes가 종료됐습니다",
+  "assistant.bridge.stopped": "Hermes 멈춤 · 다음 메시지 때 다시 시작합니다",
+  "assistant.bridge.retry": "다시 시도",
+
+  // Groups that are not usable yet (D8).
+  "assistant.group.planned": "계획됨",
+  "assistant.group.plannedHint": "Nod는 다음 버전에서 지원합니다",
+
+  // New-chat profile picker.
+  "assistant.picker.label": "Hermes 프로필",
+  "assistant.picker.filter": "프로필 찾기…",
+  "assistant.picker.default": "기본",
+  "assistant.picker.noMatch": "맞는 프로필이 없습니다",
+  "assistant.picker.other": "다른 에이전트",
+
+  // Chat header and body.
+  "assistant.chat.model": "모델: {model}",
+  "assistant.chat.modelBusy": "응답이 끝난 뒤 바꿀 수 있습니다",
+  "assistant.chat.models": "이 세션의 모델",
+  "assistant.chat.fork": "이 대화 포크",
+  "assistant.chat.running": "응답 중 · {time}",
+  "assistant.chat.emptyTitle": "{profile} 프로필과 새 대화",
+  "assistant.chat.emptyBody": "Hermes가 {folder}에서 일합니다. @로 폴더의 파일을 붙이고, /로 Hermes 명령을 봅니다.",
+  "assistant.chat.loading": "대화를 불러오는 중…",
+  "assistant.chat.latest": "맨 아래로",
+
+  // Transcript items.
+  "assistant.thought": "생각",
+  "assistant.thought.streaming": "생각하는 중…",
+  "assistant.item.show": "자세히",
+  "assistant.item.hide": "접기",
+  "assistant.tool.pending": "대기",
+  "assistant.tool.in_progress": "실행 중",
+  "assistant.tool.completed": "완료",
+  "assistant.tool.failed": "실패",
+  "assistant.tool.waiting": "허가 대기",
+  "assistant.tool.seconds": "{n}초",
+  "assistant.tool.input": "입력",
+  "assistant.tool.output": "출력",
+  "assistant.tool.changes": "변경",
+  "assistant.tool.more": "{count}줄 더",
+  "assistant.plan.title": "계획",
+  "assistant.plan.progress": "{done}/{total} 완료",
+  "assistant.user.steer": "방향 전환",
+  "assistant.user.queued": "대기열에서 보냄",
+
+  // Events in the transcript (notice items).
+  "assistant.event.steerSending": "방향 전환을 보내는 중…",
+  "assistant.event.steerAck": "Hermes가 진행 중인 응답에 방향 전환을 반영합니다",
+  "assistant.event.cancelled": "응답을 중지했습니다",
+  "assistant.event.tooLate": "만료된 요청이라 고른 답을 보내지 않았습니다",
+  "assistant.event.failed": "요청이 실패했습니다",
+  "assistant.event.dropped": "오래된 항목 {count}개를 목록에서 뺐습니다",
+  "assistant.event.modelSet": "모델을 {model}(으)로 바꿨습니다",
+
+  // Approval card (D16, D29). Known Hermes option ids get these labels; other ids show the agent's own name.
+  "assistant.approval.title": "허가가 필요합니다",
+  "assistant.approval.editTitle": "파일을 고쳐도 될까요?",
+  "assistant.approval.left": "{n}초 남음",
+  "assistant.approval.expired": "만료됨",
+  "assistant.approval.expiredBody": "60초 안에 답이 없어 Hermes가 요청을 취소했습니다",
+  "assistant.approval.answered": "답함: {option}",
+  "assistant.approval.allowOnce": "한 번 허용",
+  "assistant.approval.allowAlways": "항상 허용",
+  "assistant.approval.allowSession": "이 세션에서 허용",
+  "assistant.approval.deny": "거부",
+  "assistant.approval.denyAlways": "항상 거부",
+  "assistant.approval.more": "더 보기",
+
+  // Composer (D19, D20, D28).
+  "assistant.composer.label": "메시지",
+  "assistant.composer.placeholder": "Hermes에게 메시지… @ 파일 · / 명령",
+  "assistant.composer.placeholderRunning": "방향을 바꿀 지시, 또는 ⌥Enter로 대기열에 넣을 메시지…",
+  "assistant.composer.send": "보내기",
+  "assistant.composer.steer": "방향 전환 보내기",
+  "assistant.composer.stop": "중지",
+  "assistant.composer.attach": "파일 첨부",
+  "assistant.composer.commands": "Hermes 명령",
+  "assistant.composer.hintIdle": "Enter 보내기 · ⇧Enter 줄바꿈",
+  "assistant.composer.hintRunning": "Enter 방향 전환 · ⌥Enter 대기열",
+  "assistant.composer.offline": "Hermes가 다시 연결되면 보낼 수 있습니다",
+  "assistant.composer.removeAttachment": "{name} 첨부 빼기",
+  "assistant.queue.label": "대기 {count}",
+  "assistant.queue.hint": "응답이 끝나면 하나씩 보냅니다",
+  "assistant.queue.remove": "대기열에서 빼기",
+  "assistant.queue.paused": "일시정지",
+  "assistant.queue.pausedHint": "중지해서 보내지 않았습니다. 재개하거나, 새 메시지를 보내면 그 응답이 끝난 뒤 보냅니다.",
+  "assistant.queue.resume": "재개",
+  "assistant.mention.label": "폴더의 파일 · 이미지 제외",
+  "assistant.mention.hint": "↑↓ 고르기 · Enter 첨부 · esc 닫기",
+  "assistant.mention.empty": "맞는 파일이 없습니다",
+  "assistant.commands.label": "Hermes 명령",
+  "assistant.commands.hint": "↑↓ 고르기 · Enter 넣기 · esc 닫기",
+
+  // Session info (assistant-info).
+  "assistant.info.title": "세션",
+  "assistant.info.model": "모델",
+  "assistant.info.mode": "모드",
+  "assistant.info.context": "컨텍스트",
+  "assistant.info.contextValue": "{used} / {size}",
+  "assistant.info.lastTurn": "마지막 응답",
+  "assistant.info.lastTurnValue": "입력 {input} · 출력 {output}",
+  "assistant.info.total": "누적",
+  "assistant.info.totalValue": "{tokens} 토큰 · API {calls}회",
+  "assistant.info.cost": "비용",
+  "assistant.info.costEstimated": "추정",
+  "assistant.info.unknown": "알 수 없음",
+  "assistant.info.none": "아직 없음",
+  "assistant.info.noSession": "고른 대화가 없습니다",
+
+  // Side file tree (files-tree with scope "assistant"); the rest of its text is files.*.
+  "assistant.files.attach": "대화에 첨부",
+  "assistant.files.none": "폴더가 정해지지 않았습니다",
+
+  // Gates (D3, D5, D23).
+  "assistant.gate.checking": "Hermes를 확인하는 중…",
+  "assistant.gate.retry": "다시 확인",
+  "assistant.gate.copy": "복사",
+  "assistant.gate.noFolder.title": "비서가 일할 폴더를 고르세요",
+  "assistant.gate.noFolder.body": "Hermes가 이 폴더에서 실행되고, 목록에는 이 폴더에서 나눈 대화만 나옵니다. 이 Mac의 폴더만 고를 수 있습니다.",
+  "assistant.gate.noFolder.action": "폴더 고르기…",
+  "assistant.gate.noFolder.hint": "나중에 lazuli 설정에서 바꿀 수 있습니다",
+  "assistant.gate.missing.title": "폴더를 찾을 수 없습니다",
+  "assistant.gate.missing.body": "옮겨졌거나 지워졌습니다. 제자리로 돌려놓고 다시 확인하거나 다른 폴더를 고르세요.",
+  "assistant.gate.missing.choose": "다른 폴더 고르기…",
+  "assistant.gate.hermes.title": "Hermes가 설치되어 있지 않습니다",
+  "assistant.gate.hermes.body": "비서는 Hermes Agent로 대화합니다. 터미널에서 설치하고 모델을 설정한 뒤 다시 확인하세요.",
+  "assistant.gate.hermes.install": "1. 설치",
+  "assistant.gate.hermes.setup": "2. 모델과 API 키 설정",
+  "assistant.gate.hermes.tested": "Hermes Agent {version}에서 확인했습니다",
+  "assistant.gate.hermes.looked": "찾은 곳: {where}",
+  "assistant.gate.check.title": "Hermes ACP 확인에 실패했습니다",
+  "assistant.gate.check.body": "hermes acp --check가 오류로 끝났습니다. Hermes의 ACP 구성 요소를 불러오지 못했다는 뜻입니다.",
+  "assistant.gate.check.output": "출력 · 종료 코드 {code}",
+  "assistant.gate.check.hint": "터미널에서 hermes acp --check를 직접 실행해 보고, 같은 오류가 나면 Hermes를 다시 설치하세요",
+  "assistant.gate.relay.title": "Mac에서만 쓸 수 있습니다",
+  "assistant.gate.relay.body": "비서는 Mac에서 Hermes를 실행하므로 이 기기에서는 대화를 보여 주지 않습니다. Mac의 Herdr에서 여세요.",
+  "assistant.gate.relay.short": "Mac에서만 쓸 수 있습니다",
+
+  // Banners over the chat (A11).
+  "assistant.banner.agentExit": "Hermes가 종료됐습니다",
+  "assistant.banner.agentExitBody": "에이전트가 종료 코드 {code}로 끝났습니다. 다시 시도하면 Hermes를 새로 시작하고 이 대화를 다시 불러옵니다.",
+  "assistant.banner.disconnected": "Hermes와 연결이 끊겼습니다",
+  "assistant.banner.disconnectedBody": "다시 시도하면 Hermes에 다시 연결하고 이 대화를 다시 불러옵니다.",
+  "assistant.banner.retry": "다시 시도",
+
+  // Notifications while another screen is shown (A12; vars {title}).
+  "assistant.notice.permission": "{title} · 허가가 필요합니다",
+  "assistant.notice.done": "{title} · 응답을 마쳤습니다",
+  "assistant.notice.failed": "{title} · 응답이 실패했습니다",
+};
+
+/** Keys for the other catalogs (U2), and the sidebar badge label. */
+export const other = {
+  "shell.app.assistant": "비서",
+  "shell.nav.assistant": "비서: 실행 중 {running}, 응답 필요 {waiting}",
+  "palette.cmd.go.assistant": "비서",
+  "settings.assistant.section": "비서",
+  "settings.assistant.folder": "폴더",
+  "settings.assistant.folderHint": "Hermes가 이 폴더에서 실행되고, 이 폴더에서 나눈 대화만 목록에 나옵니다. 이 Mac의 폴더만 고를 수 있습니다.",
+  "settings.assistant.choose": "폴더 고르기…",
+  "settings.assistant.unset": "정하지 않음",
+  "settings.assistant.confirmTitle": "진행 중인 응답을 멈추고 폴더를 바꿀까요?",
+  "settings.assistant.confirmBody": "응답을 취소하고 Hermes를 새 폴더에서 다시 시작합니다.",
+  "settings.assistant.confirm": "멈추고 바꾸기",
+};

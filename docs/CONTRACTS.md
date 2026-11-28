@@ -629,3 +629,526 @@ paletteCommands(chip(null)) // → ["menu","toggle","mode:on","mode:agent","mode
 - Catalog keys (`shell.caffeinate.*`, en and ko, "Caffeinate" English in both): `label.{on,agent,waiting,timer,trigger}`, `left.{m,h,hm}`, `tip.{starting,off,waiting,on,agent,timer,timerOpen,trigger,display,open}`, `tip.lid.{engaged,external,blocked,unavailable}`, `blocked.{ac,battery,thermal,unknown,other-instance}`, `cmd.<commandKey>` for every COMMANDS entry (titles start with "Caffeinate: ").
 - `ui/icons/coffee.svg`: Lucide `coffee` at stroke width 1.75, like the rest of the set (ISC, THIRD_PARTY_NOTICES "Lucide").
 - `tests/caffeinate-chip.test.mjs`: invalid, stale and `v: 2` states give `starting` with no active styling; each STATUS and LID entry has one icon (file present) and one tone, and a sample state reaches it; minutes left, lid, install and palette rules; every key above exists in both languages.
+
+## herdr-relay chip (ARCHITECTURE §8.1)
+
+lazuli shows whether herdr-relay runs and turns it on and off; it imports nothing from herdr-relay or its mirror mod and
+runs only the commands herdr-relay documents (its `docs/INSTALL.md` §9). Files: `core/relay-chip.js`, `sys/relay.js`,
+`views/status.js`, `views/shell/services.js`, `sys/search.js`, `sys/state.js` (`PREFIXED` gains `relay:`),
+`core/catalog/shell.{en,ko}.js`, `ui/icons/tablet-smartphone.svg`, `tests/relay-chip.test.mjs`,
+`tests/relay-service.test.mjs`. `layouts/lazuli.json` and `keys.json` are not changed.
+
+### core/relay-chip.js — pure
+
+```js
+export const TERMINAL = "herdr-relay", STATE_DIR = ".herdr/herdr-relay", AUTOSTART_FILE = "autostart.json"
+export const ENDPOINT_FILE = "mirror-endpoint.json", REMEMBER_FILE = "relay.json", LOG_FILE = "Library/Logs/herdr-relay.log"
+export const LAUNCHER_SUFFIX = "/packages/bridge/bin/herdr-relay", PATH_MAX = 8192
+export const GET_ARGS = ["get", "herdr-relay", "--json"], KILL_ARGS = ["kill", "herdr-relay"]
+export const VERBS = ["on", "off", "status"]
+export const STATUS: {[status]: {icon, tone}}   // on, off, starting, stopping, external, unset, error, unknown
+export const LABELED = ["on", "starting", "stopping", "external", "error"]
+export const ERRORS = ["exit", "spawn", "timeout", "remember"]
+export function launcherConfig(v): {launcher, path} | null
+export function autostartState(text | null): {kind: "absent"} | {kind: "ok", config} | {kind: "invalid"}
+export function rememberedConfig(text): config | null;  rememberText(config, at): string
+export function endpointOf(text): {port, pid} | null;  pidAlive(psResult, pid): boolean
+export function reasonOf(execResult): string           // last stderr line, else stdout's, else "exit <code>"; hc JSON → message; ≤200
+export function terminalState(execResult | {error}): {kind: "live", address} | {kind: "none", state} | {kind: "unknown", reason}
+export function baseOf(obs): "on" | "external" | "unknown" | "off" | "unset" | null
+export function chip(obs, {busy, error, device}): {status, base, icon, tone, busy, actions, error, autostart, address, reason} | null
+export function paletteCommands(chip): ("on" | "off")[];  allowed(chip, verb): boolean
+export function onPlan(obs): config | null;  offPlan(autostart, remembered): {remember, autostartOff}
+export function launcherArgs(config, verb): ["PATH=<path>", "/bin/sh", <launcher>, "autostart", verb]
+export function settled(verb, obs): boolean
+export function labelKey(chip), tipKey(chip), whyKey(error): string | null
+```
+- `obs` (what `sys/relay.js` read): `{present, terminal, autostart, endpoint, answering, remembered}`. `present`: the
+  state folder exists or a launcher is remembered; false → no chip. `answering`: the endpoint's pid runs and its port
+  accepts a connection.
+- `launcherConfig`: the mirror mod's rules (an absolute launcher ending in LAUNCHER_SUFFIX; a PATH of 1–8192 characters;
+  no C0 control or DEL in either). `autostartState`: `v === 1` with such a launcher and PATH is `ok`, null `absent`,
+  anything else `invalid`. `relay.json` = `{v: 1, launcher, path, at}`.
+- `terminalState`: exit 0 with JSON `state` `live` → live; another state → none; exit ≠ 0 with a JSON error of kind
+  `not_found` (stderr) → none; anything else, or hc not running → unknown with `reasonOf`.
+- `baseOf`: live → on; not none → unknown; answering → external; a valid autostart.json or a remembered launcher → off;
+  else unset.
+- `chip`: null for `device` or no base. `busy` ("starting" | "stopping") wins with no actions. `error`
+  `{action: "on"|"off", code: ERRORS, detail, seconds, base}` shows as `error` only while `base` equals the current
+  settled status. `actions`: on → ["off"], off → ["on"], every other status → []; an error offers its base's.
+  Tones: on accent (the only accent status), off and unset tertiary, starting, stopping and external secondary, error
+  error (`triangle-alert`), unknown unknown; the rest draw `tablet-smartphone`.
+- `offPlan`: valid file → remember its launcher and run `autostart off` with it; invalid file → `autostart off` with the
+  remembered launcher (null: skipped); no file → nothing (only `hc kill`). `onPlan`: the file's launcher, else the
+  remembered one.
+- `settled`: on → live terminal and answering; off → no live terminal (`none`).
+
+```js
+chip({present:true,terminal:{kind:"live",address:"t9c"},autostart:{kind:"ok",config},endpoint:null,answering:false,remembered:null})
+// → {status:"on",base:"on",icon:"tablet-smartphone",tone:"accent",busy:false,actions:["off"],error:null,autostart:true,address:"t9c",reason:null}
+chip({present:true,terminal:{kind:"none",state:null},autostart:{kind:"absent"},endpoint:{port:7781,pid:1},answering:true,remembered:null}).actions // → []
+chip(anyObs, {device: true}) // → null
+```
+
+### sys/relay.js — service (the status copy's)
+- `start(cx)` (from `views/shell/services.js`, after herdr-caffeinate; returns at once under `checking()`): a 2 s timer.
+  Each tick: off the Mac (`hostLocal()` false) only `probeHost(cx)`; else, unless a read or an action runs, the window is
+  hidden (`window()?.visible === false`) or the last read is under 10 s old, one read: the remembered launcher (once per
+  start), `fs.exists(~/.herdr/herdr-relay)`, then together `readTextFile` of autostart.json and mirror-endpoint.json and
+  `hc(GET_ARGS)`; when no terminal is live and an endpoint is named, `exec("/bin/ps", ["-p", pid, "-o", "pid="])` and
+  `net.connect("127.0.0.1", port)` raced with 2 s (closed at once). An older read never replaces a newer one. A change
+  of the settled status is logged (`[lazuli/relay]`, `debug.log` area `relay`).
+- `stop()`: cancels the timer; an action in flight finishes and its result is dropped.
+- `view()` → `chip(obs, {busy, error, device: !hostLocal()})`, safe in render; `commands()` → its `paletteCommands`;
+  `logPath()` → `~/Library/Logs/herdr-relay.log`.
+- `command(cx, verb)` (`relay:<verb>`; nothing without the service, under `checking()` or off the Mac): `status` reads
+  now (with the port check) and logs it; `on` / `off`, one at a time, read first and act only when `allowed`:
+  - off: `offPlan`; `writeTextFile(data/lazuli/relay.json, rememberText, <its current text>)` (a throw → error
+    `remember`, nothing else runs); `exec("/usr/bin/env", launcherArgs(config, "off"), {timeout: 60000})`; `hc(KILL_ARGS)`
+    (its result only logged); then reads every 1 s until `settled("off")`, at most 15 s.
+  - on: `launcherArgs(onPlan(obs), "on")`, then `"run"`, the same way; then reads with the port check until
+    `settled("on")`, at most 30 s.
+  - A non-zero exit → `{code: "exit", detail: reasonOf}`; a rejected exec → `spawn`; time up → `timeout` with
+    `seconds`. The failure is kept with the settled status read after it.
+
+### views, palette, catalogs, icon
+- `views/status.js`: after the queue item and before herdr-caffeinate's, `.when(view)` one `item` (`st-relay`): a
+  `Spinner` (busy) or `Icon(icon)` 13 px in `toneColor(tone)`, and on a wide bar (≥ 860 px) the words of `labelKey`.
+  Tooltip and accessibility label: `tipKey` (`{reason}`: the error's `why.*`, or the unknown status's reason),
+  `tip.autostart` while off with autostart.json present, `tip.open`, joined with " · ". Click: `openMenu` (300 px,
+  label `menu.label`): heading `menu.heading {state}` (`state.<status>`); after a failure its reason (disabled) and
+  `menu.log` (`{kind: "open", url: logPath()}`); each action `menu.on|off` running `lazuli.relay:<verb>`;
+  `menu.setup` (unset) or `menu.external` (external), disabled; a separator and `menu.refresh` (`lazuli.relay:status`).
+- `sys/search.js`: `relayEntries(bound)` after lazuli's own: `{id: "relay:<verb>", kind: "command", group: "lazuli",
+  icon: "command", title: t("shell.relay.cmd.<verb>"), hint: "herdr-relay", keys: the binding of
+  "lazuli.relay:<verb>", words: "relay herdr-relay <verb> ipad iphone phone tablet mirror tailscale 릴레이 아이패드 휴대폰",
+  action: {kind: "command", run: "lazuli.relay:<verb>"}}` for each of `relay.commands()`.
+- Catalog keys (`shell.relay.*`, en and ko; "herdr-relay" and "Relay" English in both): `label.<LABELED>`,
+  `tip.{on,off,starting,stopping,external,unset,unknown,autostart,open}`, `tip.error.{on,off}`,
+  `why.{exit,spawn,remember}`, `why.timeout.{on,off}`, `state.<status>`, `menu.{label,heading,on,off,refresh,setup,
+  external,log}`, `cmd.{on,off}` (titles start with "Relay: ").
+- `ui/icons/tablet-smartphone.svg`: Lucide `tablet-smartphone` (lucide-static 1.82.0) at stroke width 1.75 (ISC,
+  THIRD_PARTY_NOTICES "Lucide").
+- `tests/relay-chip.test.mjs`: the invocations; autostart.json, relay.json, endpoint, `ps` and `hc get` parsing; every
+  status from its source with its icon (file present) and tone; source order; actions per status, none for an outside
+  bridge, while busy or on a device; the failure's lifetime; the plans and `settled`; every key in both languages.
+- `tests/relay-service.test.mjs`: the real `sys/relay.js` on a fake Mac (herdr, net, fs, store and the host probe
+  replaced): nothing at all on a device; the exact call order of off (read, save, `autostart off`, `hc kill`, read) and
+  on (read, `autostart on`, `autostart run`, read, `ps`, connect); an outside bridge never touched, a stale endpoint
+  not counted; unset, absent and unknown; a failure's reason; the 15 s timeout; a failed save stopping before
+  `autostart off`; one action at a time; no reads while the window is hidden.
+
+## Assistant (lazuli-assistant plan, its contracts K1–K9; DESIGN E; ARCHITECTURE §13)
+
+Tested with Hermes Agent 0.17.0. Files: `core/acp-wire.js`, `core/assistant-agents.js`, `core/assistant-chat.js`,
+`core/assistant-list.js` (pure, under the conventions above), `bin/acp-bridge.mjs`, `sys/acp-client.js`,
+`sys/assistant-bridge.js`, `sys/assistant-sessions.js`, `sys/assistant.js`, `views/assistant.js`,
+`views/assistant-list.js`, `views/assistant-info.js`, `views/assistant/*.js`, `core/catalog/assistant.{en,ko}.js`, eight
+Lucide icons, `tests/fixtures/fake-acp-agent.mjs` with `tests/fixtures/acp/hermes-0.17.0.json`. Changed for it:
+`sys/state.js`, `sys/bus.js`, `sys/store.js`, `main.js`, `core/catalog/index.js`, `views/sidebar.js`,
+`views/settings.js`, `views/shell/settings-parts.js`, `views/shell/services.js`, `views/files-tree.js`,
+`views/panels/files-rows.js`, `sys/notify.js`, `sys/search.js`, `views/gallery.js`, the catalogs `shell`, `settings`
+and `palette`, `layouts/lazuli.json`, `keys.json`, `relay/lazuli.profile.json`.
+
+### Wiring (K2, K7)
+- `state.js`: `CENTER` ends with `"assistant"`; `COMMANDS["go:assistant"] = status`; `PREFIXED["assistant:"] = self`
+  (parsed as `{name:"assistant", arg}`); `KEY.assistantUi = "lazuli.assistant.ui"`; `KEY.assistantOwned =
+  "lazuli.assistant.owned"` (the Hermes local sessions the Assistant made, K6 `normalizeOwned`); `DEFAULT_PINS` ends with
+  `"assistant"`; `SETTINGS_VERSION = 2`; settings gain `assistant: {folder: string|null, debugAgent: string[]|null}`
+  (`folder`: absolute, trailing slashes dropped, else null; `debugAgent`: a non-empty array of non-empty strings as it
+  is, else null: one element of another kind or an empty one makes it null, nothing is dropped from it).
+  `migratedSettings(raw)` returns the normalized settings when a file below version 2 has its own `pins` array
+  without `"assistant"` (that array then gains it once), else null; `store.js` writes such a file back once, through
+  `writeTextFile` with the text it read as `expected`.
+- `bus.js`: `go:assistant` → `showCenter("assistant")`; `assistant:<verb>` → every copy's `command("assistant:<verb>")`.
+- `main.js` `VIEWS`: `assistant`, `assistant-list`, `assistant-info`. `core/catalog/index.js`: area `assistant`.
+- Layout ids (ARCHITECTURE §3): `assistant`, `assistant-list`, `assistant-chat`, `assistant-side`, `assistant-info`,
+  `assistant-files`; `keys.json` `"cmd-alt-4": "lazuli.go:assistant"`.
+- Store `assistant` (`ASSISTANT_STORE`), always set with `snapshot: false`.
+
+### core/acp-wire.js — pure
+
+```js
+export const PROTOCOL_VERSION = 1, DISCOVERY_VERSION = 1
+export const MAX_LINE_BYTES = 16 * 1024 * 1024, MAX_WRITE_BYTES = 1048576, PING_MS = 10000, READ_TIMEOUT_MS = 30000
+export const LOST_AFTER_TIMEOUTS = 3, MAX_PARALLEL_SENDS = 8, AUTH_MS = 5000, HELLO_MS = 5000
+export const DISCOVERY_WAIT_MS = 45000, INIT_TIMEOUT_MS = 40000, RING_RECORDS = 4000, RING_BYTES = 8 * 1024 * 1024, IDLE_MIN = 30
+export const METHOD        // initialize, session/new, session/load, session/list, session/fork, session/set_model,
+                           // session/set_mode, session/prompt, session/cancel, session/update,
+                           // session/request_permission, $/cancel_request
+export const BYE_REASONS = ["idle", "herdr-gone", "signal", "agent-exit", "shutdown"]
+export const START_ERRORS = ["agent-exit", "init-failed", "init-timeout"]
+export const SEND_ERRORS = ["auth", "bad-request", "agent-gone", "too-large"]
+export function request(id, method, params?), notification(method, params?), result(id, value), rpcError(id, code, message, data?)
+export function initialize(id, version = "1")   // protocol 1; clientCapabilities {fs:{readTextFile:false, writeTextFile:false}, terminal:false}; clientInfo lazuli
+export const sessionNew(id, cwd), sessionLoad(id, sessionId, cwd), sessionFork(id, sessionId, cwd)   // mcpServers: []
+export const sessionSetModel(id, sessionId, modelId), sessionSetMode(id, sessionId, modeId), sessionPrompt(id, sessionId, prompt)
+export const sessionCancel(sessionId)           // a notification
+export function sessionList(id, cwd, cursor?)
+export const permissionSelected(id, optionId), permissionCancelled(id)
+export function createIds(nonce): {next(): string, owns(id): boolean}   // "<nonce>:<n>"; the bridge's nonce is "b"
+export function fileUri(path): string | null
+export function promptBlocks(text, attachments = []): Block[]   // text (when not empty), then one resource_link per absolute path or {path, name?}
+export function promptText(blocks): string
+export function promptPaths(blocks): string[]   // the local paths of its file:// resource_link blocks
+export function classify(msg)   // {kind:"request", id, method, params, sessionId} | {kind:"update", sessionId, update, updateKind}
+                                // | {kind:"notification", method, params, sessionId} | {kind:"result", id, result}
+                                // | {kind:"error", id, error:{code, message, data?}} | {kind:"invalid"}
+export const streamLine(token, since = null, client = null, turns = false), sendLine(token, msg), shutdownLine(token)   // `turns: true` only with since null
+export function encodeLine(value): string        // JSON, every non-ASCII unit as \uXXXX, then "\n"
+export function writeChunks(line, max = MAX_WRITE_BYTES): string[]
+export function parseRecord(value)   // {kind:"agent", seq, at, msg} | {kind:"event", ev, …} | {kind:"reply", ok, error} | {kind:"invalid"}
+export function parseDiscovery(text) // {state:"ready", pid, agentPid, port, token, profile, cwd, herdrPid, startedAt, argv} | {state:"failed", pid, code, detail} | {state:"invalid"}
+export function discoveryMatches(d, {profile, cwd, herdrPid, argv}): boolean
+export function createTracker(now = 0)   // fromClient(msg, t, seq), fromAgent(msg, t, seq), turnRecord(c), turnStarts(), touch(t), running(), runningSessions(), pending(), busy(), lastActivity(), idleExpired(t, idleMs), clear()
+export function createStderrFilter({promptLength})   // push(text) → lines, end() → lines
+export const AGENT_ERROR_MAX = 1000
+export function agentErrorText(line): string | null
+export function agentPath(path, home): string        // the agent's PATH: its own entries, then /opt/homebrew/bin, /usr/local/bin, ~/.local/bin, ~/.claude/local; no empty entry
+export const PRE_AUTH_BYTES = 65536                  // a first line may grow past this only with its token at its head
+export function leadingToken(head): string | null    // the 64-hex token a first line starts with ({"op":…,"token":…), or null
+```
+- A ready discovery needs a 64-hex `token`, a port in 1–65535, an absolute `cwd` and positive pids; an unknown start
+  error code reads as `init-failed`; `argv` is null in a file without one. `discoveryMatches` needs the profile,
+  folder, Herdr pid and the whole agent argv equal, so a file without `argv` never matches.
+- Discovery pids are informational and useful for liveness checks; neither they nor `argv` authorize an OS signal.
+- `parseDiscovery` preserves an optional `launchId` (32 lowercase hex digits) on ready and failed records.
+- Tracker: a `session/prompt` request is running until its answer, kept with the last record seq when it went and its
+  prompt blocks (`running()` → `[{id, sessionId, at, seq, prompt}]`); when a session's last prompt ends, that session's
+  open agent requests end too (Hermes stops waiting after 60 s without saying so); `$/cancel_request` ends one. A
+  `session/load` is open until its answer. `turnRecord(c)` is true for a session update of a session with a prompt in
+  flight and no load open (a load's updates replay history); `turnStarts()` maps each running session to its oldest
+  running prompt's seq. `idleExpired` is true only with nothing running, nothing pending and no message either way for
+  `idleMs`.
+- Stderr filter: a line `… Prompt on session <id>: <text>` keeps its prefix and becomes `[<n> chars]` (n from
+  `promptLength(id)`) or `[redacted]`; the preview's own continuation lines, within its 100 characters and not
+  starting a new log record, are dropped. A `conversation turn: … msg=<text>` line keeps what comes before `msg=` and
+  becomes `msg=[redacted]`.
+- `agentErrorText(line)`: the text of a Hermes `❌ …` line (after an optional `[…]` prefix) or of an `[ERROR]` or
+  `[CRITICAL]` log record (after its time and logger name), cut to 1,000 characters with "…"; null for any other line,
+  a prompt-preview or turn line included.
+
+```js
+promptBlocks("see", ["/tmp/a b.md"]) // → [{type:"text",text:"see"},{type:"resource_link",uri:"file:///tmp/a%20b.md",name:"a b.md"}]
+classify({jsonrpc:"2.0",method:"session/update",params:{sessionId:"s",update:{sessionUpdate:"plan"}}}).kind // → "update"
+parseDiscovery('{"version":1,"pid":7,"error":{"code":"zap"}}') // → {state:"failed",pid:7,code:"init-failed",detail:""}
+```
+
+### core/assistant-agents.js — pure
+
+```js
+export const PERMISSION_TIMEOUT_MS = 60000
+export const AGENTS   // {hermes, nod}; nod = {id:"nod", name:"Nod", planned:true}
+export const AGENT_IDS = ["hermes", "nod"]
+export function agentOf(id), isProfileName(s)                 // ^[a-z0-9][a-z0-9_-]{0,63}$
+export function agentArgv({bin | debugAgent, profile})        // [bin, "-p", profile, "acp"] or debugAgent ++ ["-p", profile, "acp"]; null for a bad name or no program
+export function checkArgv({bin | debugAgent})                 // [bin, "acp", "--check"] or debugAgent ++ ["acp", "--check"]
+export function stateDbPath(home, profile), profilesDir(home) // ~/.hermes/state.db for default, else ~/.hermes/profiles/<p>/state.db
+export function steerReply(text, agent = "hermes")            // {code: steer-ack|steer-queued|steer-failed, vars} | null
+export function parseSlash(text)                              // {name, args} | null (as Hermes reads it: lowercased, leading "/"s dropped)
+export function routeText(text, agent = "hermes")             // {route:"model", model} | {route:"queue", text} | {route:"steer", text} | {route:"command", name, resync} | {route:"prompt"}
+export function menuCommands(commands, agent = "hermes")      // advertised commands minus steer and queue
+```
+- Hermes's adapter: commands it answers itself `help model tools context reset compact steer queue version`; hidden from
+  the / menu `steer queue`; reloaded after `reset compact`; buttons `allow_once allow_always deny` in that order;
+  `lazuli.assistant:allow` answers `allow_once`, `:deny` answers `deny`. Steer answers are matched on the whole chunk,
+  anchored at its start (`acp_adapter/server.py:1956-1973`).
+- `routeText`: only a command Hermes knows routes; `/model` and `/queue` need an argument; an unknown `/word` is a
+  prompt (the model's).
+
+### core/assistant-chat.js — pure (K5)
+
+```js
+export const MAX_ITEMS = 2000, MAX_MESSAGE = 400000, MAX_TOOL_TEXT = 20000, EXPIRY_GRACE_MS = 2000, NO_REPLY = "no-reply"
+export function emptyChat(key, meta = {}): ChatState
+export function reduce(state, event, now): ChatState   // the same object when nothing changed
+export function isRunning(state), queueHead(state), canAnswer(state, requestId, now, optionId?), approvalButtons(options, agent)
+export function rows(state)   // items in order, each approval card after the item that was last when it came; tool rows carry duration
+
+ChatState {key, profile, sessionId, agent, loaded, stale, title, updatedAt, items[], inflight{}, queue[], queuePaused,
+           permissions{}, plan, commands[], models, modes, usage{context, lastTurn, stats}, lastError,
+           turn: {reply, error} | null, loading, seq, dropped, unknown}
+Item: user{text, attachments, via: prompt|steer|queue|replay} | assistant{text, streaming} | thought{text, streaming}
+    | tool{id, title, kind, status, startedAt, endedAt, content[text|diff], locations, replayed} | notice{code, vars}
+Permission {toolCallId, title, kind, content, options[{optionId, name, kind}], at, deadline, state: pending|answered|expired|cancelled}
+```
+Events: `update {update}` (agent and thought chunks, user chunks on replay, `tool_call`, `tool_call_update`, `plan`,
+`available_commands_update`, `usage_update`, `current_mode_update`, `session_info_update`, `config_option_update`),
+`permission {requestId, toolCall, options, at}`, `permission-answered {requestId, optionId, sent?}`, `prompt-sent {requestId,
+kind: prompt|steer|command, text?, attachments?, via?, again?}` (`again`: only the user item, for a running turn
+applied again after its history loaded), `prompt-done {requestId, stopReason, usage}`, `prompt-failed {requestId,
+error}`, `queued {text}`, `unqueued {chipId}`, `queue-paused`, `queue-resumed`, `queue-flush {requestId, chipId?}`,
+`load-start`, `load-aborted`, `loaded {models, modes}`, `model-set {modelId}`, `stats {stats}`, `gap`, `disconnected`, `tick`,
+`agent-error {text}` (the bridge's record), `notice {code, vars?}`. Notice codes (catalog `assistant.event.<code>`):
+`steer-ack`, `steer-queued`, `steer-failed`, `cancelled`, `stopped`, `failed`, `too-late`, `dropped`, `model-set`, `gap`,
+`busy`.
+
+Rules, one test each (`tests/assistant-chat.test.mjs`):
+1. A chunk extends the last streaming assistant or thought item of its kind; any other item ends it.
+2. `tool_call_update` replaces the fields it carries; duration = `endedAt − startedAt`, null for replayed items.
+3. A permission whose `toolCallId` starts with `edit-approval-` puts its diff on the newest unfinished `edit` tool item
+   with the same path.
+4. `deadline = at + 60000`, `at` being the bridge's receive time; `tick` expires it; `canAnswer` at or after the deadline,
+   or for a card no longer pending, is `too-late`, an unknown request or option `not-found`. When a turn ends
+   (`prompt-done`, `prompt-failed`) with nothing else running, a card still pending closes as `expired` when
+   `now >= deadline - EXPIRY_GRACE_MS` (the agent gave up at its own 60 s, whose clock starts a moment before the
+   bridge's receive time), else as `cancelled`. An answer the service checked and sent while the card was open
+   (`sent: true`) is the card's answer even when its send's reply comes at or after the deadline (the card may have
+   expired meanwhile): `answered` with that option, no `too-late`; a card its turn's end cancelled stays as it is.
+5. While a steer is not acknowledged, a chunk that is one of the adapter's steer answers becomes a notice and
+   acknowledges it; it never joins an assistant message.
+6. Running = any in-flight request not yet acknowledged; `queueHead` is the first chip once nothing is in flight and the
+   queue is not paused.
+7. `load-start` clears the items and the plan (open approval cards stay); items are `replayed` until `loaded`.
+   `load-aborted` leaves the chat stale and clears `loading` without marking a partial history as loaded.
+8. `gap` and `disconnected` set `stale` and end streaming.
+9. At most 2,000 items (the oldest dropped behind one `dropped` notice), 400,000 characters a message, 20,000 a tool
+   text; diffs are kept whole.
+10. Unknown update kinds are ignored and counted.
+11. A prompt sent while nothing runs starts a turn (`turn`; a steer or command does not). Assistant text, a tool item or
+    a permission marks it replied (not while `loading`: a load's updates are history), and `agent-error` keeps its
+    newest text (at most 2,000 characters). When it ends with `end_turn` and nothing else runs, a turn not replied adds
+    `failed {detail}` with that text, or `NO_REPLY` (drawn as "Hermes ended the turn without a reply; see the bridge
+    log"), and sets `lastError`. An `agent-error` that comes within 5 s after a `NO_REPLY` notice that is still the last
+    item fills in its detail (stderr and stdout are separate pipes). Hermes ends a failed turn this way: `end_turn`, no
+    message, the cause on stderr. `done()` clears `lastError` when the turn ends with a reply, a cancel or a stop once
+    nothing in it runs, so a failed request inside it (a refused steer) no longer marks the turn failed.
+
+`approvalButtons(options)` → `{buttons, more}`: buttons are the adapter's button ids that are present, in its order;
+`more` keeps every other option in the order Hermes sent it. Never by kind: Hermes sends `allow_session` with kind
+`allow_always`.
+
+### core/assistant-list.js — pure (K6)
+
+```js
+export const SESSIONS_SQL      // Hermes 0.17.0's ACP listing (docs/spikes/S9/sessions.sql): id, title, first-user preview,
+                               // cwd (model_config.$.cwd), model, message_count, started_at, last_active, token and cost columns
+export function ownedSessionsSql(ids)   // the same columns and `archived` for the given local ids only (source='local',
+                                        // messages; archived ones flagged); cwd from the `cwd` column; only 0.17.0 columns; null when no id is a local one
+export const OWNED_MAX = 200
+export function isProfileName(s), isSessionId(s)          // session: ^(?:[0-9a-f-]{36}|local-[0-9a-f]{64})$
+export function isLocalSessionId(s)                        // ^local-[0-9a-f]{64}$
+export function sessionKey(profile, sessionId), parseKey(key)   // "<profile>/<sessionId>" | null
+export function normalizeCwd(p, home)                      // trimmed, ~ expanded, . and .. resolved, no trailing /
+export function firmlinkShort(path)                        // "/private/tmp/x" → "/tmp/x" (any /private/… path); null otherwise
+export function pathsToResolve({folder, home, profiles, local})   // the folder and every row and local cwd, normalized, each once, sorted
+export function mapRows(json)       // sqlite3 -json output → [{id, title, cwd, model, messageCount, startedAt, updatedAt, stats, archived}]; "" → []; not an array → null
+export function mapSessionList(result)   // session/list → the same rows with model, count and stats unknown, archived false
+export function normalizeUi(raw, folder) // {v:1, folder, selected:{agent, profile, session}|null, collapsed:[profile]}; another folder → fresh
+export function normalizeOwned(raw)      // {v:1, sessions:[{profile, folder, session, at}]}: local ids only, newest first,
+                                         // each profile/session once, folder normalized, at most OWNED_MAX
+export function addOwned(raw, {profile, folder, session, at})   // the key with that entry first, or null: malformed or held
+export function ownedIds(raw, folder, profile)                  // that profile's local ids made in that folder
+export function dropOwned(raw, profile, session)                // the key without that entry, or null when absent
+export function heldSelection(ui, owned, folder)                // {profile, sessionId, at}: the remembered selection when it is
+                                                                // a local id `owned` holds for that profile in that folder; else null
+export function buildList({folder, home, profiles, local, owned?, running, bridges, ui, real?}): ListModel
+export function pruneUi(ui, list)   // the selection cleared once its group loaded without error and has no such row
+
+ListModel = {groups:[{agent, profile, visible, collapsed, bridge, running, rows, loading, error?}],
+             planned:[{agent:"nod", name:"Nod", planned:true, disabled:true}], pickable:[profile]}
+row = {key, profile, sessionId, title, updatedAt, model, messageCount, running, selected, local, stats}
+```
+- `default` is always present and first, the rest by name; a group is visible when it is `default` or has rows in the
+  folder; rows newest first; sessions made in this run (`local`) show until a stored row has them.
+- A cwd is in the folder when, normalized, it is the folder's path, or when `real` (`{[normalized path]: resolved
+  path}`, `""` for one that did not resolve) maps both to the same non-empty path: a session made in `/tmp/x` belongs
+  to a folder kept as `/private/tmp/x`, and the other way round. Whether a short form is the same folder is the
+  caller's to check, by resolving both.
+- Titles as Hermes makes them: its title, else the first user message cut to 60 characters with "...", else the cwd's
+  last part, else "New thread". The service passes rows and `local` with the titles it shows (K4): the agent's newest
+  `session_info_update` of this run over a stored row's, and a local session's first prompt line only while it has no
+  other title.
+- Hermes local sessions (a gateway Hermes stores an editor's thread as `source='local'`, id `local-<64 hex>`, cwd in
+  the `cwd` column, AT-25): a row with a local id shows only when `owned` holds it for that profile and the folder
+  (normalized), it is not archived, and its cwd is in the folder. `owned` records only what this Assistant made
+  (`session/new`, `session/fork` answered with a local id by that profile's bridge in that folder), so another
+  editor's, the CLI's, another folder's and another profile's local chats never show, from the database or from
+  `session/list`. Sessions made in this run (`local`) show as before, one with a local id not once the profile's rows
+  rule it out (that id archived, or its cwd in another folder). Without `owned` the list is exactly the ACP listing.
+- The remembered selection (`heldSelection`): the service passes it in `local` when nothing of this run holds it, so
+  after a reload it stays listed and selected (and `pruneUi` keeps it) while its group is loading, failed, or lists
+  no row for it yet (AT-25 on la-c12: a reload during the chat's first turn read no row for it); once a row lists it
+  the row wins, and once the rows rule it out the selection is cleared.
+
+### CLI: `bin/acp-bridge.mjs` (K3)
+
+`node acp-bridge.mjs --profile <name> --cwd <abs folder> --discovery <abs>.json --log <abs>.log --herdr-pid <pid>
+--idle-min 30 --agent -- <agent argv…>`. The manager also passes `--launch-id`, `--previous`, `--legacy`,
+and `--legacy-previous`; the previous values are SHA-256 fingerprints or `absent`. The standalone form expects
+no previous discovery. `--inspect-discovery <current> <legacy>` reads without taking the lock and reports both
+texts (`null` only on ENOENT); read errors return a nonzero exit. Non-Darwin hosts require `flock`.
+
+| First client line (within 5 s) | Answer |
+|---|---|
+| `{op:"stream", token, since, client, turns?}` | `{ev:"hello", seq, bridge:{pid, agentPid, version, profile, cwd, startedAt}, agent:<initialize result>, running:[{id, sessionId, at, seq, prompt}], pending:[{id, method, sessionId, at, seq, msg}]}`, then the records after `since` (or `{ev:"gap", since, first, last}`); with `since` null and `turns: true`, instead each running session's records since its oldest running prompt went (`running[].seq`; outside its history loads; `gap` when the ring no longer holds them); then every agent line as `{seq, at, msg}` |
+| `{op:"send", token, msg}` | `msg` to the agent's stdin; `{ok:true}` or `{ok:false, error:{code: bad-request\|agent-gone\|too-large}}`; close |
+| `{op:"shutdown", token}` | cancel running sessions, wait up to 3 s, SIGTERM the owned agent group, SIGKILL 2 s later (5 s after a cancel) if the child has not exited, remove the discovery, `bye shutdown`, exit 0 |
+| a missing, wrong or late token | `{ok:false, error:{code:"auth"}}`; close (constant-time compare) |
+| 64 KiB of a first line without its token at the head (`leadingToken`) | `{ok:false, error:{code:"auth"}}` at once |
+
+Every reply ends its connection, and the bridge destroys it 1 s later (no half-open socket is kept).
+
+- Stream events: `ping` (after 10 s of silence), `replaced` (to the older subscriber: one stream, the newest wins),
+  `{seq, at, ev:"dropped", bytes}` (an agent line over 16 MiB), `{seq, at, ev:"agent-error", text}` (after
+  `initialize`, a stderr line `agentErrorText` reads; replayed like an agent line, and with the running turns' records
+  to a `turns: true` stream when it came while one ran), `agent-exit {code, signal}`, `bye {reason}` with reason in
+  `BYE_REASONS`. A line that is not a JSON object is skipped and logged. The replay ring keeps the last 4,000 records or
+  8 MiB.
+- The discovery file adds `argv`, the agent argv after `--`.
+- Files and timings: ARCHITECTURE §13.1–§13.2. Exit codes: 0 after a shutdown, a signal, Herdr gone or idle; 1 when
+  the agent exits or the start fails (the discovery file then holds the error); 2 for bad arguments.
+
+### sys/ modules
+- `sys/acp-client.js`: `new AcpClient({profile, discovery, nonce, valid?, onRecord, onEvent, onEnd})`; `connect(cx, since,
+  {turns, ready})` → `{ok, hello}` or `{error: auth|disconnected|bridge-timeout}` (no `hello` within 5 s); `ready(hello)`
+  runs before the first record is handled (a running turn's records follow its hello at once); a record below the seq
+  held does not move it back. `send(cx, msg)` → `{ok}` or `{error}`; `request(cx, method, params, {timeoutMs})` →
+  `{ok, result}` or `{error}` (`rpc:<code>` for a JSON-RPC error, `bridge-timeout` past the time); `nextId()`;
+  `shutdown(cx)`; `close()`; `pid`, `open`, `seq`; `lastLine` (when the read loop last handled a line, pings included);
+  `caughtUp(cx, ms)` (resolves once a stream opened `since` a seq has handled the bridge's replay up to its hello seq,
+  or after `ms`). The read loop sleeps 1 ms after every 64 lines or 20 ms of work (Herdr's promise-job drain cap,
+  ARCHITECTURE 13.3). `onEvent(ev)` gets `gap`, `dropped`, `agent-error`, `agent-exit`, `bye`; `onEnd({reason,
+  detail?, bye, agentExit})` runs once when the stream ends; `shutdownBridge(cx, discovery)` stops a bridge without a
+  client. `valid()` gates stream setup and ordinary writes just before sending; explicit authenticated shutdown
+  can still use the departing discovery after its generation has been invalidated.
+- `sys/assistant.js` (K4) bounds: `session/list` 30 s, `session/load` 45 s, `session/new`/`fork`/`set_model` 60 s. A
+  stream with no line for 30 s, or an unanswered list or load, is reopened from the last record held; the load then
+  tries once more after the replay (no launch); a failed list keeps the rows it had. On each `hello`, a request held in
+  flight that `hello.running` does not list fails and its chat turns stale (the selected one loads again). `start(cx)`
+  is a no-op on a herdr-relay device; elsewhere, after reconnecting, the chats of a profile with no bridge that still
+  hold requests fail them (stale). `ensureBridge(cx, profile, {launch})`: a launch-wanting caller never gets the
+  answer of a reuse-only connect in flight; it waits for it. Replacing a same-folder, same-Herdr bridge after a
+  missing `hello` or an argv change requires authenticated shutdown and confirmed exit (or confirmed prior exit).
+  When exit is uncertain, keep discovery and return retryable `bridge-timeout` without launching. A launch never
+  attaches to a live bridge of this profile for another folder: one of this Herdr (`herdrPid` matches) is retired
+  the same way first (authenticated shutdown, confirmed exit; unconfirmed: retryable `bridge-elsewhere`, no launch);
+  another Herdr's live bridge (either folder) is left alone and nothing starts (`bridge-foreign`). Reuse-only never
+  shuts down a bridge. Attach, recovery, callbacks and `open(cx)` are scoped to the current folder generation.
+  A delayed `hello` cannot replace the active client; recovery preserves an identity mismatch as `auth`. A
+  `replaced` subscriber relinquishes shutdown authority, settles its in-flight turns locally as disconnected,
+  and marks its transcripts stale without sending anything to the bridge. Opening again while that instance
+  may still be alive returns `disconnected` with the bridge state `off`, even if discovery is absent. Only confirmed
+  PID absence clears this veto for that profile and folder; the remembered PID never authorizes a signal. An approval gets one answer
+  per request id in that folder generation (a second click during the send shares the first's
+  result). The folder's files are never walked twice at once.
+- `sys/assistant-bridge.js`: `runtimeDir()`, `nodePath()`, `hermesPath()`, `hermesLooked()`, `folderExists(path)`,
+  `herdrPid()`, `pidAlive(pid)`, `pidState(pid)` (`present`, `gone`, or `unknown` on lookup failure),
+  `checkAgent(debugAgent)` → `{ok, bin}` or `{gate, detail}`. `readDiscovery(profile)` reads v2 and legacy paths via a
+  Node helper; only ENOENT is `absent`, failed I/O is `unreadable`, and malformed data is `invalid`.
+  `discoveredProfiles()`, `bridgeTerminals(profile, label)` (async: `hc ls --all --json --label <label>=<profile>`,
+  finished terminals included, since that JSON carries no labels or pids; a live one gets its pid from `terminals()`;
+  the live `terminals()` of that label when hc cannot be read), `reap(profiles)` (removes those profiles' ended bridge
+  terminals; the service passes `default`, Hermes's profile folders and the listed, connected and discovered profiles
+  every 60 s) and `awaitExit(cx, profile, pid)` (true only on confirmed absence). No PID-based fallback kill.
+  `launch(cx, {profile, folder, herdrPid, argv, snapshot, valid})` → `{discovery, address}` for its own publication,
+  or `{error, detail}`. `valid` identifies the folder generation and is checked immediately before `hc run`
+  and again after awaits; `cancelLaunch(address)` uses only the address returned by that `hc run`. The manager
+  never removes discovery. The elapsed 45-second budget includes host calls; a late `hc run` receipt is
+  cleanup-only. A fast launch failure is confirmed by an exact finished terminal receipt; a missing live terminal
+  or a failed listing alone cannot confirm exit. The bridge takes a stable exclusive lock before starting the agent
+  and, while holding it, replaces only a matching or absent current file and removes only its own ready publication. Unknown reads
+  or reservation failures do not permit launch. Only the bridge signals its agent group, and not after its child
+  exits. Callers check `checking()` first. See ARCHITECTURE §13 for legacy migration assumptions.
+- `sys/assistant-sessions.js` (takes `run(command, args, options)`, so tests run it on real sqlite3 files):
+  `querySessions(run, db, owned = [])` → `{rows, via: readonly|immutable|absent}` or `{error: schema|locked|open|parse|failed,
+  detail}`: SESSIONS_SQL's rows, then, only when `owned` holds a local id, `ownedSessionsSql(owned)`'s rows on the same
+  target (an id already listed kept once); a failure of either is the result, so a database is read exactly as before
+  until a local session is owned and local chats never count against SESSIONS_SQL's `LIMIT 1000`;
+  `profileSessions(run, home, profile, owned = [])`; `listProfiles(run, home)`; `listFolderFiles(run, folder)` (at most
+  2,000 folder-relative paths to depth 8, no pictures, hidden entries, `node_modules`, `.venv`, `venv`, `__pycache__`;
+  one `/bin/sh -c` running `find … -print0 | head -c WALK_BYTES` (512 KiB), so the walk stops at that cap; a path the
+  cut ends inside is left out);
+  `resolvePaths(run, paths)` → `{[path]: resolved}` (one `/bin/sh -c` with `cd -P` and `pwd -P` per 200 absolute paths;
+  `""` for one that is missing, not a folder or unreadable; paths holding a NUL or newline are left out);
+  `shortFolder(run, path)` → `firmlinkShort(path)` when both forms resolve to the same folder, else `path`.
+
+### sys/assistant.js — the service (K4)
+
+```js
+start(cx); stop()                                  // start reconnects only; stop closes sockets, bridges keep running
+snapshot(): AssistantState; session(key): ChatState | null; folderFiles(): string[]
+open(cx); recheck(cx); refreshList(cx, profile?)
+pickFolder(cx)            // {ok, path} | {error:"busy", path} (ask, then setFolder confirmed) | {error:"cancelled"}
+setFolder(cx, path, {confirmed})   // {ok, path} | {error:"busy", path}: `path` is the folder as kept (shortFolder of the given one)
+newSession(cx, profile); select(cx, key); fork(cx, key)
+send(cx, key, {text, attachments})                 // idle: session/prompt; running: "/steer <text>"
+queue(cx, key, text); unqueue(key, chipId); resumeQueue(cx, key)
+stopTurn(cx, key); answerPermission(cx, key, requestId, optionId); setModel(cx, key, modelId)
+toggleGroup(profile); retryBridge(cx, profile)
+openTarget(cx, profile, sessionId); parseTarget(s); onNotice(fn)   // notifications (sys/notify.js)
+
+AssistantState = {gate: ok|checking|no-folder|folder-missing|relay|hermes-missing|hermes-check-failed, gateDetail,
+                  folder, hermes:{path, version}|null, bridges:{[profile]:{state: off|starting|ready|error|stopped, error?}},
+                  list: ListModel, sessions:{[key]: ChatState}, notices}
+```
+- Results are `{ok:true, …}` or `{error}`; codes `no-folder relay hermes-missing hermes-check-failed
+  bridge-launch-failed bridge-timeout bridge-elsewhere bridge-foreign agent-exit auth disconnected busy not-found too-long too-late rpc:<code>`, and
+  `cancelled` for a dismissed picker. `key` is `<profile>/<sessionId>`.
+- `open` order, list sources, send routing and notices: ARCHITECTURE §13.4 and §13.6.
+
+### Views (K7, K8)
+- Each Assistant view parses `assistant:<verb>[:<arg>]` (`views/assistant/common.js` `verbOf`). The list view takes
+  `new[:<profile>]` and `select:<profile>/<session>`; the chat view `focus`, `stop`, `attach:<rel>`, `allow`, `deny`,
+  `send:<text>`; every copy `sample:<name>`. Copies with `props.preview` or `props.sample` draw `views/assistant/sample.js`.
+- `allow` and `deny` answer with the adapter's quick answers (`allow_once`, `deny`): the selected chat's newest
+  pending card, else its newest `expired` or `cancelled` one; that answer still reaches the service, which refuses it
+  with `too-late` and puts the notice in the transcript (the transcript follows to show it). Answered cards are not
+  asked again.
+- Composer keys (`views/assistant/composer.js`) are bindings made once per runtime with `cx.bind_keys`, in contexts
+  the composer's frame declares above the textarea (`key_context`), so they win over the textarea's own Enter:
+
+  | Context (`… > Input`, `> TextArea`, `> Textarea`) | Keys → action |
+  |---|---|
+  | `lz_assistant_composer` | `enter` → `lz_assistant_send`; `alt-enter`, `cmd-enter` → `lz_assistant_queue` |
+  | `lz_assistant_list` (the @ or / list open) | `up`, `down` → `lz_assistant_list_up`, `_down`; `tab`, `enter` → `lz_assistant_list_take` (with no rows: send); `escape` → `lz_assistant_list_close`; `alt-enter`, `cmd-enter` → queue |
+
+  `shift-enter` is not bound and stays the textarea's new line. `cmd-enter` is there because the Korean input source
+  takes `alt-enter`. The `lazuli.key:<keystroke>` hook maps the same keystrokes to the same actions.
+- `views/assistant/menu.js`: `MenuButton(id, label, {open, mono, a11y, tooltip})`, `MenuIconButton(id, icon, label,
+  {open})` and `MenuPopover(id, {trigger, open, onOpen, menu, anchor})` (a gpui-base `Popover`, its content built only
+  while open) for the More menu, the model menu and the new-chat picker. Their triggers draw like the kit's ghost
+  Button and IconButton but do not stop mouse-down, which the Popover needs to open.
+- `views/assistant/cards.js` `hardBreaks(item)`: an agent message's text with each single line break kept (two spaces
+  before it), because Markdown joins the lines of a paragraph and Hermes's plain replies (`/help`: one command per
+  line) would read as one run-on line; fenced and indented code and table rows stay untouched, and blocks that end
+  anyway (lists, headings, fences, blank lines) render as before. Memoized per item.
+- `noticeBody(item, open)` → `{text, inline, words, more}` or null: a notice's detail up to 60 characters on one line
+  stays inline in the code font; a longer one (an agent's error) wraps under the notice, cut to 4 lines or 280
+  characters with "…" and a Show all / Show less button (`assistant.event.showAll`, `showLess`; open state per notice
+  in the chat view); rule 11's `NO_REPLY` is drawn in words (`assistant.event.noReply`). The transcript's row heights
+  follow the same body.
+- `files-tree.js` with `props.scope === "assistant"` (and `props.block`): the root is `settings().assistant.folder`
+  once the host is known to be this Mac; the refresh timer tests `blockShown(props.block)`; a click opens with
+  `filetabs.open(file, {on: null, space})` in the active space, then `showCenter("work")`; no active space shows
+  `filetab.quickopen.no-place`. `files-rows.js` adds Attach (`paperclip`, `assistant.files.attach`) to a file row that
+  is not a picture; it runs `lazuli.assistant:attach:<rel>`. Without `scope`, the panel is unchanged.
+- Catalog keys other areas use: `shell.app.assistant`, `shell.nav.assistant {running, waiting}`,
+  `palette.cmd.go.assistant`, `settings.assistant.*`, `assistant.notice.{permission,done,failed} {title}`.
+
+### Fake ACP agent (K9): `tests/fixtures/fake-acp-agent.mjs`
+
+`node fake-acp-agent.mjs [--fail-check] -p <profile> acp` serves ACP on stdio; `… acp --check` prints `Hermes ACP
+check OK` and exits 0 (with `--fail-check`, `fake: check failed` on stderr and exit 1). Shapes come from
+`tests/fixtures/acp/hermes-0.17.0.json` (copied from `docs/spikes/S9/*.jsonl`). Session ids are UUID v4; sessions persist
+as `$FAKE_ACP_HOME/<profile>/<sessionId>.json` (default `/tmp/fake-acp`), so `session/load` replays them after a
+restart. It answers `initialize`, `session/new`, `session/load` (`{}` for an unknown id), `session/list {cwd}`,
+`session/fork` (`sessionId: ""` for an unknown one), `session/set_model` (`fake:alpha`, `fake:beta`), `session/cancel`
+and `session/prompt`, sends `available_commands_update` (help, model, steer, queue, version) and, after the first
+turn, `session_info_update {title}`, and logs `Prompt on session <id>: <first 100 chars>` to stderr as Hermes does.
+
+| First word | Behavior |
+|---|---|
+| (other) | a thought chunk, then "Echo: <text>" in 5 chunks over 1 s, `usage_update`, `stopReason: end_turn` |
+| `tool` | a `tool_call` (kind execute) pending → in_progress → completed after 1.5 s with text output, then an answer |
+| `edit` | `session/request_permission` with `toolCallId` `edit-approval-1`, a diff and `allow_once`, `deny`; on allow a completed edit tool with the diff |
+| `approve` / `approve2` | a permission request with Hermes's five options (`approve2`: without `allow_always`); echoes the chosen option id; cancelled after 60 s without an answer |
+| `slow` | one chunk a second for 20 s; a `/steer <x>` meanwhile gets Hermes's acknowledgement and "Steered: <x>" in the stream; `session/cancel` ends it `cancelled` |
+| `plan` | a three-entry `plan`, then an answer |
+| `burst` / `bigdiff` | 2,100 tool items as fast as possible / an edit permission with a 1 MiB diff |
+| `fail` / `crash` | a JSON-RPC error for the prompt / exit 1 |
+| `/help`, `/version` | text answers like Hermes's |
+| any `resource_link` | each URI echoed in the answer |
+
+Environment knobs for tests: `FAKE_ACP_PERMISSION_MS`, `FAKE_ACP_INIT=fail|hang|exit`, `FAKE_ACP_IGNORE_TERM=1`,
+`FAKE_ACP_LOG=<file>`.

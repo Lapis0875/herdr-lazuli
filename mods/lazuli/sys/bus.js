@@ -1,6 +1,6 @@
 // The command table: every key command reaches every shown copy (F2), and dispatch() lets only its
 // owner act (ARCHITECTURE §2): window-wide commands run in the `status` copy, `file-mode` in the
-// `file` copy of the focused tab, `key:` and `focus` in the copy that got them.
+// `file` copy of the focused tab, `key:`, `assistant:` and `focus` in the copy that got them.
 //
 // A command runs, in this order: a built-in route below (layout moves with Herdr's own commands);
 // else the handler a later slice registered with handle(name, fn); else the owner view's
@@ -32,7 +32,7 @@ export const layoutNode = (id) => findNode(layout(), id);
 /** The active child of a stack in the shown layout, or null. */
 export const activeChild = (stack) => layoutNode(stack)?.active ?? null;
 
-/** Shows a child of the center stack: `home`, `work`, `inbox`, `todo` or `routines`. */
+/** Shows a child of the center stack: `home`, `work`, `inbox`, `todo`, `routines` or `assistant`. */
 export function showCenter(child) {
   run("layout.select", { stack: NODE.center, child });
 }
@@ -118,7 +118,8 @@ export function keyEvent(keystroke) {
 }
 
 // Handlers that later slices register: palette, quickopen, queue, recap, resume, pr, ticket,
-// next-waiting, next:blocked, next:done, target (targets the built-in route leaves).
+// next-waiting, next:blocked, next:done, target (targets the built-in route leaves), relay
+// (`relay:on|off|status`, views/shell/services.js → sys/relay.js command; the status copy only).
 
 /** Registered handlers by command name (prefixed commands without their colon: `target`). */
 export const handlers = Object.create(null);
@@ -139,6 +140,7 @@ const BUILTIN = {
   "go:inbox": () => showCenter("inbox"),
   "go:todo": () => showCenter("todo"),
   "go:routines": () => showCenter("routines"),
+  "go:assistant": () => showCenter("assistant"),
   "agent-view": () => toggleAgentView(),
   panel: () => togglePanel(),
   ...Object.fromEntries(PANELS.map((child) => [`panel:${child}`, () => togglePanelChild(child)])),
@@ -149,6 +151,10 @@ const BUILTIN = {
   // The test hook and Herdr's focus go to the copy's own view only; a view without the method ignores them.
   key: (arg, copy, cx) => {
     copy.impl?.key?.(keyEvent(arg), cx);
+  },
+  // `assistant:<verb>` reaches every copy's command(); the Assistant views and the service act on it.
+  assistant: (arg, copy, cx) => {
+    if (copy.impl?.command) settle(copy.impl.command(`assistant:${arg}`, cx), `assistant:${arg}`);
   },
   focus: (_arg, copy, cx) => {
     copy.impl?.focus?.(cx);

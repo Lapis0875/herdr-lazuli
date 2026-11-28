@@ -1,12 +1,15 @@
 // Notifications (DESIGN A8, ARCHITECTURE §7, spike S2). Sources: an agent turning blocked or done (once per
 // address + status + seq), a routine's end (the notices sys/routines.js puts in the store `routines`, already filtered
-// by each routine's `notify` policy) and GitHub events (the latest diff batch in the store `gh`).
+// by each routine's `notify` policy), GitHub events (the latest diff batch in the store `gh`) and the Assistant's
+// notices (sys/assistant.js onNotice: an approval request, a finished or failed turn; it already leaves out the
+// session the person is looking at, K7). An Assistant notice opens `lazuli.target:assistant:<profile>:<session>`.
 //
 // | Window     | System notifications                         | Delivery                                              |
 // |------------|----------------------------------------------|-------------------------------------------------------|
 // | active     | any                                          | notify() toast, its click runs `lazuli.target:<target>` |
 // | not active | terminal-notifier authorized, posted exit 0  | system banner; a click activates Herdr and, for an    |
-// |            |                                              | agent, runs `herdr-app do agent.focus --terminal <a>` |
+// |            |                                              | agent, runs `herdr-app do agent.focus --terminal <a>`;  |
+// |            |                                              | for an Assistant session, `do lazuli.target:<target>` |
 // | not active | missing, not asked yet, denied, off, failed  | notify() toast + setBadge(count of these)             |
 //
 // Herdr posts its own toast when an agent needs the person or finished while they weren't looking (herdr.d.ts,
@@ -27,6 +30,7 @@ import { quote } from "../core/resume-tools.js";
 import { handle } from "./bus.js";
 import * as store from "./store.js";
 import { STORE } from "./state.js";
+import * as assistant from "./assistant.js";
 
 const log = (msg) => console.log(`[lazuli/notify] ${msg}`);
 const errText = (e) => e?.message ?? String(e);
@@ -183,13 +187,20 @@ function focusCommand(address) {
   return `env HERDR_APP_HOME=${quote(appHome())} ${quote(system.herdrApp)} do agent.focus --terminal ${quote(address)}`;
 }
 
+// The click's shell command for an Assistant session: lazuli shows it (`lazuli.target:assistant:<p>:<s>`, run by the
+// always-shown status copy, S2). Only a well-formed target goes into the command.
+function targetCommand(target) {
+  if (!assistant.parseTarget(target) || !system.herdrApp) return null;
+  return `env HERDR_APP_HOME=${quote(appHome())} ${quote(system.herdrApp)} do ${quote(`lazuli.target:${target}`)}`;
+}
+
 // Resolves true when the banner was posted. An authorized post returns at once (77 ms with -execute, exit 0, measured
 // on this Mac 2026-11-19), so one that runs into POST_TIMEOUT_MS waits on something else, such as a permission
 // prompt after the permission was reset: that and every other failure take the fallback until the next recheck.
 async function postSystem(n) {
   const args = ["-title", "lazuli", "-subtitle", text(n.title), "-message", text(n.body || n.title), "-group", `lazuli:${n.key}`, "-activate", BUNDLE];
-  const focus = focusCommand(n.agent);
-  if (focus) args.push("-execute", focus);
+  const click = focusCommand(n.agent) ?? targetCommand(n.target);
+  if (click) args.push("-execute", click);
   try {
     const r = await exec(system.bin, args, { timeout: POST_TIMEOUT_MS });
     if (r.code === 0) return true;
@@ -258,9 +269,10 @@ export function start(cx) {
   const startedAt = Date.now();
   const s = { startedAt, ghAt: startedAt, status: new Map(), posted: new Set(), primed: false, notices: new Set(), stops: [] };
   svc = s;
-  s.stops.push(handle("target", (_cx, { arg }) => follow(arg)));
+  s.stops.push(handle("target", (cx, { arg }) => follow(arg, cx)));
   s.stops.push(store.subscribe(STORE.gh, (value) => onGh(s, value)));
   s.stops.push(store.subscribe(STORE.routines, (value) => onRoutines(s, value)));
+  s.stops.push(assistant.onNotice((n) => onAssistant(s, n)));
   const task = cx.timer.every(TICK_MS, () => watch(s));
   s.stops.push(() => task.cancel());
   watch(s);
@@ -282,14 +294,38 @@ export function stop() {
   clearBadge();
 }
 
-/** What a toast's click asks, past the bus's own targets (the center views): `agent:<address>` focuses that agent. */
-function follow(target) {
+/** What a toast's click asks, past the bus's own targets (the center views): `agent:<address>` focuses that agent;
+ *  `assistant:<profile>:<session>` shows the Assistant with that session selected (K7). */
+function follow(target, cx) {
   const arg = String(target ?? "");
   if (arg.startsWith("agent:") && ADDRESS.test(arg.slice(6))) {
     run("agent.focus", { terminal: arg.slice(6) });
     return;
   }
+  const chat = assistant.parseTarget(arg);
+  if (chat) {
+    assistant.openTarget(cx, chat.profile, chat.sessionId);
+    return;
+  }
   log(`unknown target ${arg}`);
+}
+
+const ASSISTANT_LEVEL = Object.freeze({ permission: "warning", done: "success", failed: "error" });
+
+// The Assistant: each notice as it is raised (sys/assistant.js decides when one is due).
+function onAssistant(s, n) {
+  if (svc !== s || !isPlain(n) || !own(ASSISTANT_LEVEL, n.kind)) return;
+  const cut = typeof n.key === "string" ? n.key.indexOf("/") : -1;
+  if (cut < 0) return;
+  const target = `assistant:${n.key.slice(0, cut)}:${n.key.slice(cut + 1)}`;
+  if (!assistant.parseTarget(target)) return;
+  deliver({
+    key: `assistant:${n.key}`,
+    title: t(`assistant.notice.${n.kind}`, { title: n.title || t("assistant.list.untitled") }),
+    body: typeof n.body === "string" ? n.body : "",
+    level: ASSISTANT_LEVEL[n.kind],
+    target,
+  });
 }
 
 const agentName = (a) => a.program?.name || a.app || a.title || a.address;

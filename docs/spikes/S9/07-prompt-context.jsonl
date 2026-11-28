@@ -1,0 +1,4 @@
+{"i":18,"t":11424.3,"dir":"send","msg":{"jsonrpc":"2.0","id":6,"method":"session/prompt","params":{"sessionId":"4733fa10-9a37-48dc-b388-7db72fdbd59b","prompt":[{"type":"text","text":"/context"}]}}}
+{"i":19,"t":11425,"dir":"recv","msg":{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"4733fa10-9a37-48dc-b388-7db72fdbd59b","update":{"content":{"text":"[redacted]","type":"text"},"sessionUpdate":"agent_message_chunk"}}},"redacted":[{"path":"params.update.content.text","chars":292,"lines":7,"sha256":"60ae35434f75ec3dea0536e220133b17db42cdf1be3892ccd1c73d5a7a99ebeb"}]}
+{"i":20,"t":11425.2,"dir":"recv","msg":{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"4733fa10-9a37-48dc-b388-7db72fdbd59b","update":{"size":272000,"used":11369,"sessionUpdate":"usage_update"}}}}
+{"i":21,"t":11425.3,"dir":"recv","msg":{"jsonrpc":"2.0","id":6,"result":{"stopReason":"end_turn"}}}

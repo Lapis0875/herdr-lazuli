@@ -3,8 +3,10 @@
 // against `herdr-app check`; a `preview: true` copy never calls this (views/status.js).
 //
 // Order: the migration first (the to-do and queue services wait for it before their first read), then the data
-// services, then what acts on them (notifications), then the file tabs and the PDF sidecar, then herdr-caffeinate's
-// host when that mod is installed (sys/caffeinate.js; absent, it does nothing).
+// services, then the Assistant (it reconnects to its running bridges, sys/assistant.js), then what acts on them
+// (notifications), then the file tabs and the PDF sidecar, then herdr-caffeinate's host when that mod is installed
+// (sys/caffeinate.js; absent, it does nothing), then the herdr-relay status reads and the `relay:<verb>` command
+// (sys/relay.js; off the Mac they do nothing).
 
 import { handle } from "../../sys/bus.js";
 import * as migrate from "../../sys/migrate.js";
@@ -15,10 +17,12 @@ import * as queue from "../../sys/queue.js";
 import * as scan from "../../sys/scan.js";
 import * as routines from "../../sys/routines.js";
 import * as resume from "../../sys/resume.js";
+import * as assistant from "../../sys/assistant.js";
 import * as notify from "../../sys/notify.js";
 import { startFileTabs } from "../../sys/filetabs.js";
 import { startSidecars, stopSidecars } from "../../sys/sidecars.js";
 import * as caffeinate from "../../sys/caffeinate.js";
+import * as relay from "../../sys/relay.js";
 import { togglePalette } from "./actions.js";
 
 const log = (msg) => console.log(`[lazuli/status] ${msg}`);
@@ -53,15 +57,20 @@ export function startServices(cx) {
   step("scan", () => scan.start(cx));
   step("routines", () => routines.start(cx));
   step("resume", () => resume.start(cx));
+  step("assistant", () => assistant.start(cx));
   step("notify", () => notify.start(cx));
   const sweep = step("filetabs", () => startFileTabs(cx));
   if (sweep) s.stops.push(() => sweep.cancel());
   step("sidecars", () => startSidecars(cx));
   step("caffeinate", () => caffeinate.start(cx));
+  step("relay", () => relay.start(cx));
+  s.stops.push(handle("relay", (cx, { arg }) => relay.command(cx, arg)));
   s.stops.push(
+    () => relay.stop(),
     () => caffeinate.stop(),
     () => stopSidecars(),
     () => notify.stop(),
+    () => assistant.stop(),
     () => resume.stop(),
     () => routines.stopService(),
     () => scan.stop(),

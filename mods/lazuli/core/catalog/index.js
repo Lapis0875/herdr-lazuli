@@ -31,12 +31,14 @@ import galleryEn from "./gallery.en.js";
 import galleryKo from "./gallery.ko.js";
 import viewerEn from "./viewer.en.js";
 import viewerKo from "./viewer.ko.js";
+import assistantEn from "./assistant.en.js";
+import assistantKo from "./assistant.ko.js";
 
 /** The catalog languages. */
 export const LANGUAGES = Object.freeze(["en", "ko"]);
 
 /** The areas, one fragment pair each (ARCHITECTURE §1). */
-export const AREAS = Object.freeze(["common", "shell", "home", "inbox", "todo", "routines", "review", "files", "tree", "filetab", "palette", "settings", "gallery", "viewer"]);
+export const AREAS = Object.freeze(["common", "shell", "home", "inbox", "todo", "routines", "review", "files", "tree", "filetab", "palette", "settings", "gallery", "viewer", "assistant"]);
 
 /** Every fragment by area, then language. */
 export const fragments = Object.freeze({
@@ -54,6 +56,7 @@ export const fragments = Object.freeze({
   settings: { en: settingsEn, ko: settingsKo },
   gallery: { en: galleryEn, ko: galleryKo },
   viewer: { en: viewerEn, ko: viewerKo },
+  assistant: { en: assistantEn, ko: assistantKo },
 });
 
 function merge(lang) {

@@ -1,7 +1,7 @@
 # lazuli: design decisions
 
-Status: approved by the owner on 2026-11-19. This file records **what** the redesign must do. The module structure,
-contracts and task split come from the architect design that follows it.
+Status: approved by the owner on 2026-11-19; section E (the Assistant screen) on 2026-11-23. This file records **what**
+the redesign must do. The module structure, contracts and task split come from the architect design that follows it.
 
 lazuli replaces `lstack-herdr` (a generated fork of cockpit 0.38.5 plus hand-written additions) with one hand-written
 Herdr app layout that has no cockpit dependency. Section IDs (A1, B4, …) are stable; refer to them in reviews.
@@ -224,7 +224,7 @@ command, and other lazuli settings). Product terms stay English in both (PR, CI,
 |---|---|
 | ⇧⌘P | palette |
 | ⌥⌘0 | Home, or back to the work view |
-| ⌥⌘1 / ⌥⌘2 / ⌥⌘3 | Inbox / To-do / Routines |
+| ⌥⌘1 / ⌥⌘2 / ⌥⌘3 / ⌥⌘4 | Inbox / To-do / Routines / Assistant (E1) |
 | ⌥⌘A | work view: panes ↔ focused agent |
 | ⌥⌘B | side panel show/hide |
 | ⌘1 / ⌘2 / ⌘3 / ⌘4 | panel Review / Files / Changes / call tree (pressing the shown tab's key closes the panel; closing never changes the center view) |
@@ -239,10 +239,11 @@ command, and other lazuli settings). Product terms stay English in both (PR, CI,
 New keys were checked against the `global` section of the installed `keys.json`. ⌘1–⌘4 replace Herdr's global tab selection (`tab.select:1–4`) while this layout is shown; ⌘5–⌘9 still select tabs.
 
 **D3. Layout.** Keep the current frame: left sidebar, top bar (tabs and bell), center stack (Home, Inbox, To-do,
-Routines, work), work row (active tab or focused agent, right panel with Review, Files, Changes and call tree),
-bottom status bar, floating queue. The right panel's default tab is Files.
+Routines, Assistant, work), work row (active tab or focused agent, right panel with Review, Files, Changes and call
+tree), bottom status bar, floating queue. The right panel's default tab is Files.
 - The activity rail sits at the right edge of the main area, outside the panel, and is visible on every center view.
-  Clicking an icon from Home, Inbox, To-do or Routines switches the center to the work view and opens that panel tab.
+  Clicking an icon from Home, Inbox, To-do, Routines or Assistant switches the center to the work view and opens that
+  panel tab.
 - The top tab strip is Herdr's shipped `tabs` mod. The file-tab markers `●` (unsaved) and `◦` (preview) are plain text in
   the tab name.
 - The status bar ends with the herdr-caffeinate chip while that mod is installed in the app home (its own repository;
@@ -272,7 +273,8 @@ bottom status bar, floating queue. The right panel's default tab is Files.
 under `data/lazuli/`, the call tree, spend, and Markdown preview of file tabs already open. Actions (`gh`, `omp`, `sh`,
 saving, opening tabs) are refused on devices, because a herdr-relay profile cannot enable them (herdr-relay
 `docs/PROFILES.md` §1, §6; `docs/POLICY.md` §2.4). A policy profile for the `lazuli` folder ships in `relay/`, and the
-README documents installing it. Extending herdr-relay itself is a separate, later project.
+README documents installing it. Extending herdr-relay itself is a separate, later project. The Assistant is desktop only
+(E12).
 
 **D5. Delivery.**
 - Work on branch `redesign/no-cockpit`. Every commit is confirmed with the owner first.
@@ -289,6 +291,78 @@ README documents installing it. Extending herdr-relay itself is a separate, late
 **D7. Notices.** cockpit notices are removed with the cockpit code. Notices stay or are added for anything reused or
 shipped: the folder tree ported from Herdr's `files` mod (Apache-2.0), Lucide icons (ISC), `marked` (MIT), Pretendard
 (SIL OFL 1.1, license file beside the fonts).
+
+## E. Assistant screen
+
+An agentic chat with [Hermes Agent](https://hermes-agent.nousresearch.com) in one folder, tested with Hermes Agent
+0.17.0. Structure: ARCHITECTURE §13; contracts: CONTRACTS "Assistant".
+
+**E1. Place.** A center screen "비서 / Assistant" beside Home, Inbox, To-do and Routines: ⌥⌘4, a sidebar item pinned
+by default, a palette row and `lazuli.go:assistant`. No Herdr layout file of its own and no binding to a Herdr space.
+Three columns: chats grouped by Hermes profile; the chat; a side column with session info above the folder's files.
+
+**E2. Folder.** One assistant folder on this Mac, in lazuli's settings (`assistant.folder`). Unset, the screen opens
+with a folder picker; gone from disk, it shows the folder-missing state with the picker and Retry. Changing the folder
+while a turn runs asks first, then cancels the turn and restarts the bridges there; with no turn running it switches
+at once and lists the new folder's chats. The macOS picker reports `/tmp/x` as `/private/tmp/x` (a firmlink); such a
+folder is kept in its short form when both name the same folder, and a chat counts as the folder's when its cwd is
+either form (paths are compared after resolving symlinks and firmlinks).
+
+**E3. Agent.** Hermes only, behind an adapter registry. Nod (n8n-io/nod) is "Planned": disabled in the new-chat picker
+and as a disabled "Nod · Planned" group at the bottom of the list. A chat stays with the profile it was made in.
+lazuli never edits `~/.hermes` (approval mode, default model, profiles); a model change stays with its session.
+
+**E4. Transport and lifetime.** ACP through a Node bridge lazuli ships, one per profile: started with `hc run --bg` in
+the folder, it runs `hermes -p <profile> acp` and serves line JSON on 127.0.0.1 to clients holding the token from its
+0600 discovery file. A bridge starts when the screen opens; it keeps running while Herdr runs, also behind other
+screens and across mod reloads; it exits after 30 minutes idle with no running turn and no open approval, and with
+Herdr.
+
+**E5. List.** `default` is always shown and first; another profile only when it has chats in the folder; every profile
+can be picked for a new chat. A group header shows the name, the chat and running counts, the bridge dot, "+" and a
+collapse control. Only Hermes ACP sessions whose cwd is the folder appear: no terminal agents, messaging gateways,
+Hermes Desktop or other folders. A row opens the chat or forks it; titles are Hermes's. Archive, delete and rename are
+Planned. The selected chat and the collapsed groups survive a restart. Source: each profile's `state.db`, read-only
+(a private schema), with ACP `session/list` as the fallback.
+
+**E6. Chat.** Replies stream as Markdown; thinking is collapsed; tool calls are cards collapsed to kind, title, status
+and duration that open to input, changes as a diff, and output; a plan shows as a strip above the composer; Stop ends
+the turn. Diffs show only in a live conversation: Hermes's history replay carries none. Agent errors are notices, a
+lost bridge or crashed agent a banner with Retry.
+
+**E7. Approvals.** A card in the chat with Allow once, Allow always and Deny as buttons, chosen by Hermes's option ids
+(Hermes marks "allow for this session" with the kind `allow_always`), and Hermes's other options under More. An edit
+approval shows the two options Hermes sends with the diff. The time left counts down from 60 s after the card
+arrives (Hermes waits 60 s and sends no deadline). A card is answered once: a late answer to an expired card, or to
+one the turn's end closed (cancelled), is refused with a "too late" notice; a card Hermes gives up at its own 60 s
+(within 2 s of the deadline) reads as expired.
+
+**E8. Composer.** Enter sends, ⇧Enter is a new line, @ lists the folder's files (images excluded) and attaches the pick,
+/ lists the commands Hermes advertises without `/steer` and `/queue`. While a turn runs, Enter steers it (Hermes's
+`/steer`) and ⌥Enter or ⌘Enter adds a chip that lazuli holds and sends as a plain prompt when the turn ends (⌘Enter
+because the Korean input source takes ⌥Enter; owner, 2026-11-23); chips are removable, and Stop pauses them until
+resumed. With an input method composing (Korean), Enter sends the whole text, the last syllable included. A typed
+`/queue x` makes a chip, `/model x` changes the model. Image attachments are Planned.
+
+**E9. Model and mode.** The chat header shows the session's model and changes it for that session, not while a turn
+runs; new chats take Hermes's own default. The info panel shows the mode read-only; Hermes's auto-allow modes are
+Planned.
+
+**E10. Side column.** The Files tree fixed to the folder, whatever pane has focus: a click opens the file in the work
+view of the active space, Attach adds a file to the composer. Session info: model, mode, context used of its size,
+last-turn tokens, and from Hermes's database the totals with API calls and the cost with its status ("unknown" when
+absent).
+
+**E11. Notifications.** An approval request, a finished turn and a failed turn raise a lazuli notification unless the
+Assistant shows that chat in the active window; a click shows the screen with that chat selected.
+
+**E12. Gates.** Hermes missing, or `hermes acp --check` failing: the reason, the install and setup commands, where
+lazuli looked, and Retry. On herdr-relay devices the screen shows a desktop-only notice, and no snapshot holds
+Assistant data.
+
+**E13. Testing.** A setting the README leaves out, `assistant.debugAgent` (an argv), replaces the Hermes command with a
+fake ACP agent, so only the scenarios that need real answers run Hermes; those cost tokens and run only with the
+owner's approval.
 
 ## Open items
 

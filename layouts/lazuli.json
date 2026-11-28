@@ -415,6 +415,110 @@
                   },
                   "background": "background",
                   "shadow": "sm"
+                },
+                {
+                  "id": "assistant",
+                  "type": "row",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "id": "assistant-list",
+                      "type": "block",
+                      "size": {
+                        "px": 260
+                      },
+                      "min": 220,
+                      "max": 420,
+                      "content": {
+                        "mod": "lazuli",
+                        "props": {
+                          "view": "assistant-list"
+                        }
+                      },
+                      "radius": 10,
+                      "border": {
+                        "width": 1,
+                        "color": "border"
+                      },
+                      "background": "background",
+                      "shadow": "sm"
+                    },
+                    {
+                      "id": "assistant-chat",
+                      "type": "block",
+                      "size": {
+                        "weight": 1
+                      },
+                      "min": 360,
+                      "content": {
+                        "mod": "lazuli",
+                        "props": {
+                          "view": "assistant"
+                        }
+                      },
+                      "radius": 10,
+                      "border": {
+                        "width": 1,
+                        "color": "border"
+                      },
+                      "background": "background",
+                      "shadow": "sm"
+                    },
+                    {
+                      "id": "assistant-side",
+                      "type": "column",
+                      "size": {
+                        "px": 300
+                      },
+                      "min": 260,
+                      "max": 560,
+                      "gap": 8,
+                      "children": [
+                        {
+                          "id": "assistant-info",
+                          "type": "block",
+                          "size": {
+                            "px": 188
+                          },
+                          "content": {
+                            "mod": "lazuli",
+                            "props": {
+                              "view": "assistant-info"
+                            }
+                          },
+                          "radius": 10,
+                          "border": {
+                            "width": 1,
+                            "color": "border"
+                          },
+                          "background": "background",
+                          "shadow": "sm"
+                        },
+                        {
+                          "id": "assistant-files",
+                          "type": "block",
+                          "size": {
+                            "weight": 1
+                          },
+                          "content": {
+                            "mod": "lazuli",
+                            "props": {
+                              "view": "files",
+                              "scope": "assistant",
+                              "block": "assistant-files"
+                            }
+                          },
+                          "radius": 10,
+                          "border": {
+                            "width": 1,
+                            "color": "border"
+                          },
+                          "background": "background",
+                          "shadow": "sm"
+                        }
+                      ]
+                    }
+                  ]
                 }
               ]
             },

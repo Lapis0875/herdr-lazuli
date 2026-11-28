@@ -32,7 +32,10 @@
   footer { max-width: 1800px; margin: 0 auto; padding: 0 32px 40px; color: var(--muted); font-size: 12.5px; }
   footer ul { padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
   code { font: 12px ui-monospace, "SF Mono", Menlo, monospace; }
-  @media (max-width: 1100px) { main { grid-template-columns: 1fr; } .head { min-height: 0; } }
+  .later { max-width: 1800px; margin: 0 auto; padding: 0 32px 28px; display: flex; flex-direction: column; gap: 12px; }
+  .later .head { min-height: 0; }
+  .later .figs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }
+  @media (max-width: 1100px) { main, .later .figs { grid-template-columns: 1fr; } .head { min-height: 0; } }
 </style>
 </head>
 <body>
@@ -95,9 +98,21 @@
     <figure><a href="c-denim/file-light.png"><img src="c-denim/file-light.png" width="1440" height="900" alt="Denim, README.md in Split, light" loading="lazy"></a><figcaption>File tab, Split · light</figcaption></figure>
   </section>
 </main>
+<section class="later" aria-labelledby="assistant">
+  <div class="head">
+    <h2 id="assistant">Assistant screen <small>DESIGN.md E, approved 2026-11-23, in the chosen A · Lapis system</small></h2>
+    <p class="meta">The "비서 / Assistant" center screen: chats with Hermes Agent grouped by profile, the chat with tool, approval and plan cards, the composer, and the side column with session info above the folder's files; eleven screens (gates included) in Korean and English, dark and light.</p>
+    <p class="links"><a href="assistant/index.html">assistant/index.html</a><a href="assistant/screen.html">screen.html</a><a href="assistant/shots/">shots/</a></p>
+  </div>
+  <div class="figs">
+    <figure><a href="assistant/shots/chat-en-dark.png"><img src="assistant/shots/chat-en-dark.png" width="1440" height="900" alt="Assistant, a running turn with tool cards, a diff, the plan strip and a steer, English, dark" loading="lazy"></a><figcaption>Running turn · English · dark</figcaption></figure>
+    <figure><a href="assistant/shots/approval-ko-light.png"><img src="assistant/shots/approval-ko-light.png" width="1440" height="900" alt="Assistant, an approval card with its countdown, Korean, light" loading="lazy"></a><figcaption>Approval · Korean · light</figcaption></figure>
+    <figure><a href="assistant/shots/gate-folder-en-light.png"><img src="assistant/shots/gate-folder-en-light.png" width="1440" height="900" alt="Assistant, the folder picker gate, English, light" loading="lazy"></a><figcaption>No folder yet · English · light</figcaption></figure>
+  </div>
+</section>
 <footer>
   <ul>
-    <li>Rebuild: <code>python3 docs/mockups/build.py</code> writes each <code>tokens.css</code> from <code>tokens.json</code> and re-renders the 12 PNGs (headless Google Chrome, 1440 × 900, scale 1).</li>
+    <li>Rebuild: <code>python3 docs/mockups/build.py</code> writes each <code>tokens.css</code> from <code>tokens.json</code> and re-renders the 12 PNGs (headless Google Chrome, 1440 × 900, scale 1). The Assistant prototype has its own: <code>python3 docs/mockups/assistant/build.py</code> (44 PNGs).</li>
     <li>Every text and accent token measures ≥ 4.5:1 on every surface it can sit on; the ratios are stored under <code>contrast</code> in each <code>tokens.json</code>.</li>
     <li>Drawn with what Herdr's GPUI can draw: flex rows and columns, 1 px borders, radii, solid fills, one small shadow. HTML tables, <code>::after</code> markers and text ellipsis stand in for fixed-width flex rows, child elements and GPUI truncation.</li>
     <li>Icons: Lucide (ISC). Agent marks: as shipped in Herdr's <code>icons/</code>. The lazuli marks are placeholders until the logo is drawn (C2).</li>

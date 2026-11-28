@@ -1,0 +1,190 @@
+// UI text for the Assistant screen, English. Keys start with "assistant.". Catalog-ready: the default export is
+// what mods/lazuli/core/catalog/assistant.en.js gets (U1); `other` lists the keys other catalogs get (U2).
+// Agent-written text (titles, replies, Hermes's command descriptions and approval details) is never here.
+
+export default {
+  // List (assistant-list).
+  "assistant.list.title": "Chats",
+  "assistant.list.new": "New chat",
+  "assistant.list.newIn": "New chat with {profile}",
+  "assistant.list.collapse": "Collapse {profile}",
+  "assistant.list.expand": "Expand {profile}",
+  "assistant.list.count": "{count} chats",
+  "assistant.list.running": "{count} running",
+  "assistant.list.needsYou": "Needs you",
+  "assistant.list.untitled": "New chat",
+  "assistant.list.fork": "Fork",
+  "assistant.list.empty": "No chats in this folder yet",
+  "assistant.list.gated": "Chats show here once the folder and Hermes are ready",
+
+  // Bridge state: the dot on a profile header (tooltip and screen-reader label).
+  "assistant.bridge.off": "Hermes off · starts with the first message",
+  "assistant.bridge.starting": "Starting Hermes…",
+  "assistant.bridge.ready": "Hermes connected",
+  "assistant.bridge.error": "Couldn't start Hermes",
+  "assistant.bridge.exited": "Hermes quit",
+  "assistant.bridge.stopped": "Hermes stopped · restarts with the next message",
+  "assistant.bridge.retry": "Retry",
+
+  // Groups that are not usable yet (D8).
+  "assistant.group.planned": "Planned",
+  "assistant.group.plannedHint": "Nod support comes in a later version",
+
+  // New-chat profile picker.
+  "assistant.picker.label": "Hermes profiles",
+  "assistant.picker.filter": "Find a profile…",
+  "assistant.picker.default": "Default",
+  "assistant.picker.noMatch": "No matching profile",
+  "assistant.picker.other": "Other agents",
+
+  // Chat header and body.
+  "assistant.chat.model": "Model: {model}",
+  "assistant.chat.modelBusy": "You can change it once the response ends",
+  "assistant.chat.models": "Model for this session",
+  "assistant.chat.fork": "Fork this chat",
+  "assistant.chat.running": "Responding · {time}",
+  "assistant.chat.emptyTitle": "New chat with {profile}",
+  "assistant.chat.emptyBody": "Hermes works in {folder}. Type @ to attach a file from the folder and / for Hermes commands.",
+  "assistant.chat.loading": "Loading the chat…",
+  "assistant.chat.latest": "Jump to latest",
+
+  // Transcript items.
+  "assistant.thought": "Thinking",
+  "assistant.thought.streaming": "Thinking…",
+  "assistant.item.show": "Show details",
+  "assistant.item.hide": "Hide details",
+  "assistant.tool.pending": "Pending",
+  "assistant.tool.in_progress": "Running",
+  "assistant.tool.completed": "Done",
+  "assistant.tool.failed": "Failed",
+  "assistant.tool.waiting": "Awaiting permission",
+  "assistant.tool.seconds": "{n}s",
+  "assistant.tool.input": "Input",
+  "assistant.tool.output": "Output",
+  "assistant.tool.changes": "Changes",
+  "assistant.tool.more": "{count} more lines",
+  "assistant.plan.title": "Plan",
+  "assistant.plan.progress": "{done} of {total} done",
+  "assistant.user.steer": "Steer",
+  "assistant.user.queued": "Sent from the queue",
+
+  // Events in the transcript (notice items).
+  "assistant.event.steerSending": "Sending the steer…",
+  "assistant.event.steerAck": "Hermes applies the steer to the response in progress",
+  "assistant.event.cancelled": "You stopped this response",
+  "assistant.event.tooLate": "That request had expired, so your answer wasn't sent",
+  "assistant.event.failed": "The request failed",
+  "assistant.event.dropped": "Removed {count} older items from the list",
+  "assistant.event.modelSet": "Model changed to {model}",
+
+  // Approval card (D16, D29). Known Hermes option ids get these labels; other ids show the agent's own name.
+  "assistant.approval.title": "Needs your permission",
+  "assistant.approval.editTitle": "Allow this file edit?",
+  "assistant.approval.left": "{n}s left",
+  "assistant.approval.expired": "Expired",
+  "assistant.approval.expiredBody": "No answer within 60 seconds, so Hermes cancelled the request",
+  "assistant.approval.answered": "Answered: {option}",
+  "assistant.approval.allowOnce": "Allow once",
+  "assistant.approval.allowAlways": "Allow always",
+  "assistant.approval.allowSession": "Allow for session",
+  "assistant.approval.deny": "Deny",
+  "assistant.approval.denyAlways": "Deny always",
+  "assistant.approval.more": "More",
+
+  // Composer (D19, D20, D28).
+  "assistant.composer.label": "Message",
+  "assistant.composer.placeholder": "Message Hermes… @ for files · / for commands",
+  "assistant.composer.placeholderRunning": "Steer the response, or ⌥Enter to queue a message…",
+  "assistant.composer.send": "Send",
+  "assistant.composer.steer": "Send steer",
+  "assistant.composer.stop": "Stop",
+  "assistant.composer.attach": "Attach a file",
+  "assistant.composer.commands": "Hermes commands",
+  "assistant.composer.hintIdle": "Enter to send · ⇧Enter for a new line",
+  "assistant.composer.hintRunning": "Enter to steer · ⌥Enter to queue",
+  "assistant.composer.offline": "You can send once Hermes reconnects",
+  "assistant.composer.removeAttachment": "Remove {name}",
+  "assistant.queue.label": "Queued {count}",
+  "assistant.queue.hint": "Sent one by one when the response ends",
+  "assistant.queue.remove": "Remove from queue",
+  "assistant.queue.paused": "Paused",
+  "assistant.queue.pausedHint": "You stopped, so nothing was sent. Resume, or they go after your next message's response.",
+  "assistant.queue.resume": "Resume",
+  "assistant.mention.label": "Files in the folder · images excluded",
+  "assistant.mention.hint": "↑↓ to pick · Enter to attach · esc to close",
+  "assistant.mention.empty": "No matching file",
+  "assistant.commands.label": "Hermes commands",
+  "assistant.commands.hint": "↑↓ to pick · Enter to insert · esc to close",
+
+  // Session info (assistant-info).
+  "assistant.info.title": "Session",
+  "assistant.info.model": "Model",
+  "assistant.info.mode": "Mode",
+  "assistant.info.context": "Context",
+  "assistant.info.contextValue": "{used} / {size}",
+  "assistant.info.lastTurn": "Last reply",
+  "assistant.info.lastTurnValue": "{input} in · {output} out",
+  "assistant.info.total": "Total",
+  "assistant.info.totalValue": "{tokens} tokens · {calls} API calls",
+  "assistant.info.cost": "Cost",
+  "assistant.info.costEstimated": "estimated",
+  "assistant.info.unknown": "unknown",
+  "assistant.info.none": "none yet",
+  "assistant.info.noSession": "No chat selected",
+
+  // Side file tree (files-tree with scope "assistant"); the rest of its text is files.*.
+  "assistant.files.attach": "Attach to the chat",
+  "assistant.files.none": "No folder chosen",
+
+  // Gates (D3, D5, D23).
+  "assistant.gate.checking": "Checking Hermes…",
+  "assistant.gate.retry": "Check again",
+  "assistant.gate.copy": "Copy",
+  "assistant.gate.noFolder.title": "Choose a folder for the assistant",
+  "assistant.gate.noFolder.body": "Hermes runs in this folder, and the list shows only chats held there. Pick a folder on this Mac.",
+  "assistant.gate.noFolder.action": "Choose folder…",
+  "assistant.gate.noFolder.hint": "You can change it later in lazuli's settings",
+  "assistant.gate.missing.title": "The folder is missing",
+  "assistant.gate.missing.body": "It was moved or deleted. Put it back and check again, or choose another folder.",
+  "assistant.gate.missing.choose": "Choose another folder…",
+  "assistant.gate.hermes.title": "Hermes isn't installed",
+  "assistant.gate.hermes.body": "The assistant talks through Hermes Agent. Install it in a terminal, set up a model, then check again.",
+  "assistant.gate.hermes.install": "1. Install",
+  "assistant.gate.hermes.setup": "2. Set up a model and API key",
+  "assistant.gate.hermes.tested": "Tested with Hermes Agent {version}",
+  "assistant.gate.hermes.looked": "Looked in: {where}",
+  "assistant.gate.check.title": "The Hermes ACP check failed",
+  "assistant.gate.check.body": "hermes acp --check ended with an error, so Hermes's ACP part could not be loaded.",
+  "assistant.gate.check.output": "Output · exit code {code}",
+  "assistant.gate.check.hint": "Run hermes acp --check in a terminal; if it fails the same way, reinstall Hermes",
+  "assistant.gate.relay.title": "Available on the Mac only",
+  "assistant.gate.relay.body": "The assistant runs Hermes on your Mac, so this device doesn't show its chats. Open it in Herdr on the Mac.",
+  "assistant.gate.relay.short": "Available on the Mac only",
+
+  // Banners over the chat (A11).
+  "assistant.banner.agentExit": "Hermes quit",
+  "assistant.banner.agentExitBody": "The agent exited with code {code}. Retry starts Hermes again and reloads this chat.",
+  "assistant.banner.disconnected": "Lost the connection to Hermes",
+  "assistant.banner.disconnectedBody": "Retry reconnects to Hermes and reloads this chat.",
+  "assistant.banner.retry": "Retry",
+
+  // Notifications while another screen is shown (A12; vars {title}).
+  "assistant.notice.permission": "{title} · needs your permission",
+  "assistant.notice.done": "{title} · finished",
+  "assistant.notice.failed": "{title} · failed",
+};
+
+/** Keys for the other catalogs (U2), and the sidebar badge label. */
+export const other = {
+  "shell.app.assistant": "Assistant",
+  "shell.nav.assistant": "Assistant: {running} running, {waiting} need you",
+  "palette.cmd.go.assistant": "Assistant",
+  "settings.assistant.section": "Assistant",
+  "settings.assistant.folder": "Folder",
+  "settings.assistant.folderHint": "Hermes runs in this folder, and the list shows only chats held there. Only folders on this Mac.",
+  "settings.assistant.choose": "Choose folder…",
+  "settings.assistant.unset": "Not set",
+  "settings.assistant.confirmTitle": "Stop the response and change the folder?",
+  "settings.assistant.confirmBody": "The response is cancelled and Hermes restarts in the new folder.",
+  "settings.assistant.confirm": "Stop and change",
+};

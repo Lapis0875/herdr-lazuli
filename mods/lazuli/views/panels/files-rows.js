@@ -73,7 +73,8 @@ function fieldRow(view, k, depth) {
     );
 }
 
-/** A row's actions, each stopping its click there: new file and folder on a folder, then rename and delete. */
+/** A row's actions, each stopping its click there: Attach on a file of the Assistant's tree, new file and folder on a
+ *  folder, then rename and delete. */
 function rowActions(view, entry, path) {
   const act = (id, icon, label, fn) =>
     IconButton(id, icon, label, {
@@ -85,6 +86,7 @@ function rowActions(view, entry, path) {
       },
     }).size(20);
   return [
+    ...(view.attachable(entry, path) ? [act(`files-attach-${path}`, "paperclip", t("assistant.files.attach"), () => view.attach(path))] : []),
     ...(entry.dir
       ? [act(`files-new-${path}`, "file-plus", t("files.newIn"), (cx) => view.startNew(path, cx)), act(`files-mkdir-${path}`, "folder-plus", t("files.mkdirIn"), (cx) => view.startNew(path, cx, true))]
       : []),

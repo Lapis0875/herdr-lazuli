@@ -1,7 +1,8 @@
 // lazuli's settings (DESIGN C3, ARCHITECTURE §2), opened as a dialog from the sidebar footer and the palette. Every
 // change goes to data/lazuli/settings.json through sys/store.js updateSettings and is live at once (the language
 // redraws every copy). Sections: language; the headless agent (command, model, parallel routines); GitHub (org scope,
-// poll interval); the sidebar's pinned apps; notifications (lazuli's switch, the system status from sys/notify.js and
+// poll interval); the sidebar's pinned apps; the Assistant's folder (picked through sys/assistant.js, which asks
+// before switching while a turn runs, D22); notifications (lazuli's switch, the system status from sys/notify.js and
 // asking macOS for permission); files (the PDF zoom, the external editor); Herdr's own settings and keys.
 // A `preview: true` copy shows the values and writes nothing.
 
@@ -9,12 +10,15 @@ import { div } from "gpui-kit";
 import { h_flex, v_flex, InputState } from "gpui-base";
 import { closeOverlay, props, run, updates } from "herdr";
 import * as store from "../sys/store.js";
+import * as assistant from "../sys/assistant.js";
 import * as notify from "../sys/notify.js";
 import { DEFAULT_PINS, PDF_ZOOMS } from "../sys/state.js";
 import { t } from "../core/i18n.js";
 import { tokens } from "../ui/tokens.js";
 import { ViewRoot, Text, Icon, IconButton, Button, CheckBox, Segmented, TextInput, Field, SectionHeader, Divider, Spinner } from "../ui/kit.js";
-import { quoteWord, splitWords, settingsRow } from "./shell/settings-parts.js";
+import { quoteWord, splitWords, settingsRow, FolderField } from "./shell/settings-parts.js";
+import { snapshotMode } from "./apps/snapshot.js";
+import { chooseFolder, FolderConfirm } from "./assistant/folder.js";
 
 const log = (msg) => console.log(`[lazuli/settings] ${msg}`);
 const errText = (e) => e?.message ?? String(e);
@@ -22,7 +26,7 @@ const errText = (e) => e?.message ?? String(e);
 const POLL_MIN = 30;
 const POLL_MAX = 3600;
 const PARALLEL_MAX = 10;
-const APPS = Object.freeze({ inbox: "inbox", todo: "list-todo", routines: "calendar-clock" });
+const APPS = Object.freeze({ inbox: "inbox", todo: "list-todo", routines: "calendar-clock", assistant: "bot" });
 const NEEDS_ASK = new Set(["not-requested", "denied", "failed"]);
 
 export default class Settings {
@@ -205,6 +209,28 @@ export default class Settings {
       );
   }
 
+  /** The Assistant's folder: the path, Choose folder…, and the D22 question when a turn runs (folder.js). A relay
+   *  device cannot set it: the Assistant runs only on the Mac (D5). */
+  assistantFolder(s) {
+    const relay = snapshotMode();
+    return FolderField({
+      id: "f-assistant",
+      label: t("settings.assistant.folder"),
+      path: s.assistant?.folder ?? null,
+      unset: t("settings.assistant.unset"),
+      hint: relay ? t("settings.assistant.relay") : this.hint("assistant", t("settings.assistant.folderHint")),
+      error: this.folderError,
+      button: Button("set-assistant-folder", t("settings.assistant.choose"), {
+        icon: "folder-open",
+        disabled: this.preview || relay,
+        onClick: (_e, cx) =>
+          chooseFolder(this, assistant, cx, (_cx, r) => {
+            if (r?.ok) this.saved = "assistant";
+          }),
+      }),
+    });
+  }
+
   notifications(k, s) {
     const status = notify.systemStatus();
     const state = status.state;
@@ -300,11 +326,16 @@ export default class Settings {
       this.section("sec-agent", "bot", t("settings.agent.section"), this.agent(k, s)),
       this.section("sec-gh", "git-pull-request", t("settings.gh.section"), this.github()),
       this.section("sec-pins", "pin", t("settings.pins.section"), this.pins(k, s)),
+      this.section("sec-assistant", "bot", t("settings.assistant.section"), this.assistantFolder(s)),
       this.section("sec-notify", "bell", t("settings.notify.section"), this.notifications(k, s)),
       this.section("sec-files", "file-text", t("settings.files.section"), this.files(k, s)),
       this.section("sec-herdr", "layers", t("settings.herdr.section"), this.herdr()),
     ];
+    const ask = FolderConfirm(this, assistant, s.assistant?.folder, (_cx, r) => {
+      if (r?.ok) this.saved = "assistant";
+    });
     return ViewRoot("lz-settings", { bg: overlay ? k.bg.popover : k.bg.card })
+      .relative()
       .child(
         h_flex()
           .flex_none()
@@ -341,6 +372,7 @@ export default class Settings {
           .border_t(1)
           .border_color(k.line.soft)
           .child(Text(t("settings.file", { path: "data/lazuli/settings.json" }), { size: "xs", tone: "tertiary", truncate: true })),
-      );
+      )
+      .when(Boolean(ask), (e) => e.child(ask));
   }
 }

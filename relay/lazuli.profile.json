@@ -1,6 +1,6 @@
 {
   "id": "lazuli",
-  "description": "lazuli read-only on herdr-relay devices: snapshots under data/lazuli, git reads (E4), hc reads (E6, E7), links opened on the device (E11) and the transcript scanner (E1); agent runs and the HTML viewer stay on the Mac (E2).",
+  "description": "lazuli read-only on herdr-relay devices: snapshots under data/lazuli, git reads (E4), hc reads (E6, E7), links opened on the device (E11) and the transcript scanner (E1); agent runs, the HTML viewer and the Assistant bridge stay on the Mac (E2). The Assistant keeps no snapshot: devices get none of its sessions, folder or bridge token.",
   "folders": ["lazuli"],
   "requires": { "herdr": ">=0.1.16" },
   "reads": { "appHome": ["icons/**", "my-icons/**", "layouts/*.svg"], "spaces": true },
@@ -14,7 +14,8 @@
     },
     "mods/lazuli/bin/run-agent.mjs": { "refuse": "Agent runs start only in the Herdr window" },
     "mods/lazuli/bin/html-view.mjs": { "refuse": "The HTML viewer runs only in the Herdr window" },
-    "mods/lazuli/bin/chrome-broker.mjs": { "refuse": "The HTML viewer runs only in the Herdr window" }
+    "mods/lazuli/bin/chrome-broker.mjs": { "refuse": "The HTML viewer runs only in the Herdr window" },
+    "mods/lazuli/bin/acp-bridge.mjs": { "refuse": "The Assistant bridge runs only in the Herdr window" }
   },
   "overlay": "device"
 }

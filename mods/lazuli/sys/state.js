@@ -20,6 +20,12 @@ export const KEY = Object.freeze({
   pdfd: "lazuli.pdfd",
   /** The resolved UI language, "ko" or "en": derived from the setting, kept for a warm start. */
   language: "lazuli.language",
+  /** The Assistant screen's remembered UI (D25): `{v:1, folder, selected:{agent, profile, session}|null,
+   *  collapsed:[profile]}`. A value for another folder is reset; a selected row that no longer exists is cleared. */
+  assistantUi: "lazuli.assistant.ui",
+  /** The Hermes local sessions the Assistant made (`local-<64 hex>` ids), so only those are listed and restored:
+   *  `{v:1, sessions:[{profile, folder, session, at}]}`, newest first, at most 200 (core/assistant-list.js). */
+  assistantOwned: "lazuli.assistant.owned",
 });
 
 /** Store names that have a rev counter and a snapshot file (`data/lazuli/snap/<name>.json`). */
@@ -40,7 +46,7 @@ export const STORE_NAME = /^[a-z][a-z0-9-]*$/;
 export const NODE = Object.freeze({ center: "center", view: "view", panel: "panel", panelBody: "panel-body" });
 
 /** Children of the `center` stack. */
-export const CENTER = Object.freeze(["home", "work", "inbox", "todo", "routines"]);
+export const CENTER = Object.freeze(["home", "work", "inbox", "todo", "routines", "assistant"]);
 
 /** Children of the `panel-body` stack; the keys use the same names. */
 export const PANELS = Object.freeze(["review", "files", "changes", "tree"]);
@@ -62,6 +68,7 @@ export const COMMANDS = Object.freeze({
   "go:inbox": OWNER.status,
   "go:todo": OWNER.status,
   "go:routines": OWNER.status,
+  "go:assistant": OWNER.status,
   "agent-view": OWNER.status,
   panel: OWNER.status,
   "panel:review": OWNER.status,
@@ -80,9 +87,10 @@ export const COMMANDS = Object.freeze({
   ticket: OWNER.status,
 });
 
-/** Commands that carry an argument after the prefix: `target:<target>` (notification clicks, §7) and
- *  `key:<keystroke>` (test hook, §2). */
-export const PREFIXED = Object.freeze({ "target:": OWNER.status, "key:": OWNER.self });
+/** Commands that carry an argument after the prefix: `target:<target>` (notification clicks, §7),
+ *  `key:<keystroke>` (test hook, §2), `assistant:<verb>` (the Assistant screen's verbs, to every copy) and
+ *  `relay:<verb>` (herdr-relay on, off, status: the status chip's menu, the palette, `herdr-app do`; sys/relay.js). */
+export const PREFIXED = Object.freeze({ "target:": OWNER.status, "key:": OWNER.self, "assistant:": OWNER.self, "relay:": OWNER.status });
 
 /** What Herdr itself sends a focusable copy (`pane.go` onto it, a popup over it closed). */
 export const FOCUS = "focus";
@@ -93,7 +101,7 @@ export const ACTIONS = Object.freeze(Object.keys(COMMANDS).map((c) => `${MOD}.${
 const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
 /** A command as nextCommand() delivers it (no `lazuli.` prefix) → `{name, arg, owner}`, or null when
- *  it is not in the table. Prefixed commands are named without the colon: `target`, `key`. */
+ *  it is not in the table. Prefixed commands are named without the colon: `target`, `key`, `assistant`. */
 export function parseCommand(command) {
   if (typeof command !== "string") return null;
   if (own(COMMANDS, command)) return { name: command, arg: null, owner: COMMANDS[command] };
@@ -115,11 +123,12 @@ export function isAction(action) {
 
 // Settings (`data/lazuli/settings.json`).
 
-export const SETTINGS_VERSION = 1;
+export const SETTINGS_VERSION = 2;
 export const LANGUAGE_SETTINGS = Object.freeze(["system", "ko", "en"]);
 /** B9 zoom steps: fit width, then percent. */
 export const PDF_ZOOMS = Object.freeze(["fit", 50, 75, 100, 125, 150, 200]);
-export const DEFAULT_PINS = Object.freeze(["inbox", "todo", "routines"]);
+/** The pinnable apps, in their default order. A version 1 file gains `assistant` once (see normalizeSettings). */
+export const DEFAULT_PINS = Object.freeze(["inbox", "todo", "routines", "assistant"]);
 
 /** A fresh copy of the settings used when the file is absent. */
 export function defaultSettings() {
@@ -133,14 +142,28 @@ export function defaultSettings() {
     pins: [...DEFAULT_PINS],
     pdf: { zoom: "fit" },
     editor: "code",
+    assistant: { folder: null, debugAgent: null },
   };
 }
 
 const isPlain = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const plain = (v) => (isPlain(v) ? JSON.parse(JSON.stringify(v)) : {});
 const strings = (v) => (Array.isArray(v) ? v.filter((s) => typeof s === "string" && s.trim() !== "") : []);
+/** `assistant.debugAgent`: a non-empty array of non-empty strings as it is, else null (one element of another kind
+ *  makes the whole argv unusable, so it is not trimmed down to the rest). */
+const argvOrNull = (v) => (Array.isArray(v) && v.length > 0 && v.every((s) => typeof s === "string" && s.trim() !== "") ? [...v] : null);
 const positive = (v) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null);
 const positiveInt = (v) => (Number.isInteger(v) && v > 0 ? v : null);
+
+/** v1 → v2: a file's own pins gain the Assistant once (pins it does not name read as the defaults, which hold it).
+ *  A v2 file keeps the person's pins as they are. */
+const gainsAssistantPin = (r) => Array.isArray(r.pins) && !(typeof r.version === "number" && r.version >= 2) && !strings(r.pins).includes("assistant");
+
+/** `assistant.folder`: an absolute path without trailing slashes, or null. */
+function assistantFolder(v) {
+  const p = typeof v === "string" ? v.trim() : "";
+  return p.startsWith("/") ? p.replace(/(.)\/+$/, "$1") : null;
+}
 
 /** Any parsed settings value → a complete settings object. Known fields fall back to their default when
  *  missing or invalid; unknown fields are kept as they are. Never throws for JSON input. */
@@ -155,6 +178,7 @@ export function normalizeSettings(raw) {
   const gh = plain(r.gh);
   const routines = plain(r.routines);
   const pdf = plain(r.pdf);
+  const assistant = plain(r.assistant);
   return {
     ...r,
     version: SETTINGS_VERSION,
@@ -163,8 +187,16 @@ export function normalizeSettings(raw) {
     notifications: { ...notifications, system: typeof notifications.system === "boolean" ? notifications.system : d.notifications.system },
     gh: { ...gh, org: [...new Set(strings(gh.org).map((s) => s.trim()))], pollSec: positive(gh.pollSec) ?? d.gh.pollSec },
     routines: { ...routines, maxParallel: positiveInt(routines.maxParallel) ?? d.routines.maxParallel },
-    pins: Array.isArray(r.pins) ? [...new Set(strings(r.pins))] : d.pins,
+    pins: Array.isArray(r.pins) ? [...new Set(strings(r.pins)), ...(gainsAssistantPin(r) ? ["assistant"] : [])] : d.pins,
     pdf: { ...pdf, zoom: PDF_ZOOMS.includes(pdf.zoom) ? pdf.zoom : d.pdf.zoom },
     editor: typeof r.editor === "string" && r.editor.trim() !== "" ? r.editor.trim() : d.editor,
+    assistant: { ...assistant, folder: assistantFolder(assistant.folder), debugAgent: argvOrNull(assistant.debugAgent) },
   };
+}
+
+/** A parsed settings file → the settings to write back to it once, or null. Only a file older than
+ *  SETTINGS_VERSION whose migration changes what it holds is written (v1 → v2: `assistant` appended to its
+ *  pins); a missing field reads as its default without a write. */
+export function migratedSettings(raw) {
+  return isPlain(raw) && gainsAssistantPin(raw) ? normalizeSettings(raw) : null;
 }
